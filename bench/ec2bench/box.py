@@ -27,6 +27,8 @@ class Box:
             "-o",
             "StrictHostKeyChecking=accept-new",
             "-o",
+            f"HostKeyAlias={instance_id}",
+            "-o",
             "ControlMaster=auto",
             "-o",
             "ControlPersist=120",
