@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_libc = b.option(bool, "link-libc", "Link libc to enable libc comparison in benchmarks") orelse false;
+    const rev = b.option([]const u8, "rev", "Revision label reported in bench-fastmem meta records") orelse "unknown";
 
     const mod = b.addModule("fastmem", .{
         .root_source_file = b.path("src/root.zig"),
@@ -35,6 +36,7 @@ pub fn build(b: *std.Build) void {
     // Benchmark executable — always built ReleaseFast.
     const bench_opts = b.addOptions();
     bench_opts.addOption(bool, "link_libc", link_libc);
+    bench_opts.addOption([]const u8, "rev", rev);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench-fastmem",
@@ -63,13 +65,17 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    if (target.result.os.tag == .linux) libc_probe_mod.linkSystemLibrary("dl", .{});
+    if (target.result.os.tag == .linux and target.result.abi.isGnu())
+        libc_probe_mod.linkSystemLibrary("dl", .{});
 
     const libc_probe = b.addExecutable(.{
         .name = "libc-probe",
         .root_module = libc_probe_mod,
     });
     const install_libc_probe = b.addInstallArtifact(libc_probe, .{});
+    // `zig build install` ships libc-probe next to bench-fastmem for the
+    // selected -Dtarget/-Dcpu, per docs/bench-design.md.
+    b.getInstallStep().dependOn(&install_libc_probe.step);
     const libc_probe_step = b.step("libc-probe", "Build the libc symbol probe");
     libc_probe_step.dependOn(&install_libc_probe.step);
 
