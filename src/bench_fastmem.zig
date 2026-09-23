@@ -25,6 +25,8 @@ const iterations_seed_min = 256;
 const iterations_seed_max = 4_000_000;
 const iterations_hard_max = 64 * 1024 * 1024;
 
+const dist_seq_len = 4096;
+
 const standard_sizes = [_]usize{
     0,     1,     2,      3,      4,      7,      8,      15,
     16,    24,    31,     32,     48,     63,     64,     96,
@@ -56,12 +58,13 @@ const copy_profiles = [_]CopyProfile{
 const Op = enum { copy, move };
 const Impl = enum { builtin, fastmem, libc };
 const Suite = enum { quick, standard, dist };
+const DistKind = enum { small, mixed };
 const MoveDirection = enum { fwd, bwd };
 
 // The benchmark calls every implementation through one of these exported
-// entry points, invoked with @call(.never_inline) at the loop site (0.16
-// grammar cannot combine export and noinline on the declaration). The
-// symbols are therefore intact in the binary for the harness to disassemble,
+// entry points, invoked with @call(.never_inline) at the loop site (the
+// 0.16 grammar cannot combine export and noinline on one declaration).
+// The symbols are intact in the binary for the harness to disassemble,
 // and the loop really executes them.
 export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void {
     fastmem.copy(u8, dst[0..len], src[0..len]);
@@ -112,8 +115,116 @@ fn moveFnFor(comptime impl: Impl) OpFn {
 }
 
 // ---------------------------------------------------------------------------
+// perf_event_open counter group (Linux only)
+// ---------------------------------------------------------------------------
+
+const linux = std.os.linux;
+
+const perf_format_group: u64 = 0x8;
+const perf_event_ioc_enable: u32 = 0x2400;
+const perf_event_ioc_disable: u32 = 0x2401;
+const perf_event_ioc_reset: u32 = 0x2403;
+
+const perf_event_names = [_][]const u8{ "cycles", "instructions", "ref-cycles" };
+
+const Counters = struct {
+    cycles: u64,
+    instructions: u64,
+    ref_cycles: ?u64,
+};
+
+const Perf = struct {
+    leader_fd: i32,
+    member_fds: [2]i32 = undefined,
+    n_events: usize,
+
+    const want_ref_cycles = builtin.target.cpu.arch == .x86_64 or
+        builtin.target.cpu.arch == .x86;
+
+    fn eventNames(self: *const Perf) []const []const u8 {
+        return perf_event_names[0..self.n_events];
+    }
+
+    fn begin(self: *const Perf) void {
+        _ = linux.ioctl(self.leader_fd, perf_event_ioc_reset, 0);
+        _ = linux.ioctl(self.leader_fd, perf_event_ioc_enable, 0);
+    }
+
+    fn end(self: *const Perf) ?Counters {
+        _ = linux.ioctl(self.leader_fd, perf_event_ioc_disable, 0);
+        var data: [4]u64 = .{ 0, 0, 0, 0 };
+        const bytes = mem.sliceAsBytes(data[0 .. 1 + self.n_events]);
+        const n = std.posix.read(self.leader_fd, bytes) catch return null;
+        if (n != bytes.len or data[0] != self.n_events) return null;
+        return .{
+            .cycles = data[1],
+            .instructions = data[2],
+            .ref_cycles = if (want_ref_cycles) data[3] else null,
+        };
+    }
+
+    fn deinit(self: *Perf) void {
+        for (self.member_fds[0 .. self.n_events - 1]) |fd| _ = linux.close(fd);
+        _ = linux.close(self.leader_fd);
+    }
+};
+
+const PerfInit = union(enum) {
+    ok: Perf,
+    err: []const u8,
+};
+
+fn perfInit(err_buf: []u8) PerfInit {
+    if (builtin.target.os.tag != .linux) {
+        return .{ .err = "perf_event_open requires linux" };
+    }
+
+    const n_events: usize = if (Perf.want_ref_cycles) 3 else 2;
+    const configs = [3]linux.PERF.COUNT.HW{
+        .CPU_CYCLES,
+        .INSTRUCTIONS,
+        .REF_CPU_CYCLES,
+    };
+
+    var attr: linux.perf_event_attr = .{};
+    attr.type = .HARDWARE;
+    attr.read_format = perf_format_group;
+    attr.flags.disabled = true;
+    attr.flags.exclude_kernel = true;
+    attr.flags.exclude_hv = true;
+
+    var perf: Perf = .{ .leader_fd = -1, .n_events = n_events };
+    for (configs[0..n_events], 0..) |config, i| {
+        attr.config = @intFromEnum(config);
+        const group_fd: i32 = if (i == 0) -1 else perf.leader_fd;
+        const rc = linux.perf_event_open(&attr, 0, -1, group_fd, 0);
+        const err = linux.errno(rc);
+        if (err != .SUCCESS) {
+            if (perf.leader_fd >= 0) {
+                for (perf.member_fds[0 .. i - 1]) |fd| _ = linux.close(fd);
+                _ = linux.close(perf.leader_fd);
+            }
+            const msg = std.fmt.bufPrint(err_buf, "perf_event_open({s}): errno {s}", .{
+                perf_event_names[i],
+                @tagName(err),
+            }) catch "perf_event_open failed";
+            return .{ .err = msg };
+        }
+        const fd: i32 = @intCast(rc);
+        if (i == 0) perf.leader_fd = fd else perf.member_fds[i - 1] = fd;
+    }
+    return .{ .ok = perf };
+}
+
+// ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
+
+const DistEntry = struct {
+    size: u32,
+    src_off: u32,
+    dst_off: u32,
+};
 
 const CopyCase = struct {
     id: []const u8,
@@ -123,15 +234,93 @@ const CopyCase = struct {
     dst_off: usize,
 };
 
+const MoveCase = struct {
+    id: []const u8,
+    profile: []const u8,
+    size: usize,
+    gap: usize,
+    direction: MoveDirection,
+};
+
+const DistCase = struct {
+    id: []const u8,
+    op: Op,
+    kind: DistKind,
+    mean_x10: u64,
+    seq: *const [dist_seq_len]DistEntry,
+};
+
 const Case = union(enum) {
     copy: CopyCase,
+    move: MoveCase,
+    dist: DistCase,
 
     fn id(self: Case) []const u8 {
         return switch (self) {
             .copy => |c| c.id,
+            .move => |m| m.id,
+            .dist => |d| d.id,
         };
     }
 };
+
+const DistSpec = struct {
+    max_size: u32,
+    off_range: u32,
+};
+
+fn distSpec(kind: DistKind) DistSpec {
+    return switch (kind) {
+        .small => .{ .max_size = 256, .off_range = 128 },
+        .mixed => .{ .max_size = 16384, .off_range = 512 },
+    };
+}
+
+fn genDistSeq(
+    kind: DistKind,
+    op: Op,
+    seed: u64,
+    seq: *[dist_seq_len]DistEntry,
+) u64 {
+    const op_salt: u64 = switch (op) {
+        .copy => 0x9E3779B97F4A7C15,
+        .move => 0xD1B54A32D192ED03,
+    };
+    const kind_salt: u64 = switch (kind) {
+        .small => 0x2545F4914F6CDD1D,
+        .mixed => 0xA24BAED4963EE407,
+    };
+    var prng = std.Random.DefaultPrng.init(seed +% op_salt +% kind_salt);
+    const random = prng.random();
+    const spec = distSpec(kind);
+
+    var sum: u64 = 0;
+    for (seq) |*e| {
+        const size: u32 = switch (kind) {
+            // Two-draw minimum biases the distribution toward small sizes.
+            .small => @min(
+                random.intRangeAtMost(u32, 0, spec.max_size),
+                random.intRangeAtMost(u32, 0, spec.max_size),
+            ),
+            // Log-uniform over [0, max_size].
+            .mixed => blk: {
+                const u = random.float(f64);
+                const max_plus_one = @as(f64, @floatFromInt(spec.max_size + 1));
+                const v = @exp(@log(max_plus_one) * u) - 1.0;
+                const as_int: u32 = @trunc(v);
+                break :blk as_int;
+            },
+        };
+        e.* = .{
+            .size = size,
+            .src_off = random.intRangeAtMost(u32, 0, spec.off_range - 1),
+            .dst_off = random.intRangeAtMost(u32, 0, spec.off_range - 1),
+        };
+        sum += size;
+    }
+    // Mean size in tenths of a byte, rounded.
+    return (sum * 10 + dist_seq_len / 2) / dist_seq_len;
+}
 
 // ---------------------------------------------------------------------------
 // Config / CLI
@@ -284,7 +473,12 @@ fn writeOptU64(w: *Io.Writer, value: ?u64) !void {
     }
 }
 
-fn emitMeta(w: *Io.Writer, cfg: *const Config) !void {
+fn emitMeta(
+    w: *Io.Writer,
+    cfg: *const Config,
+    perf: ?*const Perf,
+    perf_err: ?[]const u8,
+) !void {
     try w.writeAll("{\"type\":\"meta\",\"schema\":1,\"rev\":");
     try writeJsonString(w, rev);
     try w.print(",\"zig\":\"{s}\",\"target\":\"{s}-{s}-{s}\",\"cpu\":\"{s}\"", .{
@@ -312,8 +506,24 @@ fn emitMeta(w: *Io.Writer, cfg: *const Config) !void {
         if (j > 0) try w.writeByte(',');
         try writeJsonString(w, @tagName(impl));
     }
-    // perf wiring lands in the next step.
-    try w.writeAll("],\"perf\":{\"available\":false,\"events\":[],\"error\":null}}\n");
+    try w.writeAll("],\"perf\":{\"available\":");
+    if (perf) |p| {
+        try w.writeAll("true,\"events\":[");
+        for (p.eventNames(), 0..) |name, j| {
+            if (j > 0) try w.writeByte(',');
+            try writeJsonString(w, name);
+        }
+        try w.writeAll("],\"error\":null}");
+    } else {
+        try w.writeAll("false,\"events\":[],\"error\":");
+        if (perf_err) |e| {
+            try writeJsonString(w, e);
+        } else {
+            try w.writeAll("null");
+        }
+        try w.writeByte('}');
+    }
+    try w.writeAll("}\n");
 }
 
 fn emitCaseLine(w: *Io.Writer, case: Case) !void {
@@ -328,6 +538,19 @@ fn emitCaseLine(w: *Io.Writer, case: Case) !void {
                 c.src_off,
                 c.dst_off,
             });
+        },
+        .move => |m| {
+            try w.writeAll(",\"op\":\"move\",\"profile\":");
+            try writeJsonString(w, m.profile);
+            try w.print(",\"size\":{d},\"src_off\":null,\"dst_off\":null,\"gap\":{d}", .{
+                m.size,
+                m.gap,
+            });
+        },
+        .dist => |d| {
+            try w.print(",\"op\":\"{s}\",\"profile\":\"dist\"", .{@tagName(d.op)});
+            try w.print(",\"size\":{d}.{d}", .{ d.mean_x10 / 10, d.mean_x10 % 10 });
+            try w.writeAll(",\"src_off\":null,\"dst_off\":null,\"gap\":null");
         },
     }
     try w.writeAll("}\n");
@@ -346,11 +569,17 @@ fn emitSample(
 ) !void {
     try w.writeAll("{\"type\":\"sample\",\"case\":");
     try writeJsonString(w, case.id());
-    try w.writeAll(",\"op\":");
     switch (case) {
         .copy => |c| {
-            try w.writeAll("\"copy\",\"profile\":");
+            try w.writeAll(",\"op\":\"copy\",\"profile\":");
             try writeJsonString(w, c.profile);
+        },
+        .move => |m| {
+            try w.writeAll(",\"op\":\"move\",\"profile\":");
+            try writeJsonString(w, m.profile);
+        },
+        .dist => |d| {
+            try w.print(",\"op\":\"{s}\",\"profile\":\"dist\"", .{@tagName(d.op)});
         },
     }
     try w.print(",\"size\":{s}", .{size_json});
@@ -366,8 +595,13 @@ fn emitSample(
         r.iters,
         r.ns,
     });
-    // perf wiring lands in the next step.
-    try w.writeAll(",\"cycles\":null,\"instructions\":null,\"ref_cycles\":null}\n");
+    try w.writeAll(",\"cycles\":");
+    try writeOptU64(w, if (r.counters) |c| c.cycles else null);
+    try w.writeAll(",\"instructions\":");
+    try writeOptU64(w, if (r.counters) |c| c.instructions else null);
+    try w.writeAll(",\"ref_cycles\":");
+    try writeOptU64(w, if (r.counters) |c| c.ref_cycles else null);
+    try w.writeAll("}\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +611,7 @@ fn emitSample(
 const RunResult = struct {
     ns: u64,
     iters: usize,
+    counters: ?Counters,
     checksum: u64,
 };
 
@@ -400,6 +635,7 @@ fn mapBytes(len: usize) ![]align(std.heap.page_size_min) u8 {
 fn runCopyFixed(
     comptime op: OpFn,
     io: Io,
+    perf: ?*const Perf,
     src_buf: []u8,
     dst_buf: []u8,
     size: usize,
@@ -413,6 +649,7 @@ fn runCopyFixed(
     var checksum: u64 = 0;
     var index: usize = 0;
 
+    if (perf) |p| p.begin();
     const start = Io.Timestamp.now(io, .awake);
     for (0..iters) |i| {
         @call(.never_inline, op, .{ dest.ptr, source.ptr, size });
@@ -424,12 +661,124 @@ fn runCopyFixed(
         }
     }
     const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
+    const counters = if (perf) |p| p.end() else null;
 
     mem.doNotOptimizeAway(src_buf);
     mem.doNotOptimizeAway(dst_buf);
     mem.doNotOptimizeAway(checksum);
 
-    return .{ .ns = ns, .iters = iters, .checksum = checksum };
+    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
+}
+
+fn runMoveFixed(
+    comptime op: OpFn,
+    io: Io,
+    perf: ?*const Perf,
+    buf: []u8,
+    size: usize,
+    gap: usize,
+    direction: MoveDirection,
+    iters: usize,
+) RunResult {
+    var source_mut: []u8 = undefined;
+    var dest: []u8 = undefined;
+    switch (direction) {
+        .fwd => {
+            source_mut = buf[gap..][0..size];
+            dest = buf[0..size];
+        },
+        .bwd => {
+            source_mut = buf[0..size];
+            dest = buf[gap..][0..size];
+        },
+    }
+    const source: []const u8 = source_mut;
+
+    var checksum: u64 = 0;
+    var index: usize = 0;
+
+    if (perf) |p| p.begin();
+    const start = Io.Timestamp.now(io, .awake);
+    for (0..iters) |i| {
+        @call(.never_inline, op, .{ dest.ptr, source.ptr, size });
+        if (size > 0) {
+            checksum +%= dest[index];
+            source_mut[index] +%= @truncate(i +% 3);
+            index += 1;
+            if (index == size) index = 0;
+        }
+    }
+    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
+    const counters = if (perf) |p| p.end() else null;
+
+    mem.doNotOptimizeAway(buf);
+    mem.doNotOptimizeAway(checksum);
+
+    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
+}
+
+fn runCopyDist(
+    comptime op: OpFn,
+    io: Io,
+    perf: ?*const Perf,
+    src_buf: []u8,
+    dst_buf: []u8,
+    seq: *const [dist_seq_len]DistEntry,
+    iters: usize,
+) RunResult {
+    var checksum: u64 = 0;
+
+    if (perf) |p| p.begin();
+    const start = Io.Timestamp.now(io, .awake);
+    for (0..iters) |i| {
+        const e = seq[i & (dist_seq_len - 1)];
+        const source: []const u8 = src_buf[e.src_off..][0..e.size];
+        const dest: []u8 = dst_buf[e.dst_off..][0..e.size];
+        @call(.never_inline, op, .{ dest.ptr, source.ptr, e.size });
+        if (e.size > 0) {
+            checksum +%= dest[0];
+            src_buf[e.src_off] +%= @truncate(i +% 1);
+        }
+    }
+    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
+    const counters = if (perf) |p| p.end() else null;
+
+    mem.doNotOptimizeAway(src_buf);
+    mem.doNotOptimizeAway(dst_buf);
+    mem.doNotOptimizeAway(checksum);
+
+    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
+}
+
+fn runMoveDist(
+    comptime op: OpFn,
+    io: Io,
+    perf: ?*const Perf,
+    buf: []u8,
+    seq: *const [dist_seq_len]DistEntry,
+    iters: usize,
+) RunResult {
+    var checksum: u64 = 0;
+
+    if (perf) |p| p.begin();
+    const start = Io.Timestamp.now(io, .awake);
+    for (0..iters) |i| {
+        const e = seq[i & (dist_seq_len - 1)];
+        const source: []const u8 = buf[e.src_off..][0..e.size];
+        const dest: []u8 = buf[e.dst_off..][0..e.size];
+        @call(.never_inline, op, .{ dest.ptr, source.ptr, e.size });
+        if (e.size > 0) {
+            checksum +%= dest[0];
+            buf[e.src_off] +%= @truncate(i +% 3);
+        }
+    }
+    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
+    const counters = if (perf) |p| p.end() else null;
+
+    mem.doNotOptimizeAway(buf);
+    mem.doNotOptimizeAway(checksum);
+
+    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +846,7 @@ fn measuredSample(
 fn runCase(
     cfg: *const Config,
     io: Io,
+    perf: ?*const Perf,
     w: *Io.Writer,
     case: Case,
     checksum_out: *u64,
@@ -518,7 +868,7 @@ fn runCase(
                 iters_state[j] = switch (impl) {
                     inline else => |cp| blk: {
                         const m = measuredSample(runCopyFixed, .{
-                            copyFnFor(cp), io, src, dst, c.size, c.src_off, c.dst_off,
+                            copyFnFor(cp), io, perf, src, dst, c.size, c.src_off, c.dst_off,
                         }, iters_state[j], cfg.warmupNs());
                         checksum_out.* +%= m.result.checksum;
                         break :blk m.iters;
@@ -531,7 +881,7 @@ fn runCase(
                     const impl = cfg.impls[j];
                     const m = switch (impl) {
                         inline else => |cp| measuredSample(runCopyFixed, .{
-                            copyFnFor(cp), io, src, dst, c.size, c.src_off, c.dst_off,
+                            copyFnFor(cp), io, perf, src, dst, c.size, c.src_off, c.dst_off,
                         }, iters_state[j], cfg.sampleNs()),
                     };
                     iters_state[j] = m.iters;
@@ -553,6 +903,155 @@ fn runCase(
                         s,
                         m.result,
                     );
+                }
+            }
+        },
+        .move => |mc| {
+            const buf = try mapBytes(mc.size + mc.gap + 1);
+            defer std.posix.munmap(buf);
+            fillPattern(buf, 0xC3);
+
+            for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
+                iters_state[j] = seedIterations(mc.size);
+                if (cfg.warmupNs() == 0) continue;
+                iters_state[j] = switch (impl) {
+                    inline else => |cp| blk: {
+                        const m = measuredSample(runMoveFixed, .{
+                            moveFnFor(cp), io, perf, buf, mc.size, mc.gap, mc.direction,
+                        }, iters_state[j], cfg.warmupNs());
+                        checksum_out.* +%= m.result.checksum;
+                        break :blk m.iters;
+                    },
+                };
+            }
+            for (0..cfg.samples) |s| {
+                for (0..cfg.n_impls) |k| {
+                    const j = (k + s) % cfg.n_impls;
+                    const impl = cfg.impls[j];
+                    const m = switch (impl) {
+                        inline else => |cp| measuredSample(runMoveFixed, .{
+                            moveFnFor(cp), io, perf, buf, mc.size, mc.gap, mc.direction,
+                        }, iters_state[j], cfg.sampleNs()),
+                    };
+                    iters_state[j] = m.iters;
+                    checksum_out.* +%= m.result.checksum;
+                    var size_buf: [24]u8 = undefined;
+                    const size_json = std.fmt.bufPrint(
+                        &size_buf,
+                        "{d}",
+                        .{mc.size},
+                    ) catch unreachable;
+                    try emitSample(
+                        w,
+                        case,
+                        size_json,
+                        null,
+                        null,
+                        mc.gap,
+                        impl,
+                        s,
+                        m.result,
+                    );
+                }
+            }
+        },
+        .dist => |d| {
+            const spec = distSpec(d.kind);
+            const buf_len = @as(usize, spec.max_size) + spec.off_range + 1;
+            const mean_size = d.mean_x10 / 10;
+            var size_buf: [24]u8 = undefined;
+            const size_json = std.fmt.bufPrint(
+                &size_buf,
+                "{d}.{d}",
+                .{ d.mean_x10 / 10, d.mean_x10 % 10 },
+            ) catch unreachable;
+
+            if (d.op == .copy) {
+                const src = try mapBytes(buf_len);
+                defer std.posix.munmap(src);
+                const dst = try mapBytes(buf_len);
+                defer std.posix.munmap(dst);
+                fillPattern(src, 0x11);
+                @memset(dst, 0xA5);
+
+                for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
+                    iters_state[j] = seedIterations(mean_size);
+                    if (cfg.warmupNs() == 0) continue;
+                    iters_state[j] = switch (impl) {
+                        inline else => |cp| blk: {
+                            const m = measuredSample(runCopyDist, .{
+                                copyFnFor(cp), io, perf, src, dst, d.seq,
+                            }, iters_state[j], cfg.warmupNs());
+                            checksum_out.* +%= m.result.checksum;
+                            break :blk m.iters;
+                        },
+                    };
+                }
+                for (0..cfg.samples) |s| {
+                    for (0..cfg.n_impls) |k| {
+                        const j = (k + s) % cfg.n_impls;
+                        const impl = cfg.impls[j];
+                        const m = switch (impl) {
+                            inline else => |cp| measuredSample(runCopyDist, .{
+                                copyFnFor(cp), io, perf, src, dst, d.seq,
+                            }, iters_state[j], cfg.sampleNs()),
+                        };
+                        iters_state[j] = m.iters;
+                        checksum_out.* +%= m.result.checksum;
+                        try emitSample(
+                            w,
+                            case,
+                            size_json,
+                            null,
+                            null,
+                            null,
+                            impl,
+                            s,
+                            m.result,
+                        );
+                    }
+                }
+            } else {
+                const buf = try mapBytes(buf_len);
+                defer std.posix.munmap(buf);
+                fillPattern(buf, 0x77);
+
+                for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
+                    iters_state[j] = seedIterations(mean_size);
+                    if (cfg.warmupNs() == 0) continue;
+                    iters_state[j] = switch (impl) {
+                        inline else => |cp| blk: {
+                            const m = measuredSample(runMoveDist, .{
+                                moveFnFor(cp), io, perf, buf, d.seq,
+                            }, iters_state[j], cfg.warmupNs());
+                            checksum_out.* +%= m.result.checksum;
+                            break :blk m.iters;
+                        },
+                    };
+                }
+                for (0..cfg.samples) |s| {
+                    for (0..cfg.n_impls) |k| {
+                        const j = (k + s) % cfg.n_impls;
+                        const impl = cfg.impls[j];
+                        const m = switch (impl) {
+                            inline else => |cp| measuredSample(runMoveDist, .{
+                                moveFnFor(cp), io, perf, buf, d.seq,
+                            }, iters_state[j], cfg.sampleNs()),
+                        };
+                        iters_state[j] = m.iters;
+                        checksum_out.* +%= m.result.checksum;
+                        try emitSample(
+                            w,
+                            case,
+                            size_json,
+                            null,
+                            null,
+                            null,
+                            impl,
+                            s,
+                            m.result,
+                        );
+                    }
                 }
             }
         },
@@ -589,8 +1088,50 @@ fn buildCases(arena: mem.Allocator, cfg: *const Config) ![]Case {
                     } });
                 }
             }
+            for ([_]MoveDirection{ .fwd, .bwd }) |direction| {
+                for (move_gaps) |gap| {
+                    const profile = try std.fmt.allocPrint(arena, "{s}-gap{d}", .{
+                        @tagName(direction),
+                        gap,
+                    });
+                    for (sizes) |size| {
+                        const id = try std.fmt.allocPrint(
+                            arena,
+                            "move/{s}/{d}",
+                            .{ profile, size },
+                        );
+                        if (!cfg.matches(id)) continue;
+                        try list.append(arena, .{ .move = .{
+                            .id = id,
+                            .profile = profile,
+                            .size = size,
+                            .gap = gap,
+                            .direction = direction,
+                        } });
+                    }
+                }
+            }
         },
-        .dist => {},
+        .dist => {
+            for ([_]Op{ .copy, .move }) |op| {
+                for ([_]DistKind{ .small, .mixed }) |kind| {
+                    const id = try std.fmt.allocPrint(arena, "{s}/dist/{s}", .{
+                        @tagName(op),
+                        @tagName(kind),
+                    });
+                    if (!cfg.matches(id)) continue;
+                    const seq = try arena.create([dist_seq_len]DistEntry);
+                    const mean_x10 = genDistSeq(kind, op, cfg.seed, seq);
+                    try list.append(arena, .{ .dist = .{
+                        .id = id,
+                        .op = op,
+                        .kind = kind,
+                        .mean_x10 = mean_x10,
+                        .seq = seq,
+                    } });
+                }
+            }
+        },
     }
     return list.items;
 }
@@ -602,6 +1143,7 @@ fn buildCases(arena: mem.Allocator, cfg: *const Config) ![]Case {
 pub fn main(init: std.process.Init) !void {
     comptime {
         assert(math.isPowerOfTwo(chunk_bytes));
+        assert(math.isPowerOfTwo(dist_seq_len));
         assert(iterations_seed_min > 0);
         assert(iterations_hard_max >= iterations_seed_max);
     }
@@ -622,6 +1164,18 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const w = &stdout_file_writer.interface;
 
+    var perf_err_buf: [160]u8 = undefined;
+    var perf: ?Perf = null;
+    var perf_err: ?[]const u8 = null;
+    switch (perfInit(&perf_err_buf)) {
+        .ok => |p| perf = p,
+        .err => |e| {
+            perf_err = e;
+            std.debug.print("bench-fastmem: perf counters unavailable: {s}\n", .{e});
+        },
+    }
+    defer if (perf) |*p| p.deinit();
+
     const cases = try buildCases(arena, &cfg);
     std.debug.print("bench-fastmem: suite={s} cases={d} impls={d} samples={d}\n", .{
         @tagName(cfg.suite),
@@ -630,7 +1184,8 @@ pub fn main(init: std.process.Init) !void {
         cfg.samples,
     });
 
-    try emitMeta(w, &cfg);
+    const perf_ptr: ?*const Perf = if (perf) |*p| p else null;
+    try emitMeta(w, &cfg, perf_ptr, perf_err);
 
     if (cfg.list) {
         for (cases) |case| try emitCaseLine(w, case);
@@ -643,7 +1198,7 @@ pub fn main(init: std.process.Init) !void {
     var checksum: u64 = 0;
     for (cases) |case| {
         std.debug.print("bench-fastmem: case {s}\n", .{case.id()});
-        try runCase(&cfg, io, w, case, &checksum);
+        try runCase(&cfg, io, perf_ptr, w, case, &checksum);
         try w.flush();
     }
     const elapsed_ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
