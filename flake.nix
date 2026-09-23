@@ -17,8 +17,8 @@
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      # The dev machine is Apple Silicon macOS (benchmark-hosts.md); AWS and
-      # OrbStack targets are Linux. Nobody builds this on an Intel Mac.
+      # Dev machines are aarch64-linux (launchpad) and Apple Silicon macOS;
+      # bench boxes are EC2 Linux. Nobody builds this on an Intel Mac.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -32,12 +32,6 @@
             inherit system;
             overlays = [ mattware.overlays.default ];
           };
-          # bench.nu's compare step shells out to `benchstat`, which nixpkgs
-          # does not package. The wrapper defers to the Go module on first
-          # use; go-bin below provides the toolchain it needs.
-          benchstat = pkgs.writeShellScriptBin "benchstat" ''
-            exec go run golang.org/x/perf/cmd/benchstat@latest "$@"
-          '';
         in
         {
           formatter = pkgs.nixfmt-tree;
@@ -46,21 +40,31 @@
             packages = with pkgs; [
               just
               zig_0_16
-              # Bench-infrastructure tooling (infra/bench.nu, Justfile): AWS,
-              # OpenTofu, rsync for bench-sync, nushell for the driver, and
-              # benchstat/go-bin for run comparison. Same set everywhere —
-              # the Linux and macOS dev machines both drive benchmarks.
-              awscli2
-              benchstat
-              git
-              go-bin
-              nushell
-              opentofu
-              rsync
+              zls_0_16
               zigdoc
               ziglint
-              zls_0_16
+              git
+              # Bench harness (bench/): a uv project on Python 3.14. uv owns
+              # the Python deps; nix owns the interpreter and system tools.
+              python314
+              uv
+              # Fleet: OpenTofu for the durable base (infra/), the AWS CLI
+              # for ad-hoc inspection, ssh/rsync for box transport.
+              opentofu
+              awscli2
+              openssh
+              rsync
+              jq
+              # Cross-arch disassembly of local builds and pulled glibc
+              # objects: llvm-objdump reads x86_64 and aarch64 alike.
+              llvmPackages.bintools-unwrapped
+              shellcheck
             ];
+            # Keep uv on the nix interpreter; never download a Python.
+            env = {
+              UV_PYTHON = "${pkgs.python314}/bin/python3";
+              UV_PYTHON_DOWNLOADS = "never";
+            };
           };
         };
     };
