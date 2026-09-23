@@ -9,10 +9,13 @@
 //!   compatibility with tools like `benchstat`.
 
 const std = @import("std");
-const Timer = std.time.Timer;
+const Io = std.Io;
 const assert = std.debug.assert;
 const print = std.debug.print;
-const doNotOptimizeAway = std.mem.doNotOptimizeAway;
+const time = std.time;
+const math = std.math;
+const simd = std.simd;
+const mem = std.mem;
 const builtin = @import("builtin");
 
 const bench_options = @import("bench_options");
@@ -20,16 +23,17 @@ const has_libc = bench_options.link_libc;
 const fastmem = @import("fastmem");
 
 const sample_count = 9;
-const warmup_target_ns: u64 = 20 * std.time.ns_per_ms;
-const sample_target_ns: u64 = 60 * std.time.ns_per_ms;
+const warmup_target_ns: u64 = 20 * time.ns_per_ms;
+const sample_target_ns: u64 = 60 * time.ns_per_ms;
 const seed_target_bytes_per_case = 32 * 1024 * 1024;
 const iterations_seed_min = 256;
 const iterations_seed_max = 4_000_000;
 const iterations_hard_max = 64 * 1024 * 1024;
 const max_size = 16 * 1024;
 const max_offset = 64;
+const address_alignment = max_size;
 
-const chunk_bytes = @min(std.simd.suggestVectorLength(u8) orelse 16, 32);
+const chunk_bytes = @min(simd.suggestVectorLength(u8) orelse 16, 32);
 extern fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
 extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
 
@@ -157,11 +161,29 @@ fn chooseInitialIterations(size: usize) usize {
     assert(size > 0);
 
     const target_iterations = seed_target_bytes_per_case / size;
-    return std.math.clamp(target_iterations, iterations_seed_min, iterations_seed_max);
+    return math.clamp(target_iterations, iterations_seed_min, iterations_seed_max);
+}
+
+fn alignedIndex(buffer: []u8, alignment: usize) usize {
+    const base_addr = @intFromPtr(buffer.ptr);
+    const aligned_addr = mem.alignForward(usize, base_addr, alignment);
+    return aligned_addr - base_addr;
+}
+
+fn alignedSlice(buffer: []u8, alignment: usize, length: usize) []u8 {
+    const index = alignedIndex(buffer, alignment);
+    assert(index + length <= buffer.len);
+    return buffer[index..][0..length];
+}
+
+fn alignedWindow(buffer: []u8, alignment: usize, offset: usize, length: usize) []u8 {
+    const slice = alignedSlice(buffer, alignment, offset + length);
+    return slice[offset..][0..length];
 }
 
 fn runCopyOnce(
     comptime op: fn (dest: []u8, source: []const u8) void,
+    io: Io,
     size: usize,
     source_offset: usize,
     dest_offset: usize,
@@ -174,31 +196,31 @@ fn runCopyOnce(
     assert(dest_offset < max_offset);
     assert(iterations > 0);
 
-    var source_storage: [max_size + max_offset]u8 align(64) = undefined;
-    var dest_storage: [max_size + max_offset]u8 align(64) = undefined;
+    var source_storage: [address_alignment + max_size + max_offset]u8 align(64) = undefined;
+    var dest_storage: [address_alignment + max_size + max_offset]u8 align(64) = undefined;
 
     fillPattern(&source_storage, sample_seed);
     @memset(&dest_storage, 0xA5);
 
-    var source_mut = source_storage[source_offset..][0..size];
+    var source_mut = alignedWindow(&source_storage, address_alignment, source_offset, size);
     const source_const: []const u8 = source_mut;
-    const dest = dest_storage[dest_offset..][0..size];
+    const dest = alignedWindow(&dest_storage, address_alignment, dest_offset, size);
 
     var checksum: u64 = 0;
     const index_mask = size - 1;
 
-    var timer = try Timer.start();
+    const start = Io.Timestamp.now(io, .awake);
     for (0..iterations) |i| {
         const index = (i * 13) & index_mask;
         op(dest, source_const);
         checksum +%= dest[index];
         source_mut[index] +%= @truncate(i + 1);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(start.durationTo(Io.Timestamp.now(io, .awake)).nanoseconds);
 
-    doNotOptimizeAway(source_storage);
-    doNotOptimizeAway(dest_storage);
-    doNotOptimizeAway(checksum);
+    mem.doNotOptimizeAway(source_storage);
+    mem.doNotOptimizeAway(dest_storage);
+    mem.doNotOptimizeAway(checksum);
 
     return .{
         .elapsed_ns = elapsed_ns,
@@ -210,6 +232,7 @@ fn runCopyOnce(
 
 fn runMoveOnce(
     comptime op: fn (dest: []u8, source: []const u8) void,
+    io: Io,
     size: usize,
     gap: usize,
     direction: MoveDirection,
@@ -222,21 +245,21 @@ fn runMoveOnce(
     assert(gap < max_offset);
     assert(iterations > 0);
 
-    var storage: [max_size + max_offset]u8 align(64) = undefined;
+    var storage: [address_alignment + max_size + max_offset]u8 align(64) = undefined;
     fillPattern(&storage, sample_seed);
+
+    const window = alignedSlice(&storage, address_alignment, size + gap);
 
     var source_mut: []u8 = undefined;
     var dest: []u8 = undefined;
     switch (direction) {
         .forward_overlap => {
-            assert(size + gap <= storage.len);
-            source_mut = storage[gap..][0..size];
-            dest = storage[0..size];
+            source_mut = window[gap..][0..size];
+            dest = window[0..size];
         },
         .backward_overlap => {
-            assert(size + gap <= storage.len);
-            source_mut = storage[0..size];
-            dest = storage[gap..][0..size];
+            source_mut = window[0..size];
+            dest = window[gap..][0..size];
         },
     }
     const source_const: []const u8 = source_mut;
@@ -244,17 +267,17 @@ fn runMoveOnce(
     var checksum: u64 = 0;
     const index_mask = size - 1;
 
-    var timer = try Timer.start();
+    const start: Io.Timestamp = .now(io, .awake);
     for (0..iterations) |i| {
         const index = (i * 29) & index_mask;
         op(dest, source_const);
         checksum +%= dest[index];
         source_mut[index] +%= @truncate(i + 3);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
 
-    doNotOptimizeAway(storage);
-    doNotOptimizeAway(checksum);
+    mem.doNotOptimizeAway(storage);
+    mem.doNotOptimizeAway(checksum);
 
     return .{
         .elapsed_ns = elapsed_ns,
@@ -373,7 +396,7 @@ fn benchmarkOnce(
     return .{
         .sample_count = sample_count,
         .iterations_p50 = iterations_sorted[p50_index],
-        .bytes_per_iteration = args[1], // size is always second arg
+        .bytes_per_iteration = args[2], // op, io, size — size is always third arg
         .checksum = checksum,
         .samples = sample_stats,
         .ns_per_op_min = ns_sorted[0],
@@ -440,7 +463,7 @@ fn directionName(direction: MoveDirection) []const u8 {
     };
 }
 
-fn benchCopySuite() !u64 {
+fn benchCopySuite(io: Io) !u64 {
     var checksum: u64 = 0;
     for (copy_profiles) |profile| {
         for (sizes) |size| {
@@ -448,16 +471,28 @@ fn benchCopySuite() !u64 {
             var name_buf: [64]u8 = undefined;
             const name = std.fmt.bufPrint(&name_buf, "Copy/profile={s}/size={d}B", .{ profile.name, size }) catch unreachable;
 
-            const baseline = try benchmarkOnce(runCopyOnce, .{ copyBuiltin, size, profile.source_offset, profile.dest_offset }, iterations);
+            const baseline = try benchmarkOnce(
+                runCopyOnce,
+                .{ copyBuiltin, io, size, profile.source_offset, profile.dest_offset },
+                iterations,
+            );
             printBenchLine(name, .builtin, baseline, null);
             checksum +%= baseline.checksum;
 
-            const fast = try benchmarkOnce(runCopyOnce, .{ copyFast, size, profile.source_offset, profile.dest_offset }, iterations);
+            const fast = try benchmarkOnce(
+                runCopyOnce,
+                .{ copyFast, io, size, profile.source_offset, profile.dest_offset },
+                iterations,
+            );
             printBenchLine(name, .fastmem, fast, baseline);
             checksum +%= fast.checksum;
 
             if (has_libc) {
-                const libc = try benchmarkOnce(runCopyOnce, .{ copyLibc, size, profile.source_offset, profile.dest_offset }, iterations);
+                const libc = try benchmarkOnce(
+                    runCopyOnce,
+                    .{ copyLibc, io, size, profile.source_offset, profile.dest_offset },
+                    iterations,
+                );
                 printBenchLine(name, .libc, libc, baseline);
                 checksum +%= libc.checksum;
             }
@@ -466,7 +501,7 @@ fn benchCopySuite() !u64 {
     return checksum;
 }
 
-fn benchMoveSuite() !u64 {
+fn benchMoveSuite(io: Io) !u64 {
     var checksum: u64 = 0;
     for ([_]MoveDirection{ .forward_overlap, .backward_overlap }) |direction| {
         for (move_gaps) |gap| {
@@ -477,16 +512,28 @@ fn benchMoveSuite() !u64 {
                     directionName(direction), gap, size,
                 }) catch unreachable;
 
-                const baseline = try benchmarkOnce(runMoveOnce, .{ moveBuiltin, size, gap, direction }, iterations);
+                const baseline = try benchmarkOnce(
+                    runMoveOnce,
+                    .{ moveBuiltin, io, size, gap, direction },
+                    iterations,
+                );
                 printBenchLine(name, .builtin, baseline, null);
                 checksum +%= baseline.checksum;
 
-                const fast = try benchmarkOnce(runMoveOnce, .{ moveFast, size, gap, direction }, iterations);
+                const fast = try benchmarkOnce(
+                    runMoveOnce,
+                    .{ moveFast, io, size, gap, direction },
+                    iterations,
+                );
                 printBenchLine(name, .fastmem, fast, baseline);
                 checksum +%= fast.checksum;
 
                 if (has_libc) {
-                    const libc = try benchmarkOnce(runMoveOnce, .{ moveLibc, size, gap, direction }, iterations);
+                    const libc = try benchmarkOnce(
+                        runMoveOnce,
+                        .{ moveLibc, io, size, gap, direction },
+                        iterations,
+                    );
                     printBenchLine(name, .libc, libc, baseline);
                     checksum +%= libc.checksum;
                 }
@@ -497,31 +544,63 @@ fn benchMoveSuite() !u64 {
 }
 
 fn printFlags() void {
-    const f = fastmem.flags;
-    print("Flags: tight_loop={} medium_straight_line={}" ++
+    const copy_flags = fastmem.flags.copy;
+    const move_flags = fastmem.flags.move;
+    print("CopyFlags:" ++
+        " tight_loop={}" ++
+        " medium_straight_line={}" ++
+        " align_forward_to_source={}" ++
         " copy_align_peel_min_strides={d}" ++
+        " large_copy_use_builtin={}" ++
+        " large_copy_builtin_threshold={d}" ++
+        " software_pipeline_large_loop={}" ++
+        " software_pipeline_large_loop_threshold={d}" ++
+        " large_copy_use_libc={}" ++
+        " large_copy_libc_threshold={d}\n", .{
+        copy_flags.tight_loop,
+        copy_flags.medium_straight_line,
+        copy_flags.align_forward_to_source,
+        copy_flags.copy_align_peel_min_strides,
+        copy_flags.large_copy_use_builtin,
+        copy_flags.large_copy_builtin_threshold,
+        copy_flags.software_pipeline_large_loop,
+        copy_flags.software_pipeline_large_loop_threshold,
+        copy_flags.large_copy_use_libc,
+        copy_flags.large_copy_libc_threshold,
+    });
+    print("MoveFlags:" ++
+        " tight_loop={}" ++
+        " medium_straight_line={}" ++
+        " align_forward_to_source={}" ++
+        " align_backward_to_source_end={}" ++
         " move_fwd_peel_min_bytes={d}" ++
         " move_bwd_peel_min_strides={d}" ++
-        " large_copy_use_builtin={}" ++
-        " large_copy_builtin_threshold={d}\n", .{
-        f.tight_loop,
-        f.medium_straight_line,
-        f.copy_align_peel_min_strides,
-        f.move_fwd_peel_min_bytes,
-        f.move_bwd_peel_min_strides,
-        f.large_copy_use_builtin,
-        f.large_copy_builtin_threshold,
+        " large_move_use_libc={}" ++
+        " large_move_libc_threshold={d}" ++
+        " large_backward_move_use_libc={}" ++
+        " large_backward_move_libc_threshold={d}\n", .{
+        move_flags.tight_loop,
+        move_flags.medium_straight_line,
+        move_flags.align_forward_to_source,
+        move_flags.align_backward_to_source_end,
+        move_flags.move_fwd_peel_min_bytes,
+        move_flags.move_bwd_peel_min_strides,
+        move_flags.large_move_use_libc,
+        move_flags.large_move_libc_threshold,
+        move_flags.large_backward_move_use_libc,
+        move_flags.large_backward_move_libc_threshold,
     });
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     comptime {
         assert(sample_count > 0);
         assert(iterations_seed_min > 0);
         assert(iterations_seed_max >= iterations_seed_min);
         assert(iterations_hard_max >= iterations_seed_max);
         assert(sample_target_ns > 0);
-        assert(std.math.isPowerOfTwo(chunk_bytes));
+        assert(math.isPowerOfTwo(chunk_bytes));
         assert(copy_profiles.len > 0);
         assert(move_gaps.len > 0);
     }
@@ -538,8 +617,8 @@ pub fn main() !void {
     print("cpu.model: {s}\n", .{builtin.target.cpu.model.name});
     print("BenchmarkConfig: samples={d} warmup_ms={d} sample_ms={d} chunk_bytes={d} libc={}\n", .{
         sample_count,
-        warmup_target_ns / std.time.ns_per_ms,
-        sample_target_ns / std.time.ns_per_ms,
+        warmup_target_ns / time.ns_per_ms,
+        sample_target_ns / time.ns_per_ms,
         chunk_bytes,
         has_libc,
     });
@@ -547,9 +626,9 @@ pub fn main() !void {
     print("\n", .{});
 
     var checksum_total: u64 = 0;
-    checksum_total +%= try benchCopySuite();
-    checksum_total +%= try benchMoveSuite();
+    checksum_total +%= try benchCopySuite(io);
+    checksum_total +%= try benchMoveSuite(io);
 
-    doNotOptimizeAway(checksum_total);
+    mem.doNotOptimizeAway(checksum_total);
     print("PASS\n", .{});
 }

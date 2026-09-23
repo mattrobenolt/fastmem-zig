@@ -46,16 +46,18 @@ resource "aws_instance" "bench" {
 
   root_block_device {
     volume_size = 20
+    volume_type = "gp3"
   }
 
-  user_data = <<-EOF
-    { imports = [
-        <nixpkgs/nixos/modules/virtualisation/amazon-image.nix>
-      ];
-      nix.settings.experimental-features = [ "nix-command" "flakes" ];
-      environment.systemPackages = [ (import <nixpkgs> {}).rsync ];
-    }
-  EOF
+  user_data = file("${path.module}/configuration.nix")
+
+  lifecycle {
+    ignore_changes = [
+      tags["CreatorId"],
+      tags["CreatorName"],
+      tags_all,
+    ]
+  }
 
   tags = {
     Name = "fastmem-bench-${each.key}"

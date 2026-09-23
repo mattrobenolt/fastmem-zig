@@ -2,7 +2,7 @@
     .name = .fastmem,
     .version = "0.0.0",
     .fingerprint = 0x870b0dfe77f0765b,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

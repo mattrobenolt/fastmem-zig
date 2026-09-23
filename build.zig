@@ -57,6 +57,22 @@ pub fn build(b: *std.Build) void {
     bench_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| bench_cmd.addArgs(args);
 
+    const libc_probe_mod = b.createModule(.{
+        .root_source_file = b.path("src/libc_probe.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+        .link_libc = true,
+    });
+    if (target.result.os.tag == .linux) libc_probe_mod.linkSystemLibrary("dl", .{});
+
+    const libc_probe = b.addExecutable(.{
+        .name = "libc-probe",
+        .root_module = libc_probe_mod,
+    });
+    const install_libc_probe = b.addInstallArtifact(libc_probe, .{});
+    const libc_probe_step = b.step("libc-probe", "Build the libc symbol probe");
+    libc_probe_step.dependOn(&install_libc_probe.step);
+
     // Assembly output for codegen inspection.
     addAsmStep(b, target, "asm", "Emit assembly for the current (or -Dtarget) target");
 
@@ -76,9 +92,17 @@ pub fn build(b: *std.Build) void {
         asm_all_step.dependOn(obj);
     }
 
-    // Tests.
+    // Tests. The fastmem test module takes an explicit optimize so a
+    // release-mode test build can dodge the 0.16.0 self-hosted-backend
+    // bug in fuzz mode (ziglang/zig#30655) — see the `fuzz` Justfile
+    // recipe. The library module itself stays null-optimize and inherits
+    // each consumer's mode (ReleaseFast for bench, etc.).
     const mod_tests = b.addTest(.{
-        .root_module = mod,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const run_mod_tests = b.addRunArtifact(mod_tests);

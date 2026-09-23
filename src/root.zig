@@ -1,348 +1,37 @@
 //! Fast memory operations using native SIMD vectors.
 //!
-//! Vector width is selected at comptime via std.simd.suggestVectorLength,
-//! capped at 32B (256-bit). NEON = 16B, AVX2 = 32B. The inner loop
-//! unroll factor is controlled by `vectors_per_stride` (default 4,
-//! giving 64B/iter on NEON, 128B/iter on AVX2). On aarch64, LLVM
-//! merges adjacent vector loads/stores into ldp/stp pairs automatically.
+//! `memcpy` and `memmove` now live in separate modules so their policy
+//! decisions can diverge cleanly, while still sharing the low-level
+//! load/store primitives and the overlap-safe forward kernel.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const testing = std.testing;
-const simd = std.simd;
-const builtin = @import("builtin");
 
-/// Per-CPU tuning knobs. All fields have conservative defaults; override
-/// per cpu.model
+const common = @import("common.zig");
+const chunk_bytes = common.chunk_bytes;
+const stride = common.stride;
+const memcpy_impl = @import("memcpy.zig");
+pub const CopyFlags = memcpy_impl.Flags;
+const memmove_impl = @import("memmove.zig");
+pub const MoveFlags = memmove_impl.Flags;
+
+/// Public snapshot of the current memcpy and memmove tuning knobs.
 pub const Flags = struct {
-    /// Pointer-bumping loop (tight codegen) vs single-offset loop.
-    tight_loop: bool = true,
-    /// Straight-line medium tiers (stride, stride*2) before entering the loop.
-    medium_straight_line: bool = false,
-    /// Min bytes before copy alignment peel, as stride multiples.
-    copy_align_peel_min_strides: comptime_int = 2,
-    /// Forward-move peel floor in bytes (actual min = max(stride*2, this)).
-    move_fwd_peel_min_bytes: comptime_int = 2048,
-    /// Backward-move peel in stride multiples.
-    move_bwd_peel_min_strides: comptime_int = 2,
-    /// Fall back to @memcpy for large aligned copies (rep movsb on ERMS/FSRM x86).
-    large_copy_use_builtin: bool = false,
-    /// Threshold for large_copy_use_builtin (bytes).
-    large_copy_builtin_threshold: comptime_int = 4096,
+    copy: CopyFlags,
+    move: MoveFlags,
 };
 
-pub const flags: Flags = switch (builtin.cpu.arch) {
-    .aarch64 => if (builtin.cpu.model == &std.Target.aarch64.cpu.generic)
-        .{ .tight_loop = false, .medium_straight_line = true, .copy_align_peel_min_strides = 8 }
-    else if (builtin.cpu.model == &std.Target.aarch64.cpu.apple_m1)
-        .{ .large_copy_use_builtin = true, .large_copy_builtin_threshold = 1024 }
-    else
-        .{},
-    .x86_64 => if (builtin.cpu.model == &std.Target.x86.cpu.x86_64)
-        .{ .tight_loop = false, .medium_straight_line = true, .copy_align_peel_min_strides = 8 }
-    else if (builtin.cpu.model == &std.Target.x86.cpu.sapphirerapids)
-        .{ .large_copy_use_builtin = true, .large_copy_builtin_threshold = 2048 }
-    else
-        .{},
-    else => .{},
+pub const flags: Flags = .{
+    .copy = memcpy_impl.flags,
+    .move = memmove_impl.flags,
 };
 
-/// Native vector width in bytes, selected at comptime. Capped at 32B
-/// because AVX-512 zmm usage causes frequency throttling on Intel cores.
-const chunk_bytes = @min(simd.suggestVectorLength(u8) orelse 16, 32);
-
-/// SIMD vector type — q-register on NEON, ymm on AVX2.
-const Chunk = @Vector(chunk_bytes, u8); // ziglint-ignore: Z006
-
-/// Vectors per inner loop iteration.
-const vectors_per_stride = 4;
-
-/// Bytes per inner loop iteration.
-const stride = chunk_bytes * vectors_per_stride;
-
-const copy_align_peel_min = flags.copy_align_peel_min_strides * stride;
-const move_forward_align_peel_min: usize = @max(stride * 2, flags.move_fwd_peel_min_bytes);
-const move_backward_align_peel_min = flags.move_bwd_peel_min_strides * stride;
-
-comptime {
-    assert(std.math.isPowerOfTwo(chunk_bytes));
-    assert(std.math.isPowerOfTwo(stride));
-    assert(copy_align_peel_min >= stride);
-    assert(move_forward_align_peel_min >= stride);
-    assert(move_backward_align_peel_min >= stride);
-}
-
-inline fn byteLen(comptime T: type, count: usize) usize {
-    if (comptime @sizeOf(T) == 0) return 0;
-    if (count == 0) return 0;
-
-    assert(count <= std.math.maxInt(usize) / @sizeOf(T));
-    return count * @sizeOf(T);
-}
-
-/// Non-overlapping copy. Prefer over @memcpy for runtime-sized copies
-/// that may exceed ~32 bytes.
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
-    assert(dest.len >= source.len);
-
-    const byte_len = byteLen(T, source.len);
-    if (byte_len == 0) return;
-
-    const d: [*]u8 = @ptrCast(dest.ptr);
-    const s: [*]const u8 = @ptrCast(source.ptr);
-    const d_addr = @intFromPtr(d);
-    const s_addr = @intFromPtr(s);
-
-    assert(s_addr <= std.math.maxInt(usize) - byte_len);
-    const s_end = s_addr + byte_len;
-    assert(d_addr <= s_addr or d_addr >= s_end);
-
-    copyFwd(copy_align_peel_min, true, d, s, byte_len);
+    memcpy_impl.copy(T, dest, source);
 }
 
-/// Overlapping-safe move. Prefer over @memmove for runtime-sized moves.
 pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
-    assert(dest.len >= source.len);
-
-    const byte_len = byteLen(T, source.len);
-    if (byte_len == 0) return;
-
-    const d: [*]u8 = @ptrCast(dest.ptr);
-    const s: [*]const u8 = @ptrCast(source.ptr);
-    const d_addr = @intFromPtr(d);
-    const s_addr = @intFromPtr(s);
-
-    assert(s_addr <= std.math.maxInt(usize) - byte_len);
-    const s_end = s_addr + byte_len;
-
-    // Forward is safe when dest <= src or regions don't overlap.
-    if (d_addr <= s_addr) return copyFwd(move_forward_align_peel_min, false, d, s, byte_len);
-    if (d_addr >= s_end) {
-        return copyFwd(move_forward_align_peel_min, false, d, s, byte_len);
-    }
-
-    // Overlapping with dest > src.
-    // Small path loads all data before any stores — inherently safe.
-    if (byte_len < stride) return copySmall(d, s, byte_len);
-
-    var remaining = byte_len;
-
-    // Peel an unaligned tail only when enough work remains to amortize it.
-    if (remaining >= move_backward_align_peel_min) {
-        const mask = @as(usize, chunk_bytes - 1);
-        const end_misalignment = (@intFromPtr(d) + remaining) & mask;
-        if (end_misalignment > 0) {
-            copySmall(d + remaining - end_misalignment, s + remaining - end_misalignment, end_misalignment);
-            remaining -= end_misalignment;
-        }
-    }
-
-    if (remaining < stride) return copySmall(d, s, remaining);
-    copyLargeBackward(d, s, remaining);
-}
-
-inline fn copyFwd(
-    comptime align_peel_min: comptime_int,
-    comptime allow_builtin_fallback: bool,
-    dest: [*]u8,
-    src: [*]const u8,
-    len: usize,
-) void {
-    var d = dest;
-    var s = src;
-    var remaining = len;
-
-    if (remaining < stride) return copySmall(d, s, remaining);
-
-    // On targets where LLVM generates a bloated loop body, bypass the
-    // loop for medium sizes with straight-line loads then stores.
-    // All loads complete before any stores — safe for overlapping regions.
-    if (flags.medium_straight_line) {
-        if (remaining <= stride) {
-            storeVN(vectors_per_stride, d, 0, loadVN(vectors_per_stride, s, 0));
-            return;
-        }
-        if (remaining <= stride * 2) {
-            const head = loadVN(vectors_per_stride, s, 0);
-            const tail = loadVN(vectors_per_stride, s, remaining - stride);
-            storeVN(vectors_per_stride, d, 0, head);
-            storeVN(vectors_per_stride, d, remaining - stride, tail);
-            return;
-        }
-    }
-
-    // Align destination for vector stores only when enough work remains.
-    if (remaining >= align_peel_min) {
-        const mask = @as(usize, chunk_bytes - 1);
-        const dest_misalignment = @intFromPtr(d) & mask;
-        if (dest_misalignment > 0) {
-            const prefix = @as(usize, chunk_bytes) - dest_misalignment;
-            copySmall(d, s, prefix);
-            d += prefix;
-            s += prefix;
-            remaining -= prefix;
-        }
-    }
-
-    if (remaining < stride) return copySmall(d, s, remaining);
-    copyLargeForward(allow_builtin_fallback, d, s, remaining);
-}
-
-/// Handles 0..stride-1 bytes using overlapping loads at progressively
-/// larger widths. All loads complete before any stores, making this
-/// safe for overlapping regions in either direction.
-fn copySmall(dest: [*]u8, src: [*]const u8, len: usize) void {
-    if (len >= chunk_bytes * 2) {
-        // 2*chunk..stride-1: four overlapping vectors.
-        const h0 = loadV(src);
-        const h1 = loadV(src + chunk_bytes);
-        const t0 = loadV(src + len - chunk_bytes * 2);
-        const t1 = loadV(src + len - chunk_bytes);
-        storeV(dest, h0);
-        storeV(dest + chunk_bytes, h1);
-        storeV(dest + len - chunk_bytes * 2, t0);
-        storeV(dest + len - chunk_bytes, t1);
-    } else if (len >= chunk_bytes) {
-        // chunk..2*chunk-1: two overlapping vectors.
-        const head = loadV(src);
-        const tail = loadV(src + len - chunk_bytes);
-        storeV(dest, head);
-        storeV(dest + len - chunk_bytes, tail);
-    } else if (chunk_bytes > 16 and len >= 16) {
-        // 16..chunk-1: two overlapping 128-bit loads (AVX2 only;
-        // on NEON chunk_bytes==16 so the vector branch above handles this).
-        const head = loadU(u128, src);
-        const tail = loadU(u128, src + len - 16);
-        storeU(u128, dest, head);
-        storeU(u128, dest + len - 16, tail);
-    } else if (len >= 8) {
-        // 8..15: two overlapping 64-bit loads.
-        const head = loadU(u64, src);
-        const tail = loadU(u64, src + len - 8);
-        storeU(u64, dest, head);
-        storeU(u64, dest + len - 8, tail);
-    } else if (len >= 4) {
-        // 4..7: two overlapping 4-byte loads.
-        const head = loadU(u32, src);
-        const tail = loadU(u32, src + len - 4);
-        storeU(u32, dest, head);
-        storeU(u32, dest + len - 4, tail);
-    } else if (len > 0) {
-        // 1..3: three overlapping byte copies.
-        const a = src[0];
-        const b = src[len >> 1];
-        const c = src[len - 1];
-        dest[0] = a;
-        dest[len >> 1] = b;
-        dest[len - 1] = c;
-    }
-}
-
-/// Load `count` contiguous vectors starting at `ptr + off`.
-inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize) [count]Chunk {
-    var vecs: [count]Chunk = undefined;
-    inline for (0..count) |i| {
-        vecs[i] = loadV(ptr + off + chunk_bytes * i);
-    }
-    return vecs;
-}
-
-/// Store `count` contiguous vectors starting at `ptr + off`.
-inline fn storeVN(comptime count: comptime_int, ptr: [*]u8, off: usize, vecs: [count]Chunk) void {
-    inline for (0..count) |i| {
-        storeV(ptr + off + chunk_bytes * i, vecs[i]);
-    }
-}
-
-/// Forward loop for >= stride bytes.
-inline fn copyLargeForward(
-    comptime allow_builtin_fallback: bool,
-    dest: [*]u8,
-    src: [*]const u8,
-    len: usize,
-) void {
-    assert(len >= stride);
-
-    // Delegate to the platform's optimized implementation for large
-    // non-overlapping copies. Only used from copy(), not from move().
-    if (allow_builtin_fallback and flags.large_copy_use_builtin and len >= flags.large_copy_builtin_threshold) {
-        @memcpy(dest[0..len], src[0..len]);
-        return;
-    }
-
-    if (flags.tight_loop) {
-        // Pointer bumping: known models produce tight codegen.
-        var d = dest;
-        var s = src;
-        var remaining = len;
-        while (remaining >= stride) {
-            storeVN(vectors_per_stride, d, 0, loadVN(vectors_per_stride, s, 0));
-            d += stride;
-            s += stride;
-            remaining -= stride;
-        }
-        if (remaining > 0) copySmall(d, s, remaining);
-    } else {
-        // Single offset: generic targets produce bloated codegen with
-        // multiple induction variables; a single offset keeps the loop
-        // body smaller.
-        var off: usize = 0;
-        while (off + stride <= len) : (off += stride) {
-            storeVN(vectors_per_stride, dest + off, 0, loadVN(vectors_per_stride, src + off, 0));
-        }
-        const remaining = len - off;
-        if (remaining > 0) copySmall(dest + off, src + off, remaining);
-    }
-}
-
-/// Backward loop for >= stride bytes with overlapping dest > src.
-/// Finishes with copySmall for the remaining prefix.
-inline fn copyLargeBackward(
-    dest: [*]u8,
-    src: [*]const u8,
-    len: usize,
-) void {
-    assert(len >= stride);
-
-    if (flags.tight_loop) {
-        var d = dest + len;
-        var s = src + len;
-        var remaining = len;
-        while (remaining >= stride) {
-            d -= stride;
-            s -= stride;
-            storeVN(vectors_per_stride, d, 0, loadVN(vectors_per_stride, s, 0));
-            remaining -= stride;
-        }
-        if (remaining > 0) copySmall(dest, src, remaining);
-    } else {
-        var off = len;
-        while (off >= stride) {
-            off -= stride;
-            storeVN(vectors_per_stride, dest + off, 0, loadVN(vectors_per_stride, src + off, 0));
-        }
-        if (off > 0) copySmall(dest, src, off);
-    }
-}
-
-// -- Unaligned load/store helpers --
-
-inline fn loadV(ptr: [*]const u8) Chunk {
-    const arr: *align(1) const [chunk_bytes]u8 = @ptrCast(ptr);
-    return arr.*;
-}
-
-inline fn storeV(ptr: [*]u8, v: Chunk) void {
-    const arr: *align(1) [chunk_bytes]u8 = @ptrCast(ptr);
-    arr.* = v;
-}
-
-inline fn loadU(comptime T: type, ptr: [*]const u8) T {
-    return @as(*align(1) const T, @ptrCast(ptr)).*;
-}
-
-inline fn storeU(comptime T: type, ptr: [*]u8, val: T) void {
-    @as(*align(1) T, @ptrCast(ptr)).* = val;
+    memmove_impl.move(T, dest, source);
 }
 
 test "copy: all size classes" {
@@ -492,13 +181,12 @@ test "move: backward overlapping (dest > src)" {
 
 test "fuzz copy" {
     try testing.fuzz({}, struct {
-        fn run(_: void, input: []const u8) anyerror!void {
-            if (input.len < 2) return;
-            const len: usize = @min(
-                input[0],
-                @as(u8, @intCast(@min(input.len - 1, 255))),
-            );
-            const src = input[1..][0..len];
+        fn run(_: void, smith: *testing.Smith) anyerror!void {
+            const len: usize = smith.value(u8);
+
+            var source_buf: [256]u8 = undefined;
+            const src = source_buf[0..len];
+            smith.bytes(src);
 
             var dest: [256]u8 = .{0} ** 256;
             copy(u8, dest[0..len], src);
@@ -515,14 +203,14 @@ test "fuzz copy" {
 
 test "fuzz move forward" {
     try testing.fuzz({}, struct {
-        fn run(_: void, input: []const u8) anyerror!void {
-            if (input.len < 3) return;
-            const len: usize = @min(input[0], 200);
-            const gap: usize = @min(input[1], 100);
+        fn run(_: void, smith: *testing.Smith) anyerror!void {
+            const len: usize = smith.valueRangeAtMost(u8, 0, 200);
+            const gap: usize = smith.valueRangeAtMost(u8, 0, 100);
             if (len == 0) return;
 
+            const fill: u8 = smith.value(u8);
             var buf: [512]u8 = undefined;
-            for (&buf, 0..) |*b, i| b.* = @truncate(i ^ input[2]);
+            for (&buf, 0..) |*b, i| b.* = @truncate(i ^ fill);
 
             var expected = buf;
             @memmove(expected[0..len], expected[gap..][0..len]);
@@ -545,14 +233,14 @@ test "fuzz move forward" {
 
 test "fuzz move backward" {
     try testing.fuzz({}, struct {
-        fn run(_: void, input: []const u8) anyerror!void {
-            if (input.len < 3) return;
-            const len: usize = @min(input[0], 200);
-            const gap: usize = @min(input[1], 100);
+        fn run(_: void, smith: *testing.Smith) anyerror!void {
+            const len: usize = smith.valueRangeAtMost(u8, 0, 200);
+            const gap: usize = smith.valueRangeAtMost(u8, 0, 100);
             if (len == 0) return;
 
+            const fill: u8 = smith.value(u8);
             var buf: [512]u8 = undefined;
-            for (&buf, 0..) |*b, i| b.* = @truncate(i ^ ~input[2]);
+            for (&buf, 0..) |*b, i| b.* = @truncate(i ^ ~fill);
 
             var expected = buf;
             @memmove(expected[gap..][0..len], expected[0..len]);
@@ -784,16 +472,13 @@ test "move: large overlap matrix" {
 
 test "fuzz copy large" {
     try testing.fuzz({}, struct {
-        fn run(_: void, input: []const u8) anyerror!void {
-            if (input.len < 4) return;
-            // Parse 2 bytes as little-endian u16 for length, cap at 8192.
-            const raw_len = @as(u16, input[0]) | (@as(u16, input[1]) << 8);
-            const len: usize = @min(raw_len, 8192);
-            const src_off: usize = input[2] & 0x3F; // 0..63
-            const dst_off: usize = input[3] & 0x3F;
+        fn run(_: void, smith: *testing.Smith) anyerror!void {
+            const len: usize = smith.valueRangeAtMost(u16, 0, 8192);
+            const src_off: usize = smith.valueRangeAtMost(u8, 0, 63);
+            const dst_off: usize = smith.valueRangeAtMost(u8, 0, 63);
 
             var src_buf: [8192 + 64]u8 = undefined;
-            const seed: u8 = if (input.len > 4) input[4] else 0;
+            const seed: u8 = smith.value(u8);
             for (&src_buf, 0..) |*b, i| b.* = @truncate(i *% 131 +% seed);
 
             var dst_buf: [8192 + 64]u8 = .{0xAA} ** (8192 + 64);
@@ -805,61 +490,67 @@ test "fuzz copy large" {
             try testing.expectEqualSlices(u8, src, dst);
         }
     }.run, .{
+        // Seeds feed the Smith input stream; exact scenarios are not
+        // guaranteed, only diversity.
         .corpus = &.{
-            "", // skipped (< 4 bytes)
-            &.{ 0, 0, 0, 0 }, // len=0
-            &.{ 64, 0, 0, 0 }, // len=64 aligned
-            &.{ 64, 0, 1, 3 }, // len=64 misaligned
-            &.{ 0, 8, 0, 0 }, // len=2048
-            &.{ 0, 16, 7, 15 }, // len=4096 misaligned
-            &.{ 0, 32, 0, 0, 0x42 }, // len=8192
+            "",
+            &.{ 0, 0, 0, 0 },
+            &.{ 64, 0, 0, 0 },
+            &.{ 64, 0, 1, 3 },
+            &.{ 0, 8, 0, 0 },
+            &.{ 0, 16, 7, 15 },
+            &.{ 0, 32, 0, 0, 0x42 },
         },
     });
 }
 
 test "fuzz move large" {
     try testing.fuzz({}, struct {
-        fn run(_: void, input: []const u8) anyerror!void {
-            if (input.len < 4) return;
-            const raw_len = @as(u16, input[0]) | (@as(u16, input[1]) << 8);
-            const len: usize = @min(raw_len, 8192);
-            const gap: usize = @min(input[2], 128);
-            const direction = input[3] & 1; // 0 = forward, 1 = backward
+        fn run(_: void, smith: *testing.Smith) anyerror!void {
+            const len: usize = smith.valueRangeAtMost(u16, 0, 8192);
+            const gap: usize = smith.valueRangeAtMost(u8, 0, 128);
+            const Direction = enum { forward, backward };
+            const direction: Direction = smith.value(Direction);
             if (len == 0) return;
 
             const buf_size = 8192 + 129;
             var buf: [buf_size]u8 = undefined;
-            const seed: u8 = if (input.len > 4) input[4] else 0;
+            const seed: u8 = smith.value(u8);
             for (&buf, 0..) |*b, i| b.* = @truncate(i *% 131 +% seed);
 
             if (len + gap > buf_size) return;
 
             var expected = buf;
-            if (direction == 0) {
-                // Forward: dest = buf[0..len], src = buf[gap..][0..len]
-                @memmove(expected[0..len], expected[gap..][0..len]);
-                move(u8, buf[0..len], buf[gap..][0..len]);
-                try testing.expectEqualSlices(u8, expected[0..len], buf[0..len]);
-            } else {
-                // Backward: dest = buf[gap..][0..len], src = buf[0..len]
-                @memmove(expected[gap..][0..len], expected[0..len]);
-                move(u8, buf[gap..][0..len], buf[0..len]);
-                try testing.expectEqualSlices(
-                    u8,
-                    expected[gap..][0..len],
-                    buf[gap..][0..len],
-                );
+            switch (direction) {
+                .forward => {
+                    // Forward: dest = buf[0..len], src = buf[gap..][0..len]
+                    @memmove(expected[0..len], expected[gap..][0..len]);
+                    move(u8, buf[0..len], buf[gap..][0..len]);
+                    try testing.expectEqualSlices(u8, expected[0..len], buf[0..len]);
+                },
+                .backward => {
+                    // Backward: dest = buf[gap..][0..len], src = buf[0..len]
+                    @memmove(expected[gap..][0..len], expected[0..len]);
+                    move(u8, buf[gap..][0..len], buf[0..len]);
+                    try testing.expectEqualSlices(
+                        u8,
+                        expected[gap..][0..len],
+                        buf[gap..][0..len],
+                    );
+                },
             }
         }
     }.run, .{
+        // Seeds feed the Smith input stream; exact scenarios are not
+        // guaranteed, only diversity.
         .corpus = &.{
             "",
-            &.{ 0, 8, 1, 0, 0x42 }, // len=2048, gap=1, forward
-            &.{ 0, 8, 1, 1, 0x42 }, // len=2048, gap=1, backward
-            &.{ 0, 16, 15, 0 }, // len=4096, gap=15, forward
-            &.{ 0, 16, 15, 1 }, // len=4096, gap=15, backward
-            &.{ 0, 32, 0, 0 }, // len=8192, gap=0 (identity)
-            &.{ 64, 0, 63, 0 }, // len=64, gap=63, forward
+            &.{ 0, 8, 1, 0, 0x42 },
+            &.{ 0, 8, 1, 1, 0x42 },
+            &.{ 0, 16, 15, 0 },
+            &.{ 0, 16, 15, 1 },
+            &.{ 0, 32, 0, 0 },
+            &.{ 64, 0, 63, 0 },
         },
     });
 }

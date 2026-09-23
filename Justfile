@@ -35,9 +35,11 @@ asm-target TARGET:
 show-fn FN:
     @grep -A 80 '{{ FN }}:' zig-out/asm/*.s
 
-# Run the fuzzer (Linux only)
-fuzz DURATION="60s":
-    zig build test --fuzz={{ DURATION }}
+# Run the fuzzer. Zig 0.16: --fuzz takes an iteration budget with a K/M/G
+# suffix, not a duration. ReleaseSafe forces the LLVM backend, dodging the
+# 0.16.0 self-hosted-backend bug in Debug fuzz mode (ziglang/zig#30655).
+fuzz LIMIT="10M":
+    zig build test -Doptimize=ReleaseSafe --fuzz={{ LIMIT }}
 
 # Cross-compile benchmarks for a target with libc
 bench-cross TARGET *ARGS:
@@ -81,6 +83,10 @@ bench-sync NAME="all":
 # Run tagged benchmarks on all targets (e.g., just bench-run-tagged baseline)
 bench-run-tagged TAG NAME="all":
     ./infra/bench.nu run {{ NAME }} --tag {{ TAG }}
+
+# Run a saved baseline-vs-worktree trial (e.g., just bench-trial c7i --baseline-ref HEAD --label peel)
+bench-trial TARGET="local" *ARGS:
+    ./infra/bench.nu trial {{ TARGET }} {{ ARGS }}
 
 # Compare two tagged benchmark runs (e.g., just bench-compare baseline experiment)
 bench-compare BASELINE CANDIDATE:

@@ -1,4 +1,3 @@
-# OpenTofu / Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
@@ -6,5 +5,9 @@
 !*.tfvars.example
 .terraform.lock.hcl
 *.pem
+*.o
 crash.log
 bench-results/
+zig-pkg/
+.zig-cache/
+zig-out/
