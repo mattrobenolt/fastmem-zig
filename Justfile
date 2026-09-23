@@ -53,46 +53,35 @@ diff-asm A B:
 clean:
     rm -rf zig-out .zig-cache
 
-# Launch all benchmark targets (OrbStack + AWS)
-[working-directory("infra")]
-bench-up:
-    tofu apply -auto-approve
+# Benchmark fleet: the bench/ harness (docs/bench-design.md, infra/README.md).
+# Every fleet command runs as the fastmem-bench IAM user.
+export AWS_PROFILE := env("AWS_PROFILE", "fastmem-bench")
 
-# Tear down all benchmark targets
-[working-directory("infra")]
+# Run a harness command (e.g. just b ls, just b up c8g c7i --ttl 2h)
+b *ARGS:
+    uv run --project bench bench {{ ARGS }}
+
+# Launch boxes (e.g. just bench-up c8g c7i, or just bench-up for every target)
+bench-up *TARGETS:
+    uv run --project bench bench up {{ if TARGETS == "" { "c7i c8i c7a c8a c7g c8g c9g" } else { TARGETS } }}
+
+# Terminate every box of this project
 bench-down:
-    tofu destroy -auto-approve
+    uv run --project bench bench down --all
 
-# Show benchmark target status
-[working-directory("infra")]
-bench-status:
-    tofu output
+# Show the fleet
+bench-ls:
+    uv run --project bench bench ls
 
-# SSH into a benchmark target (e.g., just bench-ssh c7i, just bench-ssh orb-arm64)
-bench-ssh NAME:
-    ./infra/bench.nu ssh {{ NAME }}
+# Run benchmarks on the running boxes (e.g. just bench-run --rev HEAD --rev WORKTREE --suite quick)
+bench-run *ARGS:
+    uv run --project bench bench run {{ ARGS }}
 
-# Run benchmarks on targets (e.g., just bench-run c8g, just bench-run orb-arm64, or just bench-run for all)
-bench-run NAME="all":
-    ./infra/bench.nu run {{ NAME }}
+# Harness checks: tests, lint, format, types
+bench-check:
+    cd bench && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check
 
-# Sync project to targets (e.g., just bench-sync c7a, or just bench-sync for all)
-bench-sync NAME="all":
-    ./infra/bench.nu sync {{ NAME }}
-
-# Run tagged benchmarks on all targets (e.g., just bench-run-tagged baseline)
-bench-run-tagged TAG NAME="all":
-    ./infra/bench.nu run {{ NAME }} --tag {{ TAG }}
-
-# Run a saved baseline-vs-worktree trial (e.g., just bench-trial c7i --baseline-ref HEAD --label peel)
-bench-trial TARGET="local" *ARGS:
-    ./infra/bench.nu trial {{ TARGET }} {{ ARGS }}
-
-# Compare two tagged benchmark runs (e.g., just bench-compare baseline experiment)
-bench-compare BASELINE CANDIDATE:
-    ./infra/bench.nu compare {{ BASELINE }} {{ CANDIDATE }}
-
-# Initialize OpenTofu (run once after cloning)
-[working-directory("infra")]
-infra-init:
-    tofu init
+# Apply the durable base (security group, key pair, launch templates)
+bench-base:
+    tofu -chdir=infra/base init -input=false
+    tofu -chdir=infra/base apply

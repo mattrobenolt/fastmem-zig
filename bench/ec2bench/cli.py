@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import sys
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
@@ -127,7 +128,7 @@ def reap(config: Config) -> None:
 def ssh(config: Config, target: str, command: tuple[str, ...]) -> None:
     """Open a shell or execute a command on one target."""
     fleet = Fleet(config)
-    box_for(fleet, fleet.one(target), fleet.outputs()).shell(command)
+    sys.exit(box_for(fleet, fleet.one(target), fleet.outputs()).shell(command))
 
 
 @cli.command()

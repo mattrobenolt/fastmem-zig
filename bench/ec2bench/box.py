@@ -3,6 +3,7 @@
 import hashlib
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -113,14 +114,10 @@ class Box:
             timeout=300,
         )
 
-    def shell(self, command: tuple[str, ...]) -> None:
-        subprocess.run(
-            [
-                "ssh",
-                *self.options,
-                "-t",
-                self.destination,
-                *([shlex.join(command)] if command else []),
-            ],
-            check=True,
-        )
+    def shell(self, command: tuple[str, ...]) -> int:
+        # ssh semantics: the words join with spaces and the remote shell parses
+        # them, so `bench ssh t -- 'a | b'` and `bench ssh t -- ls -l` both work.
+        tty = ["-t"] if not command or sys.stdin.isatty() else []
+        remote = [" ".join(command)] if command else []
+        argv = ["ssh", *self.options, *tty, self.destination, *remote]
+        return subprocess.run(argv, check=False).returncode
