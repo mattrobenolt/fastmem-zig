@@ -45,8 +45,8 @@ class Sample(Record):
     op: Literal["copy", "move"]
     profile: str
     size: float = Field(ge=0)
-    src_off: int = Field(ge=0)
-    dst_off: int = Field(ge=0)
+    src_off: int | None = Field(ge=0)
+    dst_off: int | None = Field(ge=0)
     gap: int | None
     impl: Implementation
     sample: int = Field(ge=0)
