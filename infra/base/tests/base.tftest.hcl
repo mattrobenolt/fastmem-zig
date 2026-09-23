@@ -72,4 +72,24 @@ run "launch_templates" {
     condition     = local_sensitive_file.ssh_key.file_permission == "0600" && endswith(output.key_file, "/bench.pem")
     error_message = "The key file must be bench.pem with mode 0600."
   }
+
+  # The harness interface: these three outputs, with these shapes.
+  assert {
+    condition = (
+      keys(output.launch_template_ids) == ["arm64", "x86_64"]
+      && output.launch_template_ids["x86_64"] == aws_launch_template.bench["x86_64"].id
+      && output.launch_template_ids["arm64"] == aws_launch_template.bench["arm64"].id
+    )
+    error_message = "launch_template_ids must map exactly x86_64 and arm64 to launch template IDs."
+  }
+
+  assert {
+    condition     = startswith(output.key_file, "/")
+    error_message = "key_file must be an absolute path."
+  }
+
+  assert {
+    condition     = output.security_group_id == aws_security_group.ssh.id
+    error_message = "security_group_id must be the ID of the SSH security group."
+  }
 }
