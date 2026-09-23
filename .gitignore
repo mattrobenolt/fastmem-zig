@@ -11,3 +11,4 @@ bench-results/
 zig-pkg/
 .zig-cache/
 zig-out/
+.bench-cache/

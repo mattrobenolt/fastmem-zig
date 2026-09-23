@@ -1,0 +1,42 @@
+"""Run directories and provenance."""
+
+import json
+import re
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+
+def git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True, timeout=60
+    ).stdout.strip()
+
+
+def create_run(
+    root: Path, label: str, targets: list[str], instances: dict[str, str]
+) -> tuple[Path, dict[str, Any]]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
+        raise ValueError("Run label must contain only letters, numbers, underscores, or hyphens")
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + label
+    path = root / "bench-results" / run_id
+    path.mkdir(parents=True)  # Refuse to overwrite another run in the same second.
+    manifest = {
+        "run_id": run_id,
+        "command": sys.argv,
+        "targets": targets,
+        "instances": instances,
+        "git": {
+            "head": git(root, "rev-parse", "HEAD"),
+            "status": git(root, "status", "--porcelain"),
+            "diff": git(root, "diff", "HEAD", "--binary"),
+        },
+    }
+    write_manifest(path, manifest)
+    return path, manifest
+
+
+def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    (path / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
