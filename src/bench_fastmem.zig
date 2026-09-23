@@ -28,10 +28,10 @@ const iterations_hard_max = 64 * 1024 * 1024;
 const dist_seq_len = 4096;
 
 const standard_sizes = [_]usize{
-    0,     1,     2,      3,      4,      7,      8,      15,
-    16,    24,    31,     32,     48,     63,     64,     96,
-    127,   128,   192,    255,    256,    384,    511,    512,
-    768,   1024,  2048,   4096,   8192,   16384,  65536,  262144,
+    0,       1,    2,    3,    4,    7,     8,     15,
+    16,      24,   31,   32,   48,   63,    64,    96,
+    127,     128,  192,  255,  256,  384,   511,   512,
+    768,     1024, 2048, 4096, 8192, 16384, 65536, 262144,
     1048576,
 };
 
@@ -66,19 +66,19 @@ const MoveDirection = enum { fwd, bwd };
 // 0.16 grammar cannot combine export and noinline on one declaration).
 // The symbols are intact in the binary for the harness to disassemble,
 // and the loop really executes them.
-export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     fastmem.copy(u8, dst[0..len], src[0..len]);
 }
 
-export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     fastmem.move(u8, dst[0..len], src[0..len]);
 }
 
-export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     @memcpy(dst[0..len], src[0..len]);
 }
 
-export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     @memmove(dst[0..len], src[0..len]);
 }
 
@@ -166,6 +166,7 @@ const Perf = struct {
     fn deinit(self: *Perf) void {
         for (self.member_fds[0 .. self.n_events - 1]) |fd| _ = linux.close(fd);
         _ = linux.close(self.leader_fd);
+        self.* = undefined;
     }
 };
 
