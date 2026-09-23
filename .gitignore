@@ -3,7 +3,6 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
 *.pem
 *.o
 crash.log

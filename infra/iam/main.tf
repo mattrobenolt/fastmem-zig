@@ -9,12 +9,12 @@
 # commit it and do not copy it off this machine.
 
 terraform {
-  required_version = ">= 1.8"
+  required_version = ">= 1.12"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0"
+      version = "~> 6.66"
     }
   }
 }

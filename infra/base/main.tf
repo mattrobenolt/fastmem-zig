@@ -10,20 +10,20 @@
 # gitignored.
 
 terraform {
-  required_version = ">= 1.8"
+  required_version = ">= 1.12"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0"
+      version = "~> 6.66"
     }
     tls = {
       source  = "hashicorp/tls"
-      version = "~> 4.0"
+      version = "~> 4.4"
     }
     local = {
       source  = "hashicorp/local"
-      version = "~> 2.5"
+      version = "~> 2.9"
     }
   }
 }
