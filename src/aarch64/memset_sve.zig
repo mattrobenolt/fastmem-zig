@@ -10,7 +10,9 @@
 // - The C preprocessor macros of asmdefs.h are expanded: ENTRY / END
 //   become explicit .globl/.type/.p2align/.size directives, the
 //   register aliases (dstin, valw, count, ...) become architectural
-//   register names, and L(name) becomes .Lname.
+//   register names, and L(name) becomes .Lfm_sve_set_name.
+//   Local labels are prefixed uniquely per port: module-level asm in
+//   one compilation shares a label namespace across files.
 // - The symbol is renamed __memset_aarch64_sve -> fastmem_sve_set and
 //   given .hidden visibility.
 // - SKIP_ZVA_CHECK is not defined, so the runtime DCZID_EL0 check on
@@ -46,11 +48,11 @@ comptime {
             \\hint 34
             \\    dup    v0.16B, w1
             \\    cmp    x2, 16
-            \\    b.lo    .Lset_16
+            \\    b.lo    .Lfm_sve_set_16
             \\
             \\    add    x4, x0, x2
             \\    cmp    x2, 64
-            \\    b.hi    .Lset_128
+            \\    b.hi    .Lfm_sve_set_128
             \\
             \\    // Set 16..64 bytes.
             \\    mov    x3, 48
@@ -63,16 +65,16 @@ comptime {
             \\    ret
             \\
             \\    .p2align 4
-            \\.Lset_16:
+            \\.Lfm_sve_set_16:
             \\    whilelo p0.b, xzr, x2
             \\    st1b    z0.b, p0, [x0]
             \\    ret
             \\
             \\    .p2align 4
-            \\.Lset_128:
+            \\.Lfm_sve_set_128:
             \\    bic    x3, x0, 15
             \\    cmp    x2, 128
-            \\    b.hi    .Lset_long
+            \\    b.hi    .Lfm_sve_set_long
             \\    stp    q0, q0, [x0]
             \\    stp    q0, q0, [x0, 32]
             \\    stp    q0, q0, [x4, -64]
@@ -80,16 +82,16 @@ comptime {
             \\    ret
             \\
             \\    .p2align 4
-            \\.Lset_long:
+            \\.Lfm_sve_set_long:
             \\    cmp    x2, 256
-            \\    b.lo    .Lno_zva
+            \\    b.lo    .Lfm_sve_set_no_zva
             \\    tst    w1, 255
-            \\    b.ne    .Lno_zva
+            \\    b.ne    .Lfm_sve_set_no_zva
             \\
             \\    mrs    x5, dczid_el0
             \\    and    x5, x5, 31
             \\    cmp    x5, 4        // ZVA size is 64 bytes.
-            \\    b.ne    .Lno_zva
+            \\    b.ne    .Lfm_sve_set_no_zva
             \\
             \\    str    q0, [x0]
             \\    str    q0, [x3, 16]
@@ -106,23 +108,23 @@ comptime {
             \\    str    q0, [x4, -16]
             \\
             \\    .p2align 4
-            \\.Lzva64_loop:
+            \\.Lfm_sve_set_zva64_loop:
             \\    add    x3, x3, 64
             \\    dc    zva, x3
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lzva64_loop
+            \\    b.hi    .Lfm_sve_set_zva64_loop
             \\    ret
             \\
-            \\.Lno_zva:
+            \\.Lfm_sve_set_no_zva:
             \\    str    q0, [x0]
             \\    sub    x2, x4, x3    // Count is 16 too large.
             \\    sub    x2, x2, #(64 + 16)    // Adjust count and bias for loop.
-            \\.Lno_zva_loop:
+            \\.Lfm_sve_set_no_zva_loop:
             \\    stp    q0, q0, [x3, 16]
             \\    stp    q0, q0, [x3, 48]
             \\    add    x3, x3, 64
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lno_zva_loop
+            \\    b.hi    .Lfm_sve_set_no_zva_loop
             \\    stp    q0, q0, [x4, -64]
             \\    stp    q0, q0, [x4, -32]
             \\    ret

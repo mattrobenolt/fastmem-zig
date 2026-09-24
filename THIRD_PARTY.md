@@ -26,7 +26,13 @@ Port-level deviations (each is documented in the file header): the
 `asmdefs.h` macros (`ENTRY` / `ENTRY_ALIAS` / `END`, register aliases,
 `L()`) are expanded by hand; the GNU_PROPERTY note (link-level BTI/PAC
 marking) is omitted because no other object in a Zig link carries it;
-the BTI landing pad (`hint 34`) is kept. No algorithmic change.
+the BTI landing pad (`hint 34`) is kept. Local labels are renamed with a
+unique prefix per port (`.Lfm_sve_cpy_*`, `.Lfm_sve_set_*`,
+`.Lfm_simd_cpy_*`, `.Lfm_simd_set_*`): module-level asm in one
+compilation shares a label namespace across files. A `.p2align 6` is
+added above the memmove alias labels so both entries stay 64-byte
+aligned in the fused module asm. No algorithmic change; each port
+assembles to a standalone .text byte-identical to upstream.
 
 ### MIT permission notice (Arm Optimized Routines)
 

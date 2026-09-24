@@ -11,7 +11,9 @@
 // - The C preprocessor macros of asmdefs.h are expanded: ENTRY /
 //   ENTRY_ALIAS / END become explicit .globl/.type/.p2align/.size
 //   directives, the register aliases (dstin, src, count, ...) become
-//   architectural register names, and L(name) becomes .Lname.
+//   architectural register names, and L(name) becomes .Lfm_sve_cpy_name.
+//   Local labels are prefixed uniquely per port: module-level asm in
+//   one compilation shares a label namespace across files.
 // - Symbols are renamed __memcpy_aarch64_sve -> fastmem_sve_copy and
 //   __memmove_aarch64_sve -> fastmem_sve_move and given .hidden
 //   visibility.
@@ -61,9 +63,9 @@ comptime {
             \\hint 34
             \\    cntb    x6
             \\    cmp    x2, 128
-            \\    b.hi    .Lcopy_long
+            \\    b.hi    .Lfm_sve_cpy_long
             \\    cmp    x2, x6, lsl 1
-            \\    b.hi    .Lcopy32_128
+            \\    b.hi    .Lfm_sve_cpy32_128
             \\
             \\    whilelo p0.b, xzr, x2
             \\    whilelo p1.b, x6, x2
@@ -74,13 +76,13 @@ comptime {
             \\    ret
             \\
             \\    // Medium copies: 33..128 bytes.
-            \\.Lcopy32_128:
+            \\.Lfm_sve_cpy32_128:
             \\    add    x4, x1, x2
             \\    add    x5, x0, x2
             \\    ldp    q0, q1, [x1]
             \\    ldp    q2, q3, [x4, -32]
             \\    cmp    x2, 64
-            \\    b.hi    .Lcopy128
+            \\    b.hi    .Lfm_sve_cpy128
             \\    stp    q0, q1, [x0]
             \\    stp    q2, q3, [x5, -32]
             \\    ret
@@ -88,27 +90,27 @@ comptime {
             \\    .p2align 4
             \\
             \\    // Copy 65..128 bytes.
-            \\.Lcopy128:
+            \\.Lfm_sve_cpy128:
             \\    ldp    q4, q5, [x1, 32]
             \\    cmp    x2, 96
-            \\    b.ls    .Lcopy96
+            \\    b.ls    .Lfm_sve_cpy96
             \\    ldp    q6, q7, [x4, -64]
             \\    stp    q6, q7, [x5, -64]
-            \\.Lcopy96:
+            \\.Lfm_sve_cpy96:
             \\    stp    q0, q1, [x0]
             \\    stp    q4, q5, [x0, 32]
             \\    stp    q2, q3, [x5, -32]
             \\    ret
             \\
             \\    // Copy more than 128 bytes.
-            \\.Lcopy_long:
+            \\.Lfm_sve_cpy_long:
             \\    add    x4, x1, x2
             \\    add    x5, x0, x2
             \\
             \\    // Use backwards copy if there is an overlap.
             \\    sub    x6, x0, x1
             \\    cmp    x6, x2
-            \\    b.lo    .Lcopy_long_backwards
+            \\    b.lo    .Lfm_sve_cpy_long_backwards
             \\
             \\    // Copy 16 bytes and then align src to 16-byte alignment.
             \\    ldr    q3, [x1]
@@ -120,8 +122,8 @@ comptime {
             \\    str    q3, [x0]
             \\    ldp    q2, q3, [x1, 48]
             \\    subs    x2, x2, #(128 + 16)    // Test and readjust count.
-            \\    b.ls    .Lcopy64_from_end
-            \\.Lloop64:
+            \\    b.ls    .Lfm_sve_cpy64_from_end
+            \\.Lfm_sve_cpy_loop64:
             \\    stp    q0, q1, [x3, 16]
             \\    ldp    q0, q1, [x1, 80]
             \\    stp    q2, q3, [x3, 48]
@@ -129,10 +131,10 @@ comptime {
             \\    add    x1, x1, 64
             \\    add    x3, x3, 64
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lloop64
+            \\    b.hi    .Lfm_sve_cpy_loop64
             \\
             \\    // Write the last iteration and copy 64 bytes from the end.
-            \\.Lcopy64_from_end:
+            \\.Lfm_sve_cpy64_from_end:
             \\    ldp    q4, q5, [x4, -64]
             \\    stp    q0, q1, [x3, 16]
             \\    ldp    q0, q1, [x4, -32]
@@ -146,8 +148,8 @@ comptime {
             \\
             \\    // Large backwards copy for overlapping copies.
             \\    // Copy 16 bytes and then align srcend to 16-byte alignment.
-            \\.Lcopy_long_backwards:
-            \\    cbz    x6, .Lreturn
+            \\.Lfm_sve_cpy_long_backwards:
+            \\    cbz    x6, .Lfm_sve_cpy_return
             \\    ldr    q3, [x4, -16]
             \\    and    x6, x4, 15
             \\    bic    x4, x4, 15
@@ -157,9 +159,9 @@ comptime {
             \\    ldp    q2, q3, [x4, -64]
             \\    sub    x5, x5, x6
             \\    subs    x2, x2, 128
-            \\    b.ls    .Lcopy64_from_start
+            \\    b.ls    .Lfm_sve_cpy64_from_start
             \\
-            \\.Lloop64_backwards:
+            \\.Lfm_sve_cpy_loop64_backwards:
             \\    str    q1, [x5, -16]
             \\    str    q0, [x5, -32]
             \\    ldp    q0, q1, [x4, -96]
@@ -168,17 +170,17 @@ comptime {
             \\    ldp    q2, q3, [x4, -128]
             \\    sub    x4, x4, 64
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lloop64_backwards
+            \\    b.hi    .Lfm_sve_cpy_loop64_backwards
             \\
             \\    // Write the last iteration and copy 64 bytes from the start.
-            \\.Lcopy64_from_start:
+            \\.Lfm_sve_cpy64_from_start:
             \\    ldp    q4, q5, [x1, 32]
             \\    stp    q0, q1, [x5, -32]
             \\    ldp    q0, q1, [x1]
             \\    stp    q2, q3, [x5, -64]
             \\    stp    q4, q5, [x0, 32]
             \\    stp    q0, q1, [x0]
-            \\.Lreturn:
+            \\.Lfm_sve_cpy_return:
             \\    ret
             \\
             \\// END (__memcpy_aarch64_sve)

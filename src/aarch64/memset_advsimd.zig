@@ -11,8 +11,11 @@
 // - The C preprocessor macros of asmdefs.h are expanded: ENTRY / END
 //   become explicit .globl/.type/.p2align/.size directives, the
 //   register aliases (dstin, valw, count, ...) become architectural
-//   register names, L(name) becomes .Lname, and the numeric local
-//   labels (2:, 3:) are kept as-is.
+//   register names, L(name) becomes .Lfm_simd_set_name.
+//   Local labels are prefixed uniquely per port: module-level asm in
+//   one compilation shares a label namespace across files. The numeric
+//   local labels (2:, 3:) need no prefix; they bind to the nearest
+//   definition.
 // - The symbol is renamed __memset_aarch64 -> fastmem_advsimd_set and
 //   given .hidden visibility.
 // - SKIP_ZVA_CHECK is not defined, so the runtime DCZID_EL0 check on
@@ -24,8 +27,8 @@
 //   bare. Both forms assemble to the same bytes.
 // - The whole block is gated on the absence of the SVE CPU feature and
 //   on the ELF object format at comptime (the directives below are
-//   ELF-only); the local labels collide with memset_sve.zig only if
-//   both are emitted, which the complementary gates prevent.
+//   ELF-only), so non-ELF or SVE builds never see these
+//   instructions.
 
 const builtin = @import("builtin");
 
@@ -48,11 +51,11 @@ comptime {
             \\hint 34
             \\    dup    v0.16B, w1
             \\    cmp    x2, 16
-            \\    b.lo    .Lset_small
+            \\    b.lo    .Lfm_simd_set_small
             \\
             \\    add    x4, x0, x2
             \\    cmp    x2, 64
-            \\    b.hi    .Lset_128
+            \\    b.hi    .Lfm_simd_set_128
             \\
             \\    // Set 16..64 bytes.
             \\    mov    x3, 48
@@ -66,7 +69,7 @@ comptime {
             \\
             \\    .p2align 4
             \\    // Set 0..15 bytes.
-            \\.Lset_small:
+            \\.Lfm_simd_set_small:
             \\    add    x4, x0, x2
             \\    cmp    x2, 4
             \\    b.lo    2f
@@ -87,10 +90,10 @@ comptime {
             \\3:  ret
             \\
             \\    .p2align 4
-            \\.Lset_128:
+            \\.Lfm_simd_set_128:
             \\    bic    x3, x0, 15
             \\    cmp    x2, 128
-            \\    b.hi    .Lset_long
+            \\    b.hi    .Lfm_simd_set_long
             \\    stp    q0, q0, [x0]
             \\    stp    q0, q0, [x0, 32]
             \\    stp    q0, q0, [x4, -64]
@@ -98,15 +101,15 @@ comptime {
             \\    ret
             \\
             \\    .p2align 4
-            \\.Lset_long:
+            \\.Lfm_simd_set_long:
             \\    str    q0, [x0]
             \\    str    q0, [x3, 16]
             \\    tst    w1, 255
-            \\    b.ne    .Lno_zva
+            \\    b.ne    .Lfm_simd_set_no_zva
             \\    mrs    x5, dczid_el0
             \\    and    x5, x5, 31
             \\    cmp    x5, 4        // ZVA size is 64 bytes.
-            \\    b.ne    .Lno_zva
+            \\    b.ne    .Lfm_simd_set_no_zva
             \\    stp    q0, q0, [x3, 32]
             \\    bic    x3, x0, 63
             \\    sub    x2, x4, x3    // Count is now 64 too large.
@@ -117,23 +120,23 @@ comptime {
             \\    stp    q0, q0, [x4, -32]
             \\
             \\    .p2align 4
-            \\.Lzva64_loop:
+            \\.Lfm_simd_set_zva64_loop:
             \\    add    x3, x3, 64
             \\    dc    zva, x3
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lzva64_loop
+            \\    b.hi    .Lfm_simd_set_zva64_loop
             \\    ret
             \\
             \\    .p2align 3
-            \\.Lno_zva:
+            \\.Lfm_simd_set_no_zva:
             \\    sub    x2, x4, x3    // Count is 32 too large.
             \\    sub    x2, x2, #(64 + 32)    // Adjust count and bias for loop.
-            \\.Lno_zva_loop:
+            \\.Lfm_simd_set_no_zva_loop:
             \\    stp    q0, q0, [x3, 32]
             \\    stp    q0, q0, [x3, 64]
             \\    add    x3, x3, 64
             \\    subs    x2, x2, 64
-            \\    b.hi    .Lno_zva_loop
+            \\    b.hi    .Lfm_simd_set_no_zva_loop
             \\    stp    q0, q0, [x4, -64]
             \\    stp    q0, q0, [x4, -32]
             \\    ret
