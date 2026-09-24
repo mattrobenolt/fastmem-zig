@@ -42,7 +42,7 @@ comptime {
             \\fastmem_sve_set:
             \\.cfi_startproc
             \\hint 34
-            \\    dup    v0.16b, w1
+            \\    dup    v0.16B, w1
             \\    cmp    x2, 16
             \\    b.lo    .Lset_16
             \\

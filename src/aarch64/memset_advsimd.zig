@@ -46,7 +46,7 @@ comptime {
             \\fastmem_advsimd_set:
             \\.cfi_startproc
             \\hint 34
-            \\    dup    v0.16b, w1
+            \\    dup    v0.16B, w1
             \\    cmp    x2, 16
             \\    b.lo    .Lset_small
             \\
@@ -79,14 +79,12 @@ comptime {
             \\    ret
             \\
             \\    // Set 0..3 bytes.
-            \\2:
-            \\    cbz    x2, 3f
+            \\2:  cbz    x2, 3f
             \\    lsr    x3, x2, 1
             \\    strb    w1, [x0]
             \\    strb    w1, [x0, x3]
             \\    strb    w1, [x4, -1]
-            \\3:
-            \\    ret
+            \\3:  ret
             \\
             \\    .p2align 4
             \\.Lset_128:
