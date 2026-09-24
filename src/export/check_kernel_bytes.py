@@ -1,4 +1,7 @@
-"""Pin the measured aarch64 instruction bytes from revision 2fe71ee."""
+"""Pin the measured aarch64 instruction bytes (updated for the p3-armc merge).
+
+Update GOLDEN only in a commit that deliberately changes kernel bytes.
+"""
 
 import hashlib
 import struct
@@ -15,13 +18,13 @@ GOLDEN = {
     },
     "neoverse_v1": {
         "set": (256, "90f42348d31f9f25412aab25f7feeb3acd6652ffbe1772321525fd4bc253e8a0"),
-        "copy": (368, "a2dbcc5bb7355421edcd4b9b38dd7103a893ffa36fe11ac567d0b63744997ae7"),
-        "move": (368, "a2dbcc5bb7355421edcd4b9b38dd7103a893ffa36fe11ac567d0b63744997ae7"),
+        "copy": (496, "687eb66c4b79b9b512e6454b4bf38301757aa4b7cc94d89825b3d90cf64d0d5d"),
+        "move": (192, "fb44ddb4077266857e85ac46639d2a4e142a8ff1e7da83afd06eca6281fb229a"),
     },
     "neoverse_v3": {
-        "set": (336, "99f311e978e6357737dab8076d3a5942df16afd9dcb68a95366af057a63c7db1"),
-        "copy": (512, "42b31489d0bf022cbf4a91fdaa6303d313df2d82af4fb0f5ae667ada5433b585"),
-        "move": (192, "afe634d9643d28a08c5446fb8d770af2769fbb8c8ba37bb300b08c4e9bf36507"),
+        "set": (336, "6a38736588879006b6c9ae1bfc52574b34696143e7e3310538f0075b4e8347b0"),
+        "copy": (528, "de9eda141f65d7bf68d91e53ea30c7ec2becb43f092842a55665877bb171089c"),
+        "move": (192, "620d83fecf6941d295ce744a82e4b7e3824bda6cf07af15117e8c38840b975b3"),
     },
 }
 GOLDEN["neoverse_v2"] = GOLDEN["neoverse_v1"]
@@ -53,7 +56,7 @@ def main():
             assert actual_hash == expected_hash, (cpu, name, actual_hash, expected_hash)
             found.add(op)
     assert found == {"copy", "move", "set"}, found
-    print(f"PASS {cpu}: all kernel instruction bytes match 2fe71ee")
+    print(f"PASS {cpu}: all kernel instruction bytes match GOLDEN")
 
 
 if __name__ == "__main__":

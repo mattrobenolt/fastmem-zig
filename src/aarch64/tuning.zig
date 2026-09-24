@@ -65,17 +65,15 @@ const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 // chunk block, which loses to compiler-rt on V2 as the SVE ldp/stp
 // block (copy/aligned/48: 1.15x). V2 set stays sve: 1.000 vs both
 // references at every size.
-const default_copy_small: CopySmall = if (on_neoverse_v3)
-    .neon
-else if (on_neoverse_v1 or on_neoverse_v2)
-    .hybrid
-else
-    .sve;
+// Fleet A/B p3-armc (docs/results/p3-armc.md): hybrid copy on V1/V2
+// lost (c8g copy 17-64 B 1.12x glibc, c7g copy 65-256 B 1.06x), so copy
+// keeps the SVE pair there; move and set follow the A/B winners.
+const default_copy_small: CopySmall = if (on_neoverse_v3) .neon else .sve;
 const default_move_small: CopySmall = if (on_neoverse_v3 or on_neoverse_v1 or on_neoverse_v2)
     .hybrid
 else
     .sve;
-const default_set_small: SetSmall = if (on_neoverse_v3 or on_neoverse_v1) .neon else .sve;
+const default_set_small: SetSmall = if (on_neoverse_v3) .neon else .sve;
 
 pub const copy_small: CopySmall = blk: {
     if (std.mem.eql(u8, options.small_copy, "auto")) break :blk default_copy_small;
