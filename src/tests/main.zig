@@ -77,7 +77,12 @@ pub fn main(init: process.Init) void {
 // A byte-loop oracle stays independent of the kernel and compiler-rt exports.
 fn pattern(bytes: []u8) void {
     @disableIntrinsics();
-    for (bytes, 0..) |*byte, i| byte.* = @truncate((i *% 131 +% 17) ^ (i >> 8));
+    for (bytes, 0..) |*byte, i| {
+        var x: u64 = @as(u64, i) +% 0x9e3779b97f4a7c15;
+        x = (x ^ (x >> 30)) *% 0xbf58476d1ce4e5b9;
+        x = (x ^ (x >> 27)) *% 0x94d049bb133111eb;
+        byte.* = @truncate(x ^ (x >> 31));
+    }
 }
 
 fn reference(dest: []u8, source: []const u8) void {
