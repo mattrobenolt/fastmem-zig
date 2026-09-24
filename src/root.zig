@@ -25,7 +25,9 @@ const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
 const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
 const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 
-const on_aarch64 = builtin.cpu.arch == .aarch64;
+// The kernel ports carry ELF-only directives (.type/.hidden/.size), so
+// non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
+const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
 /// Names of the kernel implementations in this build, one per operation.

@@ -20,13 +20,16 @@
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
 // - Immediate expressions use #( ...) so the integrated assembler
 //   parses them.
-// - The whole block is gated on the absence of the SVE CPU feature at
-//   comptime; the local labels collide with memcpy_sve.zig only if
+// - The whole block is gated on the absence of the SVE CPU feature and
+//   on the ELF object format at comptime (the directives below are
+//   ELF-only); the local labels collide with memcpy_sve.zig only if
 //   both are emitted, which the complementary gates prevent.
 
 const builtin = @import("builtin");
 
-const enabled = builtin.cpu.arch == .aarch64 and !builtin.cpu.has(.aarch64, .sve);
+const enabled = builtin.cpu.arch == .aarch64 and
+    builtin.target.ofmt == .elf and
+    !builtin.cpu.has(.aarch64, .sve);
 
 comptime {
     if (enabled) {

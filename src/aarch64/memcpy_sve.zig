@@ -20,12 +20,15 @@
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
 // - Immediate expressions use #( ...) so the integrated assembler
 //   parses them.
-// - The whole block is gated on the SVE CPU feature at comptime, so
-//   non-SVE builds never see these instructions.
+// - The whole block is gated on the SVE CPU feature and the ELF object
+//   format at comptime (the directives below are ELF-only), so non-SVE
+//   or non-ELF builds never see these instructions.
 
 const builtin = @import("builtin");
 
-const enabled = builtin.cpu.arch == .aarch64 and builtin.cpu.has(.aarch64, .sve);
+const enabled = builtin.cpu.arch == .aarch64 and
+    builtin.target.ofmt == .elf and
+    builtin.cpu.has(.aarch64, .sve);
 
 comptime {
     if (enabled) {
