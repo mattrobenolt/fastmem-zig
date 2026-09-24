@@ -3,7 +3,7 @@ const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
 const w = ops.width;
-const V = ops.V;
+const V = ops.vector;
 
 inline fn pair(comptime width: u32, dst: [*]u8, value: u8, n: usize) void {
     const T = if (width < 16) @Int(.unsigned, width * 8) else @Vector(width, u8);

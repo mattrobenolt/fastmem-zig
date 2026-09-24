@@ -42,7 +42,7 @@ def class_path(name, n):
         op = insn.split()[0]
         if op.startswith("ret"):
             return "\n".join(visited)
-        cmp = re.fullmatch(r"cmp[q|l]\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
+        cmp = re.fullmatch(r"cmp[ql]\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
         if cmp:
             rhs = int(cmp[1], 0)
             flags = (n == rhs, n < rhs)
@@ -69,7 +69,7 @@ def class_path(name, n):
 
 
 # The probe object contains only fastmem consumers, so every mem* reference is invalid.
-require(not re.search(r"\b(?:memcpy|memmove|memset)(?:[-+@\s]|$)", dis), "memory symbol reference")
+require(not re.search(r"(?<![\w.])(?:__)?(?:memcpy|memmove|memset)(?=[+@>\s-]|$)", dis), "memory symbol reference")
 wide = cpu != "x86_64_v3"
 fixed_max = 256 if wide else 128
 for op in ("copy", "move", "set"):

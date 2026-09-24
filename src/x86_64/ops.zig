@@ -1,15 +1,15 @@
-//! Vector pointers preserve ZMM memory operations under Intel prefer_256_bit.
+//! vector pointers preserve ZMM memory operations under Intel prefer_256_bit.
 const builtin = @import("builtin");
 const tuning = @import("tuning.zig");
 pub const width = tuning.vec;
-pub const V: type = @Vector(width, u8);
+pub const vector: type = @Vector(width, u8);
 pub const mask_available = builtin.zig_backend == .stage2_llvm and tuning.avx512;
-const M64: type = @Vector(64, bool);
+const mask: type = @Vector(64, bool);
 extern fn @"llvm.masked.store.v64i8.p0"(
     value: @Vector(64, u8),
     ptr: *anyopaque,
     alignment: u32,
-    mask: M64,
+    mask: mask,
 ) void;
 
 pub inline fn load(comptime T: type, src: [*]const u8) T {
@@ -18,15 +18,15 @@ pub inline fn load(comptime T: type, src: [*]const u8) T {
 pub inline fn store(comptime T: type, dst: [*]u8, value: T) void {
     @as(*align(1) T, @ptrCast(dst)).* = value;
 }
-pub inline fn storeAligned(dst: [*]u8, value: V) void {
-    @as(*align(width) V, @ptrCast(@alignCast(dst))).* = value;
+pub inline fn storeAligned(dst: [*]u8, value: vector) void {
+    @as(*align(width) vector, @ptrCast(@alignCast(dst))).* = value;
 }
 pub inline fn maskedSet(dst: [*]u8, value: u8, n: usize) void {
     if (comptime !mask_available) @compileError("maskedSet requires LLVM and AVX-512BW");
     const bits = (@as(u64, 1) << @as(u6, @intCast(n))) - 1;
     @"llvm.masked.store.v64i8.p0"(@splat(value), dst, 1, @bitCast(bits));
 }
-pub inline fn streamStore(dst: [*]u8, value: V) void {
+pub inline fn streamStore(dst: [*]u8, value: vector) void {
     if (comptime builtin.zig_backend != .stage2_llvm) {
         storeAligned(dst, value);
         return;

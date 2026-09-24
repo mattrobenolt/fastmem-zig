@@ -15,9 +15,18 @@ fn pattern(bytes: []u8) void {
 }
 
 const lengths = [_]u32{
-    0,     1,   2,   3,   4,   7,   8,    15,   16,   31,   32,   63,   64,   65,   127,   128,   129,
-    255,   256, 257, 511, 512, 513, 1023, 1024, 1025, 2048, 2049, 4095, 4096, 4097, 16383, 16384, 16385,
-    32768,
+    // Scalar and vector classes.
+    0,     1,     2,    3,    4,    7,    8,    15,   16,   31,    32,
+    63,    64,    65,   127,  128,  129,  255,  256,  257,
+    // Loop and string thresholds.
+     511,   512,
+    513,   1023,  1024, 1025, 2048, 2049, 4095, 4096, 4097, 16383, 16384,
+    16385, 32768,
+};
+const gaps = [_]u32{
+    0,    1,    31,   33,   63,   64,   128,  255,  256,
+    // Aliasing residues must not override a required forward direction.
+    3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192,
 };
 const capacity = 32768 + 8192 + 64;
 
@@ -25,7 +34,7 @@ test "x86: class edges and 4K alias overlap in both directions" {
     var original: [capacity]u8 align(64) = undefined;
     pattern(&original);
     for (lengths) |n| {
-        for ([_]u32{ 0, 1, 31, 33, 63, 64, 128, 255, 256, 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192 }) |gap| {
+        for (gaps) |gap| {
             for ([_]u32{ 0, 1, 31, 63 }) |offset| {
                 for ([_]bool{ false, true }) |backward| {
                     var got = original;

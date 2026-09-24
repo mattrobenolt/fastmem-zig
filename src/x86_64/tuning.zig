@@ -43,6 +43,8 @@ pub const selected: Tuning = .{
 };
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
+// H5 move masks and H11 high registers stay disabled until fleet measurements justify variants.
+// Future flags belong here, beside the small memset policy.
 pub const small_masked_set = options.x86_small_masked_set;
 pub const name: []const u8 = if (vec == 64) "x86-avx512-v1" else "x86-avx2-v1";
 

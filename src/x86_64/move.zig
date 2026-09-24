@@ -3,7 +3,7 @@ const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
 const w = ops.width;
-const V = ops.V;
+const V = ops.vector;
 pub const Overlap = enum { may_overlap, disjoint };
 
 inline fn pair(comptime T: type, dst: [*]u8, src: [*]const u8, n: usize) void {

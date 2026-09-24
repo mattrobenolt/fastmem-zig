@@ -1,0 +1,134 @@
+# x86 kernels
+
+The kernels implement the default design in `docs/research/x86_64-design.md`, section 5.
+They contain no glibc source or disassembly.
+`THIRD_PARTY.md` records the design references.
+
+## Dispatch
+
+`memcpy` and `memmove` share the C kernel.
+The inline copy path specializes the large dispatch for disjoint buffers.
+Both paths retain the 4K alias test.
+A source inside the destination range always uses the forward vector loop.
+Every forward overlap bypasses REP, not only gaps below 64 bytes.
+
+All vector memory operations use vector pointers.
+The inline layer contains no loops.
+Every non-inline kernel function disables intrinsic recognition.
+LLVM emits `vzeroupper` after vector paths.
+
+| Model | Vector bytes | REP copy minimum, exclusive | Copy NT minimum, inclusive | REP set minimum, exclusive | Set NT minimum, inclusive |
+|---|---:|---:|---:|---:|---:|
+| sapphirerapids | 64 | 16384 | 0x3580000 | 2048 | 0x3580000 |
+| graniterapids | 64 | 16384 | 0xf100000 | 2048 | 0xf100000 |
+| znver4 | 64 | none | 0xc00001 | none | none |
+| znver5 | 64 | none | 0xc00001 | none | none |
+| other AVX-512BW | 64 | none | none | none | none |
+| x86_64_v3 | 32 | none | none | none | none |
+
+The NT loops use one stream and a memory clobber on every streaming store.
+An `sfence` separates the streaming stores from the temporal tail.
+The self-hosted Debug backend substitutes temporal stores.
+Masked memset requires LLVM and AVX-512BW.
+The scalar ladder handles masked stores near page boundaries and all non-LLVM builds.
+
+The numeric thresholds, vector width, alias masks, inline limit, and masked-set switch have build options.
+`tuning.zig` contains the model table.
+The thresholds describe the fleet instance sizes, not every host with those CPU models.
+H5 move masking and H11 high-register variants remain deferred until fleet measurements justify them.
+
+## Local evidence, 2026-09-24
+
+No local result establishes performance parity or hardware correctness on the x86 fleet.
+The local host is aarch64.
+
+| Validation | Result |
+|---|---|
+| Native `zig build test`, Debug | 30 tests passed |
+| Native `zig build test -Doptimize=ReleaseFast` | 30 tests passed |
+| Native `zig build test -Doptimize=ReleaseSafe` | 30 tests passed |
+| ReleaseFast install builds | All seven `bench.toml` rows and x86_64_v3 passed |
+| Guard binary cross builds | All four x86 models passed in Debug, ReleaseFast, and ReleaseSafe |
+| QEMU x86_64_v3 unit tests | 27 tests passed in each of Debug, ReleaseFast, and ReleaseSafe |
+| QEMU x86_64_v3 ReleaseFast guard suite | 28,047,836 cases passed, maximum size 1 MiB |
+| QEMU forced REP/NT unit tests | 27 tests passed |
+| QEMU forced REP/NT guard suite | 28,047,836 cases passed, maximum size 1 MiB |
+| QEMU Sapphire Rapids | SIGILL with `qemu-x86_64 -cpu max` |
+| `ziglint src/x86_64/` | Passed |
+| `ziglint src/` | Only pre-existing warnings outside this lane |
+
+The forced-path runs used x86_64_v3 with these overrides:
+
+```text
+-Dx86-rep-movsb-min=512 -Dx86-rep-stosb-min=512
+-Dx86-nt-min=4096 -Dx86-memset-nt-min=4096
+```
+
+These overrides test the shared REP and NT logic through AVX2.
+They do not test AVX-512 memory operations or masked memset.
+The initial Debug run exposed incorrect tiny-vector stores from the self-hosted backend.
+The final implementation uses scalar stores for the 2-, 4-, and 8-byte memset classes.
+
+`zig build codegen-x86` disassembles explicit CPU builds with consumer builtins enabled.
+The gate follows each kernel size dispatch with concrete lengths.
+It also checks the fixed-size consumers and the actual ABI entries.
+
+| Model | Kernel classes | Fixed cases | Width | ABI | Memory symbols |
+|---|---|---:|---|---|---:|
+| sapphirerapids | 64 through 512 | 768 | ZMM, no YMM split | one direct branch | 0 |
+| graniterapids | 64 through 512 | 768 | ZMM, no YMM split | one direct branch | 0 |
+| znver4 | 64 through 512 | 768 | ZMM, no YMM split | one direct branch | 0 |
+| znver5 | 64 through 512 | 768 | ZMM, no YMM split | one direct branch | 0 |
+| x86_64_v3 | 32 through 256 | 384 | YMM, no ZMM | one direct branch | 0 |
+
+Each AVX-512 fixed matrix covers copy, move, and set at every size from 1 through 256.
+The v3 fixed matrix stops at its 128-byte inline limit.
+Every tested vector return contains `vzeroupper`.
+The gate checks masked stores, Intel REP paths, NT stores, and fences.
+AMD and v3 contain no REP paths by default.
+
+The aarch64 instruction bytes from `asm-all` match the pre-kernel build on Linux GNU, Linux musl, and macOS.
+Only anonymous symbol numbers differ on macOS.
+The three Neoverse models also produce identical `.text` sections before and after the change.
+Their SHA-256 is `299bf8c0c43cae5fc336764e1440646d17c67ff020a95d82cc8d1fbb2dbb67f4`.
+No file under `src/aarch64/` changed.
+
+## Fleet procedure
+
+1. Merge this lane into the parent checkout.
+2. Extend the large suite to at least 256 MiB for the Granite Rapids NT path.
+3. Run the hardware correctness matrix without `--up`.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig -c just --justfile /Users/matt/code/fastmem-zig/Justfile b test --target c7i --target c8i --target c7a --target c8a
+```
+
+4. Run the standard suite with five rounds and the default A/A floor.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig -c just --justfile /Users/matt/code/fastmem-zig/Justfile bench-run --rev WORKTREE --target c7i --target c8i --target c7a --target c8a --suite standard --rounds 5 --label p3-x86-standard
+```
+
+5. Run the large suite for the REP windows and NT paths.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig -c just --justfile /Users/matt/code/fastmem-zig/Justfile bench-run --rev WORKTREE --target c7i --target c8i --target c7a --target c8a --suite large --rounds 5 --label p3-x86-large
+```
+
+6. Run the forward-gap cases separately for the Intel overlap regression.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig -c just --justfile /Users/matt/code/fastmem-zig/Justfile bench-run --rev WORKTREE --target c7i --target c8i --target c7a --target c8a --suite standard --filter move/fwd-gap --rounds 5 --label p3-x86-fwd-gap
+```
+
+## Remaining limits
+
+The current large suite stops at 64 MiB.
+It reaches AMD and Sapphire Rapids NT paths, but not Granite Rapids NT paths.
+The guard binary instead reaches 302 MiB on Granite Rapids.
+Exact threshold timing requires additional threshold-minus-one, threshold, and threshold-plus-one cases.
+
+`bench test` covers target and baseline CPUs in ReleaseFast.
+Hardware Debug and ReleaseSafe runs remain separate checks.
+The benchmark CLI has no baseline-CPU override for the G6 timing comparison.
+All performance gates and the AVX-512 hardware tests remain open.
