@@ -88,5 +88,5 @@ toolchain. Nothing has been benchmarked on 0.16 yet.
 - `std.Target.Cpu.Model` is a struct; compare by pointer:
   `builtin.cpu.model == &std.Target.aarch64.cpu.generic`.
 - Vector width: `std.simd.suggestVectorLength(u8)` — 16 on NEON, 32 on AVX2.
-- Run `ziglint src/` before calling work done; pre-existing warnings in
-  `bench_fastmem.zig` long lines are known and tolerated.
+- Run `ziglint src/` before completion. Existing warnings remain in the kernels
+  and `src/asm_probe.zig`. Modified benchmark files must pass lint.
