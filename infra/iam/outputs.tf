@@ -25,3 +25,13 @@ output "policy_arn" {
   description = "ARN of the bench EC2 policy"
   value       = module.bench.policy_arn
 }
+
+output "reaper_function_name" {
+  description = "Name of the reaper Lambda function"
+  value       = module.bench.reaper_function_name
+}
+
+output "reaper_log_group" {
+  description = "CloudWatch Logs group of the reaper"
+  value       = module.bench.reaper_log_group
+}

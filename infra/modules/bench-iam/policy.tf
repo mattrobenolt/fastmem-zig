@@ -6,6 +6,13 @@
 # so the user cannot escalate its own privileges. It also holds no
 # iam:PassRole, so it cannot launch an instance with an instance profile.
 #
+# This policy does not guarantee the lifetime of an instance. The user can
+# write launch template versions, so it controls user_data, the shutdown
+# behavior, and the metadata options of its boxes, and it can set ExpiresAt
+# to any value. The reaper (reaper.tf) is the lifetime guarantee. This policy
+# keeps each resource visible to the reaper: exact tag keys, a Project tag
+# that cannot change or go away, and no StopInstances or StartInstances.
+#
 # RunInstances authorizes one ARN for each resource in the request: instance,
 # volume, network-interface, security-group, subnet, image, key-pair, and
 # launch-template. Each resource type supports different condition keys, and
@@ -30,6 +37,17 @@ locals {
   # template matches no statement.
   uses_launch_template = { "ec2:LaunchTemplate" = local.launch_templates }
 
+  # The tag keys that the user can write, with exact case. IAM compares the
+  # tag key in aws:RequestTag/<key> and aws:ResourceTag/<key> without case,
+  # so a request with PROJECT=<project> passes a Project condition, but the
+  # tag:Project filter of DescribeInstances (the harness, the reaper) does
+  # not find the resource. aws:TagKeys with StringEquals compares with case.
+  # Every statement that creates tags carries this condition. The default
+  # tags of the bench-base caller (Project, ManagedBy) are in the set.
+  canonical_tag_keys = {
+    "aws:TagKeys" = ["Project", "ManagedBy", "Name", "Target", "ExpiresAt", "Owner"]
+  }
+
   policy = {
     Version = "2012-10-17"
     Statement = [
@@ -51,34 +69,47 @@ locals {
         # the families:
         # "c7i.*" matches c7i.xlarge and c7i.metal-48xl, but not
         # c7i-flex.large or c7gn.xlarge, because the family name must end at
-        # the dot. ec2:Tenancy blocks dedicated tenancy, which costs extra.
-        # IfExists: the key can be absent when the request does not set it.
+        # the dot. ec2:InstanceMarketType blocks Spot and Capacity Blocks;
+        # EC2 sets it to "on-demand" on a plain launch. ec2:Tenancy blocks
+        # dedicated tenancy, which costs extra. IfExists: the key can be
+        # absent when the request does not set it.
         Sid      = "RunInstancesInstance"
         Effect   = "Allow"
         Action   = "ec2:RunInstances"
         Resource = "${local.ec2}:instance/*"
         Condition = {
-          StringEquals         = { "aws:RequestTag/Project" = var.project }
-          Null                 = { "aws:RequestTag/ExpiresAt" = "false" }
-          StringLike           = { "ec2:InstanceType" = [for family in var.instance_families : "${family}.*"] }
-          ArnLike              = local.uses_launch_template
-          StringEqualsIfExists = { "ec2:Tenancy" = "default" }
+          StringEquals = {
+            "aws:RequestTag/Project" = var.project
+            "ec2:InstanceMarketType" = "on-demand"
+          }
+          Null                        = { "aws:RequestTag/ExpiresAt" = "false" }
+          StringLike                  = { "ec2:InstanceType" = [for family in var.instance_families : "${family}.*"] }
+          ArnLike                     = local.uses_launch_template
+          StringEqualsIfExists        = { "ec2:Tenancy" = "default" }
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
         }
       },
       {
-        # The EBS volumes. They must carry the project tag too. The type and
-        # size limits stop a request that overrides the launch template
-        # volume with a large or provisioned-IOPS volume. IfExists: the keys
-        # can be absent when the volume comes from the launch template.
+        # The EBS volumes. They must carry the project tag too. The limits
+        # stop a request that overrides the launch template volume with a
+        # large volume or with paid IOPS or throughput: 3000 IOPS and
+        # 125 MiB/s are the gp3 baseline that the volume price includes.
+        # IfExists: EC2 omits a key that the request and the launch template
+        # do not set. The reaper deletes volumes that outlive their instance.
         Sid      = "RunInstancesVolume"
         Effect   = "Allow"
         Action   = "ec2:RunInstances"
         Resource = "${local.ec2}:volume/*"
         Condition = {
-          StringEquals                  = { "aws:RequestTag/Project" = var.project }
-          ArnLike                       = local.uses_launch_template
-          StringEqualsIfExists          = { "ec2:VolumeType" = "gp3" }
-          NumericLessThanEqualsIfExists = { "ec2:VolumeSize" = tostring(var.max_volume_gib) }
+          StringEquals         = { "aws:RequestTag/Project" = var.project }
+          ArnLike              = local.uses_launch_template
+          StringEqualsIfExists = { "ec2:VolumeType" = "gp3" }
+          NumericLessThanEqualsIfExists = {
+            "ec2:VolumeSize"       = tostring(var.max_volume_gib)
+            "ec2:VolumeIops"       = "3000"
+            "ec2:VolumeThroughput" = "125"
+          }
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
         }
       },
       {
@@ -123,28 +154,38 @@ locals {
         }
       },
       {
-        # The subnet and the new network interface. The launch template sets
-        # no subnet, so EC2 selects a default subnet, and
-        # ec2:IsLaunchTemplateResource would be false. The security group
-        # statement above already keeps the instance in the default VPC,
-        # because a security group works only in its own VPC.
-        Sid    = "RunInstancesNetwork"
-        Effect = "Allow"
-        Action = "ec2:RunInstances"
-        Resource = [
-          "${local.ec2}:subnet/*",
-          "${local.ec2}:network-interface/*",
-        ]
+        # The subnet. The launch template sets no subnet, so EC2 selects a
+        # default subnet, and ec2:IsLaunchTemplateResource would be false.
+        # The security group statement above already keeps the instance in
+        # the default VPC, because a security group works only in its own VPC.
+        Sid       = "RunInstancesSubnet"
+        Effect    = "Allow"
+        Action    = "ec2:RunInstances"
+        Resource  = "${local.ec2}:subnet/*"
         Condition = { ArnLike = local.uses_launch_template }
+      },
+      {
+        # The new network interface. It must carry the project tag, so that
+        # the reaper can find it if it outlives its instance. The tag comes
+        # from the request or from the launch template.
+        Sid      = "RunInstancesNetworkInterface"
+        Effect   = "Allow"
+        Action   = "ec2:RunInstances"
+        Resource = "${local.ec2}:network-interface/*"
+        Condition = {
+          StringEquals                = { "aws:RequestTag/Project" = var.project }
+          ArnLike                     = local.uses_launch_template
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
+        }
       },
       {
         # Tags in a create request. EC2 authorizes ec2:CreateTags for each
         # resource that a create action tags, with ec2:CreateAction set to
         # the create action. Without this statement, RunInstances with
         # TagSpecifications (or with tags from the launch template) fails,
-        # and so do the the bench-base module creates, because the provider sends
+        # and so do the bench-base creates, because the provider sends
         # default_tags in the create request. A Project tag, if present,
-        # must have the project value.
+        # must have the project value. Tag keys must be canonical.
         Sid      = "TagOnCreate"
         Effect   = "Allow"
         Action   = "ec2:CreateTags"
@@ -158,55 +199,56 @@ locals {
               "CreateLaunchTemplate",
             ]
           }
-          StringEqualsIfExists = { "aws:RequestTag/Project" = var.project }
+          StringEqualsIfExists        = { "aws:RequestTag/Project" = var.project }
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
         }
       },
       {
         # Tags on existing project resources: `bench extend` rewrites
         # ExpiresAt, and tofu updates tags. The resource must already carry
         # the project tag, so the user cannot pull a foreign resource into
-        # the boundary. The request cannot change the Project value.
+        # the boundary. The request cannot change the Project value, and it
+        # cannot add a tag key outside the canonical set.
         Sid      = "TagProjectResources"
         Effect   = "Allow"
         Action   = "ec2:CreateTags"
         Resource = "${local.ec2}:*/*"
         Condition = {
-          StringEquals         = { "aws:ResourceTag/Project" = var.project }
-          StringEqualsIfExists = { "aws:RequestTag/Project" = var.project }
+          StringEquals                = { "aws:ResourceTag/Project" = var.project }
+          StringEqualsIfExists        = { "aws:RequestTag/Project" = var.project }
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
         }
       },
       {
         # Tag removal on project resources, for tofu tag updates. The request
-        # must name its tag keys (DeleteTags without keys deletes all tags),
-        # and Project and ExpiresAt are not among them. So a resource cannot
-        # leave the boundary, and an instance keeps its TTL.
+        # must name its tag keys: DeleteTags without keys deletes all tags,
+        # and then aws:TagKeys is absent. DenyUntagBoundary below blocks the
+        # Project and ExpiresAt keys.
         Sid      = "UntagProjectResources"
         Effect   = "Allow"
         Action   = "ec2:DeleteTags"
         Resource = "${local.ec2}:*/*"
         Condition = {
-          StringEquals                   = { "aws:ResourceTag/Project" = var.project }
-          "ForAllValues:StringNotEquals" = { "aws:TagKeys" = ["Project", "ExpiresAt"] }
-          Null                           = { "aws:TagKeys" = "false" }
+          StringEquals = { "aws:ResourceTag/Project" = var.project }
+          Null         = { "aws:TagKeys" = "false" }
         }
       },
       {
-        # Instance lifecycle for the harness: down, reap.
-        Sid    = "InstanceLifecycle"
-        Effect = "Allow"
-        Action = [
-          "ec2:TerminateInstances",
-          "ec2:StopInstances",
-          "ec2:StartInstances",
-        ]
+        # Instance termination for the harness: down, reap. No
+        # StopInstances or StartInstances: a stopped box does not run its
+        # TTL guard, and a start resets LaunchTime, which the reaper uses.
+        Sid       = "TerminateInstances"
+        Effect    = "Allow"
+        Action    = "ec2:TerminateInstances"
         Resource  = "${local.ec2}:instance/*"
         Condition = { StringEquals = { "aws:ResourceTag/Project" = var.project } }
       },
       {
-        # the bench-base module creates: the security group, the key pair, and the
+        # The bench-base creates: the security group, the key pair, and the
         # launch templates. Each create request must tag the new resource
-        # with the project. The key comes from tls_private_key, so the
-        # provider uses ImportKeyPair, not CreateKeyPair.
+        # with the project, with canonical tag keys. The key comes from
+        # tls_private_key, so the provider uses ImportKeyPair, not
+        # CreateKeyPair.
         Sid    = "CreateBaseResources"
         Effect = "Allow"
         Action = [
@@ -219,7 +261,10 @@ locals {
           "${local.ec2}:key-pair/*",
           local.launch_templates,
         ]
-        Condition = { StringEquals = { "aws:RequestTag/Project" = var.project } }
+        Condition = {
+          StringEquals                = { "aws:RequestTag/Project" = var.project }
+          "ForAllValues:StringEquals" = local.canonical_tag_keys
+        }
       },
       {
         # CreateSecurityGroup also authorizes the VPC. The VPC has no project
@@ -230,7 +275,7 @@ locals {
         Resource = "${local.ec2}:vpc/${data.aws_vpc.default.id}"
       },
       {
-        # the bench-base module updates and deletes, on project resources only. The
+        # The bench-base updates and deletes, on project resources only. The
         # provider revokes the default egress rule of a new security group
         # and then authorizes the rules of the configuration. A launch
         # template change creates a version and makes it the default.
@@ -269,6 +314,17 @@ locals {
           "ec2:AuthorizeSecurityGroupEgress",
         ]
         Resource = "${local.ec2}:security-group-rule/*"
+      },
+      {
+        # Project and ExpiresAt stay on every resource, in any case spelling
+        # of the key: without Project a resource leaves the boundary and the
+        # reaper, and without ExpiresAt the TTL guard falls back to 12 hours.
+        # A Deny, so that no later Allow can remove them.
+        Sid       = "DenyUntagBoundary"
+        Effect    = "Deny"
+        Action    = "ec2:DeleteTags"
+        Resource  = "*"
+        Condition = { "ForAnyValue:StringEqualsIgnoreCase" = { "aws:TagKeys" = ["Project", "ExpiresAt"] } }
       },
       {
         # Deny every action outside the fleet region. This catches the

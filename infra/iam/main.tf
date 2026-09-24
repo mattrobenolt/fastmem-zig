@@ -1,8 +1,8 @@
-# IAM user for the fastmem-bench fleet (modules/bench-iam).
+# IAM user and reaper for the fastmem-bench fleet (modules/bench-iam).
 #
-# A human applies this stack once, with an IAM-capable profile
-# (playground-ops). write-credentials.sh then writes the access key to the
-# fastmem-bench profile. infra/README.md is the runbook.
+# A human applies this stack with an IAM-capable profile (playground-ops).
+# write-credentials.sh then writes the access key to the fastmem-bench
+# profile. infra/README.md is the runbook.
 #
 # terraform.tfstate holds the secret access key. It is gitignored. Do not
 # commit it and do not copy it off this machine.
@@ -14,6 +14,10 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.66"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.8"
     }
   }
 }

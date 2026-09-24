@@ -1,11 +1,16 @@
-# bench-iam: the IAM user of a tag-scoped EC2 benchmark fleet.
+# bench-iam: the IAM user and the reaper of a tag-scoped EC2 benchmark fleet.
 #
 # The user can launch, tag, and terminate only the EC2 resources that carry
 # Project = var.project, and it can apply the bench-base module for the same
 # project. policy.tf holds the policy and explains each statement.
 #
-# A human applies this once with an IAM-capable profile. The caller owns the
-# provider configuration (region, account guard, default tags).
+# The reaper (reaper.tf) is a scheduled Lambda function that terminates the
+# project instances past their lifetime. It is the lifetime guarantee. The
+# TTL guard on each box is only the fast path, because the user controls the
+# launch templates.
+#
+# A human applies this module with an IAM-capable profile. The caller owns
+# the provider configuration (region, account guard, default tags).
 
 terraform {
   required_version = ">= 1.12"
@@ -14,6 +19,10 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = ">= 6.66"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = ">= 2.8"
     }
   }
 }
