@@ -51,10 +51,17 @@ pub const selected: Tuning = .{
 };
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
-// H5 move masks and H11 high registers stay disabled until fleet measurements justify variants.
-// Future flags belong here, beside the small memset policy.
+// The ABI experiment does not alter inline classes or large-loop policy.
+pub const variant = options.x86_variant;
+pub const high_regs = variant == .high_regs and avx512 and
+    builtin.cpu.has(.x86, .avx512vl) and vec == 64;
 pub const small_masked_set = options.x86_small_masked_set;
-pub const name: []const u8 = if (vec == 64) "x86-avx512-v1" else "x86-avx2-v1";
+pub const name: []const u8 = if (high_regs)
+    "x86-avx512-high-regs-v2"
+else if (vec == 64)
+    "x86-avx512-entry-v2"
+else
+    "x86-avx2-entry-v2";
 
 comptime {
     if (available) {

@@ -77,3 +77,21 @@ test "x86: disjoint alias residues and libc memset byte conversion" {
     try testing.expectEqual(@as(?*anyopaque, null), move.kernel(null, null, 0));
     try testing.expectEqual(@as(?*anyopaque, null), set.kernel(null, -1, 0));
 }
+
+test "x86: every ABI short length and overlapping vector fragment" {
+    var original: [768]u8 = undefined;
+    pattern(&original);
+    for (0..513) |n| {
+        for ([_]u32{ 0, 1, 15, 16, 31, 32, 63, 64, 127 }) |gap| {
+            for ([_]bool{ false, true }) |backward| {
+                var got = original;
+                var expected = original;
+                const source = 1 + if (backward) @as(u32, 0) else gap;
+                const dest = 1 + if (backward) gap else @as(u32, 0);
+                for (0..n) |i| expected[dest + i] = original[source + i];
+                _ = move.kernel(got[dest..].ptr, got[source..].ptr, n);
+                try testing.expectEqualSlices(u8, &expected, &got);
+            }
+        }
+    }
+}

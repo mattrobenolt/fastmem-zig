@@ -1,5 +1,6 @@
 //! Byte fills with straight-line classes and model-specific large paths.
 const builtin = @import("builtin");
+const tail_call = if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto;
 const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
@@ -86,14 +87,28 @@ pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*
         pair(16, d, byte, n);
         return dst;
     }
-    return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, mediumKernel, .{ dst, value, n });
+    return @call(tail_call, mediumKernel, .{ dst, value, n });
 }
 
 noinline fn mediumKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const d: [*]u8 = @ptrCast(dst.?);
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    if (!small(8 * w, true, d, byte, n)) return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, largeKernel, .{ dst, value, n });
+    if (comptime ops.high_available) {
+        if (n > 512) return @call(.always_tail, largeKernel, .{ dst, value, n });
+        if (n < 64) {
+            ops.highSet(32, 2, d, byte, n);
+        } else if (n <= 128) {
+            ops.highSet(64, 2, d, byte, n);
+        } else if (n <= 256) {
+            ops.highSet(64, 4, d, byte, n);
+        } else {
+            ops.highSet(64, 8, d, byte, n);
+        }
+    } else {
+        if (!small(8 * w, true, d, byte, n))
+            return @call(tail_call, largeKernel, .{ dst, value, n });
+    }
     return dst;
 }
 

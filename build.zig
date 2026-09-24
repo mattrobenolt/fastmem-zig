@@ -217,6 +217,8 @@ fn x86Options(b: *std.Build) *std.Build.Step.Options {
     inline for (.{ "rep-movsb-min", "nt-min", "rep-stosb-min", "memset-nt-min", "alias-mask", "rep-src-align-mask", "rep-fwd-gap-min" }) |name| {
         options.addOption(?u64, comptime "x86_" ++ replaceDash(name), b.option(u64, "x86-" ++ name, "Override the x86 tuning default"));
     }
+    const Variant = enum { entry, high_regs };
+    options.addOption(Variant, "x86_variant", b.option(Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs);
     options.addOption(bool, "x86_small_masked_set", b.option(bool, "x86-small-masked-set", "Use masked small memset in LLVM builds") orelse true);
     return options;
 }

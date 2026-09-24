@@ -1,5 +1,6 @@
 //! Independent implementation of the behavioral design in x86_64-design.md.
 const builtin = @import("builtin");
+const tail_call = if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto;
 const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
@@ -72,7 +73,11 @@ pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: u
     }
 }
 
-pub noinline fn kernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernel(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= 16) {
         if (n == 0) return dst;
@@ -95,19 +100,41 @@ pub noinline fn kernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callc
         pair(@Vector(16, u8), d, s, n);
         return dst;
     }
-    return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, mediumKernel, .{ dst, src, n });
+    return @call(tail_call, mediumKernel, .{ dst, src, n });
 }
 
-noinline fn mediumKernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn mediumKernel(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
-    if (!small(8 * w, d, s, n)) return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, largeKernel, .{ dst, src, n });
+    if (comptime ops.high_available) {
+        if (n > 512) return @call(.always_tail, largeKernel, .{ dst, src, n });
+        if (n < 64) {
+            ops.highMove(32, 2, d, s, n);
+        } else if (n <= 128) {
+            ops.highMove(64, 2, d, s, n);
+        } else if (n <= 256) {
+            ops.highMove(64, 4, d, s, n);
+        } else {
+            ops.highMove(64, 8, d, s, n);
+        }
+    } else {
+        if (!small(8 * w, d, s, n))
+            return @call(tail_call, largeKernel, .{ dst, src, n });
+    }
     return dst;
 }
 
 // The matching return convention permits a tail transfer from the leaf entry.
-noinline fn largeKernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn largeKernel(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     large(.may_overlap, @ptrCast(dst.?), @ptrCast(src.?), n);
     return dst;
@@ -132,7 +159,8 @@ fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void
             @intFromPtr(src) -% @intFromPtr(dst) >= gap
         else
             false;
-        if ((!source_inside or rep_overlap) and n > threshold and (t.nt_min == null or n < t.nt_min.?)) {
+        const rep_size = n > threshold and (t.nt_min == null or n < t.nt_min.?);
+        if ((!source_inside or rep_overlap) and rep_size) {
             const head = ops.load(V, src);
             const address = if (distance & t.rep_src_align_mask == 0)
                 @intFromPtr(src)

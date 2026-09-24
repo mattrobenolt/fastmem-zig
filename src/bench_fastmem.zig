@@ -606,7 +606,8 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
                 }
             }
             try addCase(arena, &cases, cfg, try fixedCase(arena, .move, "disjoint", size));
-            for ([_][]const u8{ "fwd-gap4096", "fwd-half" }, [_]u32{ 4096, size / 2 }) |profile, gap| {
+            const forward_profiles = [_][]const u8{ "fwd-gap4096", "fwd-half" };
+            for (forward_profiles, [_]u32{ 4096, size / 2 }) |profile, gap| {
                 var case = try fixedCase(arena, .move, profile, size);
                 case.gap = gap;
                 case.shared = true;

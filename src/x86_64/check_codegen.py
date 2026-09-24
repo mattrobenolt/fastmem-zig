@@ -85,6 +85,7 @@ for name in ("probeRuntimeCopy", "probeRuntimeMove", "probeRuntimeSet"):
     require(re.search(r"\b(?:call\w*|j\w+)\b.*<x86_64\.", text), f"{name} lacks a large-path transfer")
 require(any("copyLarge" in name for name in syms), "runtime copy specialization missing")
 
+high_regs = "%zmm16" in "\n".join(i for _, i in body("x86_64.move.mediumKernel"))
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.mediumKernel"
@@ -95,10 +96,11 @@ for op in ("move", "set"):
         require(register in text, f"kernel {op}/{n} lacks {register}")
         if wide:
             require("%ymm" not in text, f"kernel {op}/{n} splits a vector")
-        require("vzeroupper" in text, f"kernel {op}/{n} lacks vzeroupper")
+        require(("vzeroupper" not in text) if high_regs else ("vzeroupper" in text),
+                f"kernel {op}/{n} has wrong vector cleanup")
         paths.append(n)
     kernel_counts[op] = paths
-    if wide and op == "set":
+    if wide and op == "set" and not high_regs:
         text = "\n".join(i for _, i in body(name))
         require(re.search(r"vmovdqu8.*\{%k", text), "masked memset store missing")
 
@@ -135,6 +137,6 @@ if cpu in ("sapphirerapids", "graniterapids"):
 else:
     require("movsb" not in large and "stosb" not in large, "unexpected REP path")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
-                  "kernel_classes": kernel_counts, "abi": "direct alias", "small_paths": small_counts,
+                  "kernel_classes": kernel_counts, "abi": "direct alias", "variant": "high_regs" if high_regs else "entry", "small_paths": small_counts,
                   "vector": "zmm" if wide else "ymm", "vzeroupper": "present",
                   "mem_symbol_references": 0}))

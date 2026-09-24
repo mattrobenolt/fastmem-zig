@@ -202,7 +202,11 @@ else
 pub const abi = struct {
     pub const memcpy = if (on_x86) x86_move.kernel else memcpyFallback;
 
-    fn memcpyFallback(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    fn memcpyFallback(
+        dest: ?*anyopaque,
+        src: ?*const anyopaque,
+        n: usize,
+    ) callconv(.c) ?*anyopaque {
         if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
@@ -213,7 +217,11 @@ pub const abi = struct {
 
     pub const memmove = if (on_x86) x86_move.kernel else memmoveFallback;
 
-    fn memmoveFallback(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    fn memmoveFallback(
+        dest: ?*anyopaque,
+        src: ?*const anyopaque,
+        n: usize,
+    ) callconv(.c) ?*anyopaque {
         if (comptime on_aarch64) return libc_move_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
