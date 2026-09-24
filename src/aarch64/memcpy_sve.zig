@@ -18,8 +18,11 @@
 // - The GNU_PROPERTY note (BTI/PAC marking of the linked binary) is
 //   omitted: it is link-level metadata, and no other object in a Zig
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
-// - Immediate expressions use #( ...) so the integrated assembler
-//   parses them.
+// - Immediate expressions are written #( ...); upstream writes them
+//   bare. Both forms assemble to the same bytes.
+// - One directive is added: .p2align 6 above the alias label, so the
+//   move entry is aligned in the fused module asm. Assembled standalone,
+//   .text is byte-identical to upstream.
 // - The whole block is gated on the SVE CPU feature and the ELF object
 //   format at comptime (the directives below are ELF-only), so non-SVE
 //   or non-ELF builds never see these instructions.
@@ -37,6 +40,13 @@ comptime {
             \\.arch armv8-a+sve
             \\
             \\// ENTRY_ALIAS (__memmove_aarch64_sve)
+            \\// The alias label is 64-byte aligned too: in the
+            \\// fused module
+            \\// asm this block can start at an unaligned offset, and the
+            \\// copy entry's alignment below must not leave the move entry
+            \\// on a run of NOPs (it would lose the BTI landing pad). The
+            \\// standalone .text stays byte-identical to upstream.
+            \\.p2align 6
             \\.globl fastmem_sve_move
             \\.hidden fastmem_sve_move
             \\.type fastmem_sve_move, %function
