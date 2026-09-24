@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from runtime import host_arch, linux_runner
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -49,7 +51,13 @@ comptime {
     }
 }
 """)
-        for target, cpu in (("native", "native"), ("x86_64-linux-gnu", "x86_64_v3")):
+        targets = [("x86_64-linux-gnu", "x86_64_v3")]
+        if platform.system() == "Linux" and host_arch() in ("aarch64", "x86_64"):
+            targets.insert(0, ("native", "native"))
+        else:
+            targets.insert(0, ("aarch64-linux-gnu", "generic"))
+        for target, cpu in targets:
+            arch = host_arch() if target == "native" else target.split("-")[0]
             for mode in ("ReleaseFast", "ReleaseSafe"):
                 binary = temp / f"std-{target}-{mode}"
                 cmd = [
@@ -95,15 +103,16 @@ comptime {
                         "python3",
                         str(Path(__file__).with_name("check.py")),
                         "--arch",
-                        platform.machine() if target == "native" else "x86_64",
+                        arch,
                         "--ecosystem",
                         str(binary),
                     ],
                     check=True,
                 )
-                runner = (
-                    [] if target == "native" or platform.machine() == "x86_64" else ["qemu-x86_64"]
-                )
+                runner = linux_runner(arch)
+                if runner is None:
+                    print(f"SKIP std runtime {target} {mode}: no compatible Linux runner", flush=True)
+                    continue
                 run = subprocess.run(
                     runner + [str(binary)], capture_output=True, text=True, timeout=300
                 )

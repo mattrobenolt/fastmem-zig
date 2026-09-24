@@ -1,10 +1,11 @@
 """Inspect linked ELF symbols and branches, then execute the consumer."""
 
 import argparse
-import platform
 import re
 import struct
 import subprocess
+
+from runtime import linux_runner
 
 
 def output(*args):
@@ -120,10 +121,14 @@ def main():
             assert target not in entries, (hex(addr), "branch to memory entry", hex(target))
             if target in helpers:
                 pending.append(target)
+    ran = False
     if args.run:
-        host = {"arm64": "aarch64", "AMD64": "x86_64"}.get(platform.machine(), platform.machine())
-        command = [binary] if host == args.arch else ["qemu-" + args.arch, binary]
-        subprocess.run(command, check=True, timeout=120)
+        runner = linux_runner(args.arch)
+        if runner is None:
+            print(f"SKIP runtime {binary}: no compatible Linux runner")
+        else:
+            subprocess.run(runner + [binary], check=True, timeout=120)
+            ran = True
     print(
         f"PASS {binary}: "
         + (
@@ -132,7 +137,7 @@ def main():
             else "ABI identity, strong/hidden, no kernel recursion, no dynsym"
             + (", Zig/C call binding" if not args.ecosystem else "")
         )
-        + (", runtime Zig/C" if args.run else "")
+        + (", runtime Zig/C" if ran else ", static checks only")
     )
 
 

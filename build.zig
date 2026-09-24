@@ -281,6 +281,10 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
     const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
     step.dependOn(addExportCollisionTests(b, tuning));
     step.dependOn(addArmByteTests(b));
+    const runtime_check = b.addSystemCommand(&.{"python3"});
+    runtime_check.addFileArg(b.path("src/export/test_runtime.py"));
+    step.dependOn(&runtime_check.step);
+    const linux_host = b.graph.host.result.os.tag == .linux;
     for ([_][]const u8{ "aarch64", "x86_64" }) |arch| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
             .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
@@ -295,7 +299,7 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
                     const check = b.addSystemCommand(&.{"python3"});
                     check.addFileArg(b.path("src/export/check.py"));
                     check.addArgs(&.{ "--arch", arch, "--division", if (division) "yes" else "no" });
-                    if (!libc) check.addArg("--run");
+                    if (!libc and linux_host) check.addArg("--run");
                     check.addFileArg(exe.getEmittedBin());
                     step.dependOn(&check.step);
                 }
@@ -310,7 +314,8 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
             });
             const check = b.addSystemCommand(&.{"python3"});
             check.addFileArg(b.path("src/export/check.py"));
-            check.addArgs(&.{ "--arch", arch, "--division", "yes", "--run" });
+            check.addArgs(&.{ "--arch", arch, "--division", "yes" });
+            if (linux_host) check.addArg("--run");
             if (!enabled) check.addArg("--disabled");
             check.addFileArg(exe.getEmittedBin());
             step.dependOn(&check.step);
@@ -345,15 +350,19 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
         strong_check.addFileArg(strong.getEmittedBin());
         step.dependOn(&strong_check.step);
         // Dynamic executable and DSO: hidden definitions must stay local in both.
-        for ([_]bool{ false, true }) |shared| {
-            const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, true, true);
+        const Link = enum { dynamic, shared, shared_no_rt };
+        for ([_]Link{ .dynamic, .shared, .shared_no_rt }) |kind| {
+            const shared = kind != .dynamic;
+            const division = kind != .shared_no_rt;
+            const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, division, true);
             const artifact = if (shared)
-                b.addLibrary(.{ .name = b.fmt("export-shared-{s}", .{arch}), .root_module = fixture, .linkage = .dynamic })
+                b.addLibrary(.{ .name = b.fmt("export-{s}-{s}", .{ @tagName(kind), arch }), .root_module = fixture, .linkage = .dynamic })
             else
                 b.addExecutable(.{ .name = b.fmt("export-dynamic-{s}", .{arch}), .root_module = fixture });
             const check = b.addSystemCommand(&.{"python3"});
             check.addFileArg(b.path("src/export/check.py"));
-            check.addArgs(&.{ "--arch", arch, "--division", "yes" });
+            check.addArgs(&.{ "--arch", arch, "--division", if (division) "yes" else "no" });
+            if (kind == .shared_no_rt) artifact.bundle_compiler_rt = false;
             if (shared) check.addArg("--shared");
             check.addFileArg(artifact.getEmittedBin());
             step.dependOn(&check.step);
@@ -372,7 +381,7 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
         const check = b.addSystemCommand(&.{"python3"});
         check.addFileArg(b.path("src/export/check.py"));
         check.addArgs(&.{ "--arch", arch, "--division", "yes" });
-        if (std.mem.eql(u8, cpu, "x86_64")) check.addArg("--run");
+        if (linux_host and std.mem.eql(u8, cpu, "x86_64")) check.addArg("--run");
         check.addFileArg(exe.getEmittedBin());
         step.dependOn(&check.step);
     }
