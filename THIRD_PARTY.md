@@ -58,3 +58,13 @@ the notice from the upstream `LICENSE` file is reproduced here:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+
+## x86_64 kernels
+
+The x86 kernels are independent implementations of `docs/research/x86_64-design.md`, section 5.
+No glibc source or disassembly entered these files.
+The memo uses glibc only as a behavioral reference.
+
+The head/tail vocabulary also follows llvm-libc's design in `libc/src/string/memory_utils/op_generic.h`.
+That reference uses commit `b19a36aaf4b9aaea539b903bd515b54a9f23a639` and the Apache-2.0 WITH LLVM-exception license.
+No llvm-libc source was ported.

@@ -58,6 +58,7 @@
               # Cross-arch disassembly of local builds and pulled glibc
               # objects: llvm-objdump reads x86_64 and aarch64 alike.
               llvmPackages.bintools-unwrapped
+              qemu
               shellcheck
             ];
             # Keep uv on the nix interpreter; never download a Python.
