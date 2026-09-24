@@ -86,7 +86,7 @@ def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
             "sample_ms": 20,
             "warmup_ms": 10,
             "impls": ["builtin", "fastmem_abi", "fastmem_inline", "glibc"],
-            "perf": {"available": False, "events": [], "error": "fixture"},
+            "perf": {"available": False, "events": ["cycles", "instructions"], "error": "fixture"},
         }
     ]
     for implementation, factor in (
@@ -108,8 +108,8 @@ def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
                     "gap": None,
                     "impl": implementation,
                     "sample": index,
-                    "iters": 100,
-                    "ns": 1000 * factor * scale,
+                    "iters": 100000,
+                    "ns": round(1000000 * factor * scale),
                     "cycles": None,
                     "instructions": None,
                     "ref_cycles": None,

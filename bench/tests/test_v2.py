@@ -36,6 +36,7 @@ def test_per_case_implementation_applicability(tmp_path: Path, profile: str) -> 
     measurement(path)
     records = [json.loads(line) for line in path.read_text().splitlines()]
     meta, end = records[0], records[-1]
+    meta["suite"] = "standard"
     meta["impls"].append("builtin_const")
     op = "set" if profile == "aligned" else "copy"
     samples = []

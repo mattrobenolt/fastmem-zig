@@ -1,11 +1,12 @@
 """Schema-v2 input and independent libc-probe resolution checks."""
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Implementation = Literal["builtin", "glibc", "fastmem_abi", "fastmem_inline", "builtin_const"]
 Operation = Literal["copy", "move", "set"]
@@ -14,13 +15,30 @@ SYMBOLS = ("memcpy", "memmove", "memset")
 
 
 class Record(BaseModel):
-    model_config = ConfigDict(allow_inf_nan=False)
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", strict=True)
 
 
 class Perf(Record):
     available: bool
     events: list[str]
     error: str | None
+
+    @model_validator(mode="after")
+    def check_group(self) -> Perf:
+        if self.events not in (
+            ["cycles", "instructions"],
+            ["cycles", "instructions", "ref-cycles"],
+        ):
+            raise ValueError("Invalid perf event group")
+        if not self.available and not self.error:
+            raise ValueError("Unavailable perf group requires an error")
+        if (
+            self.available
+            and self.error
+            and (len(self.events) != 2 or not self.error.startswith("perf_event_open(ref-cycles):"))
+        ):
+            raise ValueError("Available perf error must describe the ref-cycles fallback")
+        return self
 
 
 class Evidence(Record):
@@ -49,13 +67,13 @@ class Meta(Record):
     target: str
     cpu: str
     optimize: Literal["ReleaseFast"]
-    link_libc: Literal[True]
+    link_libc: bool
     chunk_bytes: int = Field(gt=0)
     suite: Literal["quick", "standard", "large", "const", "dist"]
     seed: int = Field(ge=0)
     samples: int = Field(gt=0)
-    sample_ms: float = Field(gt=0)
-    warmup_ms: float = Field(ge=0)
+    sample_ms: int = Field(gt=0, le=60000)
+    warmup_ms: int = Field(ge=0, le=60000)
     impls: list[Implementation] = Field(min_length=1)
     perf: Perf
     fastmem_set: bool
@@ -64,6 +82,27 @@ class Meta(Record):
     libc_path: str
     libc_base: int = Field(gt=0)
     resolution: dict[str, Resolution]
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def strict_schema(cls, value: Any) -> int:
+        if type(value) is not int or value != 2:
+            raise ValueError("Schema must be the integer 2")
+        return value
+
+    @model_validator(mode="after")
+    def check_config(self) -> Meta:
+        if self.chunk_bytes not in (16, 32):
+            raise ValueError("Invalid SIMD chunk size")
+        if not self.link_libc:
+            raise ValueError("Schema v2 requires libc")
+        if self.target not in {"aarch64-linux-gnu", "x86_64-linux-gnu"}:
+            raise ValueError("Schema v2 requires a Linux GNU target")
+        if self.target.startswith("aarch64") and "ref-cycles" in self.perf.events:
+            raise ValueError("aarch64 does not report ref-cycles")
+        if self.dist_file is not None and self.suite != "dist":
+            raise ValueError("A histogram requires the dist suite")
+        return self
 
     @model_validator(mode="after")
     def check_resolution(self) -> Meta:
@@ -99,7 +138,7 @@ class Sample(Record):
     impl: Implementation
     sample: int = Field(ge=0)
     iters: int = Field(gt=0)
-    ns: float = Field(gt=0)
+    ns: int = Field(gt=0)
     cycles: int | None = Field(ge=0)
     instructions: int | None = Field(ge=0)
     ref_cycles: int | None = Field(ge=0)
@@ -118,8 +157,25 @@ class Sample(Record):
             raise ValueError("Ref-cycles without a perf group")
         if self.profile == "const" and self.op != "copy":
             raise ValueError("The const profile requires copy")
-        if not self.case.startswith(f"{self.op}/{self.profile}/"):
+        if not self.case.startswith(f"{self.op}/{self.profile}/") or self.case.count("/") != 2:
             raise ValueError("Case ID disagrees with operation/profile")
+        return self
+
+    @model_validator(mode="after")
+    def check_case(self) -> Sample:
+        suffix = self.case.rsplit("/", 1)[-1]
+        if self.profile == "dist":
+            if suffix not in {"small", "mixed", "file"}:
+                raise ValueError("Unknown distribution")
+            if (self.src_off, self.dst_off, self.gap) != (None, None, None):
+                raise ValueError("Distribution offsets and gap must be null")
+        else:
+            if not self.size.is_integer() or suffix != str(int(self.size)):
+                raise ValueError("Fixed size disagrees with case ID")
+            if self.src_off is None or self.dst_off is None:
+                raise ValueError("Fixed offsets must be integers")
+            if self.op != "move" and self.gap is not None:
+                raise ValueError("Only a directional move can have a gap")
         return self
 
 
@@ -171,8 +227,86 @@ def parse(path: Path, *, probe: dict[str, Any] | None = None) -> Measurement:
         return measurement
 
 
+def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def validate_case(meta: Meta, sample: Sample) -> None:
+    from fastmem_bench.goals import CONST_SIZES, STANDARD_SIZES
+
+    if sample.profile == "dist":
+        name = sample.case.rsplit("/", 1)[-1]
+        if meta.suite not in {"standard", "dist"}:
+            raise ValueError("Distribution is outside the selected suite")
+        if (name == "file") != (meta.dist_file is not None):
+            raise ValueError("Distribution disagrees with histogram configuration")
+        maximum = {"small": 256, "mixed": 16384, "file": 1 << 30}[name]
+        if sample.size > maximum:
+            raise ValueError("Distribution mean exceeds its maximum")
+        return
+    sizes = {
+        "quick": {8, 32, 64, 256, 1024, 4096, 16384, 262144},
+        "standard": set(STANDARD_SIZES),
+        "large": {1 << 20, 4 << 20, 16 << 20, 64 << 20},
+        "const": set(CONST_SIZES),
+        "dist": set(),
+    }
+    if sample.profile == "const":
+        if meta.suite not in {"standard", "const"} or sample.size not in CONST_SIZES:
+            raise ValueError("Const case is outside the selected suite")
+    elif meta.suite == "const" or sample.size not in sizes[meta.suite]:
+        raise ValueError("Fixed case is outside the selected suite")
+    validate_offsets(meta, sample)
+
+
+def validate_offsets(meta: Meta, sample: Sample) -> None:
+    expected = {
+        "copy": {
+            "aligned": (0, 0),
+            "misaligned": (1, 3),
+            "cross-lane": (meta.chunk_bytes - 1, meta.chunk_bytes // 2),
+            "page-offset": (0, 2048),
+            "const": (0, 0),
+        },
+        "set": {"aligned": (0, 0), "misaligned": (1, 3)},
+        "move": {"disjoint": (0, 0)},
+    }
+    offsets = expected[sample.op].get(sample.profile)
+    if offsets is not None:
+        if (sample.src_off, sample.dst_off) != offsets or sample.gap is not None:
+            raise ValueError("Offsets or gap disagree with profile")
+        return
+    directional = re.fullmatch(r"(fwd|bwd)-gap([0-9]+)", sample.profile)
+    if sample.op != "move" or directional is None:
+        raise ValueError("Unknown operation profile")
+    gap = int(directional[2])
+    offsets = (gap, 0) if directional[1] == "fwd" else (0, gap)
+    if gap not in {1, meta.chunk_bytes - 1, meta.chunk_bytes + 1} or sample.gap != gap:
+        raise ValueError("Move gap disagrees with profile")
+    if (sample.src_off, sample.dst_off) != offsets:
+        raise ValueError("Move offsets disagree with direction and gap")
+
+
+def validate_perf_sample(meta: Meta, sample: Sample) -> None:
+    if meta.perf.available and sample.cycles is None:
+        raise ValueError("Available perf group has null counters")
+    if sample.cycles is not None:
+        has_ref = "ref-cycles" in meta.perf.events
+        if has_ref != (sample.ref_cycles is not None):
+            raise ValueError("Ref-cycles disagree with the final perf group")
+
+
 def parse_text(text: str) -> Measurement:
-    records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    records = [
+        json.loads(line, object_pairs_hook=unique_object)
+        for line in text.splitlines()
+        if line.strip()
+    ]
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("JSONL records must be objects")
     if not records or records[0].get("type") != "meta" or records[0].get("schema") != 2:
@@ -194,8 +328,8 @@ def validate_samples(meta: Meta, samples: list[Sample], end: End) -> None:
     seen = set()
     cases: dict[str, Sample] = {}
     for sample in samples:
-        if meta.perf.available and sample.cycles is None:
-            raise ValueError("Available perf group has null counters")
+        validate_case(meta, sample)
+        validate_perf_sample(meta, sample)
         key = (sample.case, sample.impl, sample.sample)
         if key in seen:
             raise ValueError(f"Duplicate sample {key}")

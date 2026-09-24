@@ -19,13 +19,20 @@ def write_cases(path: Path, cases: list[tuple[str, int, str, float]], *, jitter:
         measurement(path, scale, size=size)
         raw = [json.loads(line) for line in path.read_text().splitlines()]
         if not records:
+            raw[0]["suite"] = "standard"
             records.append(raw[0])
         for row in raw[1:-1]:
             row.update(case=f"{op}/{profile}/{size}", profile=profile, op=op)
-            if profile == "dist" or op == "move":
-                row.update(src_off=None, dst_off=None)
+            if profile == "dist":
+                row.update(
+                    case=f"{op}/dist/{'small' if size == 31 else 'mixed'}",
+                    src_off=None,
+                    dst_off=None,
+                )
+            if profile == "cross-lane":
+                row.update(src_off=31, dst_off=16)
             if row["impl"] == "glibc":
-                row["ns"] *= 1 + jitter
+                row["ns"] = round(row["ns"] * (1 + jitter))
             records.append(row)
     records.append({"type": "end", "cases": len(cases), "elapsed_ns": 1})
     path.write_text("\n".join(json.dumps(row) for row in records) + "\n")

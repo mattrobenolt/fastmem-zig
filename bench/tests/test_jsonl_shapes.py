@@ -17,13 +17,13 @@ META = {
     "optimize": "ReleaseFast",
     "link_libc": True,
     "chunk_bytes": 16,
-    "suite": "quick",
+    "suite": "standard",
     "seed": 1,
     "samples": 1,
     "sample_ms": 1,
     "warmup_ms": 1,
     "impls": ["fastmem_abi"],
-    "perf": {"available": False, "events": [], "error": "EACCES"},
+    "perf": {"available": False, "events": ["cycles", "instructions"], "error": "EACCES"},
 }
 BASE = {
     "type": "sample",
@@ -54,8 +54,8 @@ ROWS = [
         "op": "move",
         "profile": "fwd-gap1",
         "size": 64,
-        "src_off": None,
-        "dst_off": None,
+        "src_off": 1,
+        "dst_off": 0,
         "gap": 1,
     },
     {

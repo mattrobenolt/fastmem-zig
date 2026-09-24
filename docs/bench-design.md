@@ -536,6 +536,9 @@ The consecutive-sample test skips when the host denies access or supplies no PMU
 Every measurement consists of one meta record, sample records, and one end record.
 The parser rejects schema v1 and files without an end record.
 It also rejects duplicate samples and incomplete per-case implementation sets.
+All record objects reject unknown fields and duplicate JSON keys.
+Integer fields reject floats, strings, and booleans.
+Cross-field checks enforce case IDs, sizes, offsets, gaps, suites, and perf event consistency.
 
 Meta fields:
 
@@ -583,7 +586,7 @@ Sample fields:
 | `impl` | One applicable implementation name |
 | `sample` | Zero-based sample index within this case and implementation |
 | `iters` | Positive integer operation count |
-| `ns` | Positive elapsed nanoseconds for the batch |
+| `ns` | Positive integer elapsed nanoseconds for the batch |
 | `cycles`, `instructions`, `ref_cycles` | Nonnegative integer totals or null |
 | `time_enabled`, `time_running` | Nonnegative integer nanoseconds or null |
 
