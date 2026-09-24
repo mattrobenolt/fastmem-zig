@@ -99,13 +99,15 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
 
 /// Fill `dest` with `value`. Prefer over @memset for runtime-sized fills.
 ///
-/// The byte kernels are bit-pattern fills: for T != u8 they apply only
-/// when every byte of `value` is equal (checked at runtime; comptime-
-/// known for u8). Other values take the element-wise fallback loop.
+/// The byte kernels are bit-pattern fills: they apply to T == u8, or to
+/// any T with a unique in-memory representation whose value bytes are
+/// all equal (checked at runtime; comptime-known for u8). Every other
+/// type takes the element-wise fallback loop.
 pub fn set(comptime T: type, dest: []T, value: T) void {
-    const bytes: [@sizeOf(T)]u8 = @bitCast(value);
-    if (comptime on_aarch64) {
-        if (T == u8 or allBytesEqual(&bytes)) {
+    if (comptime @sizeOf(T) == 0) return;
+    if (comptime on_aarch64 and (T == u8 or std.meta.hasUniqueRepresentation(T))) {
+        const bytes = std.mem.asBytes(&value);
+        if (T == u8 or allBytesEqual(bytes)) {
             const len = dest.len * @sizeOf(T);
             const d: [*]u8 = @ptrCast(dest.ptr);
             if (comptime on_aarch64_sve) {
@@ -284,6 +286,51 @@ test "move: backward overlapping (dest > src)" {
             expected[gap..][0..len],
             buf[gap..][0..len],
         );
+    }
+}
+
+// Covers every type shape set() must accept: scalars with uniform and
+// non-uniform byte patterns, aggregates, optionals, and zero-size types.
+// want[] is built with a plain element loop; both buffers start from
+// zeroes so writes outside the requested range show up in the compare.
+test "set: typed elements, uniform and non-uniform byte patterns" {
+    const Enum = enum(u8) { a, b, c };
+    const Struct = struct { a: u8, b: u32 }; // padding, no unique repr
+    const Vec = @Vector(4, u8);
+
+    try expectSet(u8, 0x00);
+    try expectSet(u8, 0x5A);
+    try expectSet(u16, 0xAAAA);
+    try expectSet(u16, 0x1234);
+    try expectSet(u32, 0xABABABAB);
+    try expectSet(u32, 0x01020304);
+    try expectSet(u64, 0);
+    try expectSet(u64, 0x0102030405060708);
+    try expectSet(f32, 0.0);
+    try expectSet(f32, 1.5);
+    try expectSet(i8, -1);
+    try expectSet(i8, 42);
+    try expectSet([4]u8, .{ 9, 9, 9, 9 });
+    try expectSet([4]u8, .{ 1, 2, 3, 4 });
+    try expectSet(Vec, @splat(0x55));
+    try expectSet(Vec, .{ 5, 6, 7, 8 });
+    try expectSet(bool, true);
+    try expectSet(bool, false);
+    try expectSet(Enum, .b);
+    try expectSet(?u8, 7);
+    try expectSet(?u8, null);
+    try expectSet(Struct, .{ .a = 3, .b = 0x11223344 });
+    try expectSet(u0, 0);
+}
+
+fn expectSet(comptime T: type, value: T) !void {
+    const lens = [_]usize{ 0, 1, 2, 3, 7, 15, 16, 31, 64, 65, 255, 300 };
+    for (lens) |len| {
+        var got: [320]T = std.mem.zeroes([320]T);
+        var want: [320]T = std.mem.zeroes([320]T);
+        for (want[2 .. 2 + len]) |*p| p.* = value;
+        set(T, got[2 .. 2 + len], value);
+        try testing.expectEqual(want, got);
     }
 }
 
