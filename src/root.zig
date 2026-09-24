@@ -126,7 +126,11 @@ fn allBytesEqual(bytes: []const u8) bool {
     return true;
 }
 
-const LibcCopyFn = *const fn (dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque;
+const LibcCopyFn = *const fn (
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque;
 const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque;
 
 // The AOR kernel symbols already carry the libc signatures and, like
@@ -383,10 +387,10 @@ test "abi: libc-signature entry points return dest and do the work" {
     }
 }
 
+const SetTestEnum = enum(u8) { a, b, c };
+const SetTestStruct = struct { a: u8, b: u32 }; // padding, no unique repr
+
 test "set: typed elements, uniform and non-uniform byte patterns" {
-    const Enum = enum(u8) { a, b, c };
-    const Struct = struct { a: u8, b: u32 }; // padding, no unique repr
-    const Vec = @Vector(4, u8);
 
     try expectSet(u8, 0x00);
     try expectSet(u8, 0x5A);
@@ -402,14 +406,14 @@ test "set: typed elements, uniform and non-uniform byte patterns" {
     try expectSet(i8, 42);
     try expectSet([4]u8, .{ 9, 9, 9, 9 });
     try expectSet([4]u8, .{ 1, 2, 3, 4 });
-    try expectSet(Vec, @splat(0x55));
-    try expectSet(Vec, .{ 5, 6, 7, 8 });
+    try expectSet(@Vector(4, u8), @as(@Vector(4, u8), @splat(0x55)));
+    try expectSet(@Vector(4, u8), .{ 5, 6, 7, 8 });
     try expectSet(bool, true);
     try expectSet(bool, false);
-    try expectSet(Enum, .b);
+    try expectSet(SetTestEnum, .b);
     try expectSet(?u8, 7);
     try expectSet(?u8, null);
-    try expectSet(Struct, .{ .a = 3, .b = 0x11223344 });
+    try expectSet(SetTestStruct, .{ .a = 3, .b = 0x11223344 });
     try expectSet(u0, 0);
 }
 
