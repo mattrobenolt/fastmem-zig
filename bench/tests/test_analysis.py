@@ -3,7 +3,18 @@ from pathlib import Path
 
 import pytest
 
-from fastmem_bench.analysis import analyze, bootstrap, geomean, ratio, significant, tier
+from fastmem_bench.analysis import (
+    analyze,
+    compare_rounds,
+    geomean,
+    hodges_lehmann,
+    outlier_rounds,
+    quantile,
+    rank_interval,
+    round_medians,
+    significant,
+    tier,
+)
 from fastmem_bench.jsonl import parse
 from fastmem_bench.protocol import orders
 from tests.conftest import measurement
@@ -48,16 +59,63 @@ def test_reject_invalid(tmp_path: Path, mutation: str) -> None:
 
 
 def test_math() -> None:
-    candidate: list[list[float]] = [[8, 9], [9, 10], [10, 11]]
-    baseline: list[list[float]] = [[10, 11], [11, 12], [12, 13]]
-    assert ratio(candidate, baseline) == pytest.approx(9.5 / 11.5)
-    assert bootstrap(candidate, baseline) == bootstrap(candidate, baseline)
-    assert bootstrap([[2]], [[4]]) == (0.5, 0.5)
+    assert round_medians([[8, 9, 30], [9, 10]]) == [9, 9.5]
+    assert hodges_lehmann([1, 2], [0]) == 1.5
+    assert compare_rounds([2], [4]) == {
+        "ratio": 0.5,
+        "ci95": [0.5, 0.5],
+        "ci_level": 0,
+        "ci_rounds": [1, 1],
+    }
     assert geomean([0.5, 2]) == pytest.approx(1)
+    assert quantile([0, 1, 2, 3, 4], 0.95) == pytest.approx(3.8)
+    assert quantile([7], 0.95) == 7
     assert significant(0.9, (0.88, 0.92), 0.02)
     assert not significant(0.99, (0.98, 0.999), 0.02)
     assert not significant(0.9, (0.8, 1.01), 0.02)
     assert not significant(0.9, (0.88, 0.92), None)
+    # The floor applies to |log ratio|: a speedup to 1/1.05 equals a slowdown to 1.05.
+    assert significant(1 / 1.06, (0.9, 0.95), 0.05)
+    assert not significant(1 / 1.04, (0.9, 0.97), 0.05)
+
+
+@pytest.mark.parametrize(
+    ("rounds", "k", "coverage"),
+    [
+        ((1, 1), 1, 0),
+        ((3, 3), 1, 0.9),
+        ((4, 4), 1, 1 - 2 / 70),
+        ((4, 5), 2, 1 - 4 / 126),
+        ((5, 5), 3, 1 - 8 / 252),
+    ],
+)
+def test_rank_interval(rounds: tuple[int, int], k: int, coverage: float) -> None:
+    assert rank_interval(*rounds) == (k, pytest.approx(coverage))
+
+
+def test_outlier_rounds() -> None:
+    assert outlier_rounds([1.0, 1.001, 0.999, 4.7, 1.0]) == [3]
+    assert outlier_rounds([1.0, 1.0, 1.0, 1.0, 0.63]) == [4]
+    # Below both the robust spread test and the 5% materiality guard.
+    assert outlier_rounds([1.0, 1.0, 1.0, 1.0, 1.04]) == []
+    # Two departing rounds describe a multimodal cell, not a spike.
+    assert outlier_rounds([1.0, 1.0, 4.0, 4.0, 1.0]) == []
+    assert outlier_rounds([1.0, 1.0, 1.0, 4.7]) == []
+
+
+def test_one_spiky_round_moves_neither_ratio_nor_interval() -> None:
+    clean = [1.00, 1.01, 0.99, 1.02, 1.00]
+    spiky = [1.00, 1.01, 4.73, 1.02, 1.00]
+    baseline = [1.0, 1.0, 1.01, 0.99, 1.0]
+    reference = compare_rounds(clean, baseline)
+    unflagged = compare_rounds(spiky, baseline)
+    flagged = compare_rounds(spiky, baseline, candidate_outliers=outlier_rounds(spiky))
+    assert unflagged["ratio"] == pytest.approx(reference["ratio"], abs=0.011)
+    assert flagged["ratio"] == unflagged["ratio"]
+    assert unflagged["ci95"][1] > 4
+    assert flagged["ci95"][1] < 1.03
+    assert flagged["ci_rounds"] == [4, 5]
+    assert flagged["ci_level"] == pytest.approx(1 - 4 / 126)
 
 
 @pytest.mark.parametrize(
