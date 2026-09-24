@@ -121,10 +121,10 @@ fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !
     count += 1;
 }
 
-fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: u32) !void {
+fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: []const u32) !void {
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
-        for (0..offsets) |s| {
-            for (0..offsets) |d| {
+        for (offsets) |s| {
+            for (offsets) |d| {
                 var c: Case = .{
                     .len = len,
                     .src = src.offset(side, len, @intCast(s)),
@@ -139,7 +139,7 @@ fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32
             }
         }
         if (comptime @hasDecl(fastmem, "set")) {
-            for (0..offsets) |d| {
+            for (offsets) |d| {
                 for ([_]u8{ 0, 0x5a, 0xff }) |value| {
                     try check(.set, src, dst, expected, .{
                         .op = .set,
@@ -206,7 +206,7 @@ fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets
 fn sizeClass(
     allocator: mem.Allocator,
     sizes: []const u32,
-    offsets: u32,
+    offsets: []const u32,
     overlap_offsets: []const u32,
 ) !void {
     var maximum: u32 = 0;
@@ -245,22 +245,28 @@ fn sizeClass(
     }
 }
 
+fn offsetsFor(len: u32) []const u32 {
+    return if (len <= 64 * 1024) &.{ 0, 1, 15, 16, 31, 32, 33, 63 } else &.{ 0, 1 };
+}
+
 fn run(allocator: mem.Allocator) !void {
     var small: [1025]u32 = undefined;
     for (&small, 0..) |*len, i| len.* = @intCast(i);
-    try sizeClass(allocator, &small, 64, &.{ 0, 1, 17, 63 });
+    var offsets: [64]u32 = undefined;
+    for (&offsets, 0..) |*offset, i| offset.* = @intCast(i);
+    try sizeClass(allocator, &small, &offsets, &.{ 0, 1, 17, 63 });
     // Each large size gets its own page-rounded window, not a 1 MiB small-case mapping.
     var power: u32 = 1024;
     while (power <= 1024 * 1024) : (power *= 2) {
         for ([_]u32{ power - 1, power, power + 1 }) |len| {
             if (len > 1024 * 1024) continue;
-            try sizeClass(allocator, &.{len}, 2, &.{ 0, 1, 17, 63 });
+            try sizeClass(allocator, &.{len}, offsetsFor(len), &.{ 0, 1, 17, 63 });
         }
     }
     for ([_]u32{ 4095, 4096, 4097 }) |base| {
         var multiplier: u32 = 1;
         while (base * multiplier <= 1024 * 1024) : (multiplier *= 2) {
-            try sizeClass(allocator, &.{base * multiplier}, 2, &.{ 0, 1, 17, 63 });
+            try sizeClass(allocator, &.{base * multiplier}, offsetsFor(base * multiplier), &.{ 0, 1, 17, 63 });
         }
     }
 }
