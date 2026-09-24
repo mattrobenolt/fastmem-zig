@@ -186,7 +186,7 @@ fn overlapOne(
     count += 1;
 }
 
-fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: u32) !void {
+fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: []const u32) !void {
     var gaps: [139]u32 = undefined;
     for (gaps[0..129], 0..) |*gap, i| gap.* = @intCast(i);
     const extra = [_]u32{ 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len / 2, len -| 1 };
@@ -194,7 +194,7 @@ fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets
     const selected = gaps[0..@as(u32, if (len > 1024) 139 else 129)];
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (selected) |gap| {
-            for (0..offsets) |inset| {
+            for (offsets) |inset| {
                 inline for (.{ false, true }) |backward| {
                     try overlapOne(side, backward, buf, expected, original, len, gap, @intCast(inset));
                 }
@@ -207,7 +207,7 @@ fn sizeClass(
     allocator: mem.Allocator,
     sizes: []const u32,
     offsets: u32,
-    overlap_offsets: u32,
+    overlap_offsets: []const u32,
 ) !void {
     var maximum: u32 = 0;
     for (sizes) |len| maximum = @max(maximum, len);
@@ -248,19 +248,19 @@ fn sizeClass(
 fn run(allocator: mem.Allocator) !void {
     var small: [1025]u32 = undefined;
     for (&small, 0..) |*len, i| len.* = @intCast(i);
-    try sizeClass(allocator, &small, 64, 1);
+    try sizeClass(allocator, &small, 64, &.{ 0, 1, 17, 63 });
     // Each large size gets its own page-rounded window, not a 1 MiB small-case mapping.
     var power: u32 = 1024;
     while (power <= 1024 * 1024) : (power *= 2) {
         for ([_]u32{ power - 1, power, power + 1 }) |len| {
             if (len > 1024 * 1024) continue;
-            try sizeClass(allocator, &.{len}, 2, 1);
+            try sizeClass(allocator, &.{len}, 2, &.{ 0, 1, 17, 63 });
         }
     }
     for ([_]u32{ 4095, 4096, 4097 }) |base| {
         var multiplier: u32 = 1;
         while (base * multiplier <= 1024 * 1024) : (multiplier *= 2) {
-            try sizeClass(allocator, &.{base * multiplier}, 2, 1);
+            try sizeClass(allocator, &.{base * multiplier}, 2, &.{ 0, 1, 17, 63 });
         }
     }
 }
