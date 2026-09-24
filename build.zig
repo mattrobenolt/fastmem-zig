@@ -5,6 +5,15 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     _ = b.option(bool, "link-libc", "Compatibility option: benchmarks always link libc");
     const rev = b.option([]const u8, "rev", "Revision label reported in bench-fastmem meta records") orelse "unknown";
+    // aarch64 kernel small-path overrides (src/aarch64/tuning.zig).
+    // "auto" keeps the per-CPU-model default; the fleet A/Bs variants
+    // as revisions that flip the table, these options serve local runs.
+    const small_copy = b.option([]const u8, "small-copy", "aarch64 SVE copy/move small path: auto|sve|neon|hybrid") orelse "auto";
+    const small_set = b.option([]const u8, "small-set", "aarch64 SVE memset small path: auto|sve|neon") orelse "auto";
+    const tuning_options = b.addOptions();
+    tuning_options.addOption([]const u8, "small_copy", small_copy);
+    tuning_options.addOption([]const u8, "small_set", small_set);
+    const tuning_mod = tuning_options.createModule();
 
     // no_builtin: LLVM must not idiom-recognize fastmem's own loops into
     // memcpy/memset calls (recursion under the export layer).
@@ -16,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .no_builtin = true,
         .omit_frame_pointer = true,
     });
+    mod.addImport("fastmem_options", tuning_mod);
 
     const exe = b.addExecutable(.{
         .name = "fastmem",
@@ -105,7 +115,7 @@ pub fn build(b: *std.Build) void {
     b.step("test-guard", "Run the full guard-page matrix").dependOn(&guard_cmd.step);
 
     // Assembly output for codegen inspection.
-    addAsmStep(b, target, "asm", "Emit assembly for the current (or -Dtarget) target");
+    addAsmStep(b, target, tuning_mod, "asm", "Emit assembly for the current (or -Dtarget) target");
 
     const asm_all_step = b.step("asm-all", "Emit assembly for all key targets");
     const asm_targets = [_][]const u8{
@@ -119,7 +129,7 @@ pub fn build(b: *std.Build) void {
         const resolved = b.resolveTargetQuery(std.Target.Query.parse(.{
             .arch_os_abi = triple,
         }) catch unreachable);
-        const obj = addAsmObject(b, resolved, triple);
+        const obj = addAsmObject(b, resolved, tuning_mod, triple);
         asm_all_step.dependOn(obj);
     }
 
@@ -136,6 +146,7 @@ pub fn build(b: *std.Build) void {
             // Match the production module so tests build the same code.
             .no_builtin = true,
             .omit_frame_pointer = true,
+            .imports = &.{.{ .name = "fastmem_options", .module = tuning_mod }},
         }),
     });
 
@@ -160,6 +171,7 @@ pub fn build(b: *std.Build) void {
 fn addAsmObject(
     b: *std.Build,
     resolved_target: std.Build.ResolvedTarget,
+    tuning_mod: *std.Build.Module,
     name: []const u8,
 ) *std.Build.Step {
     // Create a target-specific fastmem module so comptime builtins
@@ -170,6 +182,7 @@ fn addAsmObject(
         .no_builtin = true,
         .omit_frame_pointer = true,
     });
+    target_mod.addImport("fastmem_options", tuning_mod);
 
     const obj = b.addObject(.{
         .name = "fastmem-probe",
@@ -209,6 +222,7 @@ fn addAsmObject(
 fn addAsmStep(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
+    tuning_mod: *std.Build.Module,
     step_name: []const u8,
     description: []const u8,
 ) void {
@@ -220,7 +234,7 @@ fn addAsmStep(
         @tagName(t.abi),
     }) catch unreachable;
 
-    const obj_step = addAsmObject(b, target, name);
+    const obj_step = addAsmObject(b, target, tuning_mod, name);
     const step = b.step(step_name, description);
     step.dependOn(obj_step);
 }

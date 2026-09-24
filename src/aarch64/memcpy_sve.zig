@@ -6,6 +6,9 @@
 // Ported from ARM-software/optimized-routines string/aarch64/memcpy-sve.S
 // @ 5e20a93f440ca771bcdb757cc13c3beee217e534 (includes 23c4393006122497,
 // "Improve __memcpy_aarch64_sve": the cntb hoist and .p2align layout).
+// The neon/hybrid small-path variants reuse the tbz tree of
+// string/aarch64/memcpy-advsimd.S at the same pinned commit (already
+// ported in memcpy_advsimd.zig).
 //
 // Port notes (the only intentional differences from upstream):
 // - The C preprocessor macros of asmdefs.h are expanded: ENTRY /
@@ -28,12 +31,123 @@
 // - The whole block is gated on the SVE CPU feature and the ELF object
 //   format at comptime (the directives below are ELF-only), so non-SVE
 //   or non-ELF builds never see these instructions.
+// - The small-size path (count <= 64) is selected at comptime per CPU
+//   model (src/aarch64/tuning.zig): the upstream predicated SVE pair
+//   (.sve), the advsimd tbz tree below 32 (.neon), or the tree below 16
+//   with the SVE pair for 16..2*VL (.hybrid). Everything above the
+//   small path is upstream in all variants.
 
 const builtin = @import("builtin");
+const tuning = @import("tuning.zig");
 
 const enabled = builtin.cpu.arch == .aarch64 and
     builtin.target.ofmt == .elf and
     builtin.cpu.has(.aarch64, .sve);
+
+// Upstream small path: one predicated pair covers 0..2*VL.
+const small_sve =
+    \\    cntb    x6
+    \\    cmp    x2, 128
+    \\    b.hi    .Lfm_sve_cpy_long
+    \\    cmp    x2, x6, lsl 1
+    \\    b.hi    .Lfm_sve_cpy32_128
+    \\
+    \\    whilelo p0.b, xzr, x2
+    \\    whilelo p1.b, x6, x2
+    \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
+    \\    ld1b    z1.b, p1/z, [x1, 1, mul vl]
+    \\    st1b    z0.b, p0, [x0, 0, mul vl]
+    \\    st1b    z1.b, p1, [x0, 1, mul vl]
+    \\    ret
+    \\
+;
+
+// Neon small path: fixed boundaries, no cntb/whilelo. 16..32 is one
+// overlapping 16-byte pair; below 16 branches to the tbz tree.
+const small_neon =
+    \\    cmp    x2, 128
+    \\    b.hi    .Lfm_sve_cpy_long
+    \\    cmp    x2, 32
+    \\    b.hi    .Lfm_sve_cpy32_128
+    \\
+    \\    cmp    x2, 16
+    \\    b.lo    .Lfm_sve_cpy0_15
+    \\    add    x4, x1, x2
+    \\    ldr    q0, [x1]
+    \\    ldr    q1, [x4, -16]
+    \\    add    x5, x0, x2
+    \\    str    q0, [x0]
+    \\    str    q1, [x5, -16]
+    \\    ret
+    \\
+;
+
+// Hybrid small path: tbz tree below 16, the predicated SVE pair for
+// 16..2*VL.
+const small_hybrid =
+    \\    cntb    x6
+    \\    cmp    x2, 128
+    \\    b.hi    .Lfm_sve_cpy_long
+    \\    cmp    x2, x6, lsl 1
+    \\    b.hi    .Lfm_sve_cpy32_128
+    \\
+    \\    cmp    x2, 16
+    \\    b.lo    .Lfm_sve_cpy0_15
+    \\    whilelo p0.b, xzr, x2
+    \\    whilelo p1.b, x6, x2
+    \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
+    \\    ld1b    z1.b, p1/z, [x1, 1, mul vl]
+    \\    st1b    z0.b, p0, [x0, 0, mul vl]
+    \\    st1b    z1.b, p1, [x0, 1, mul vl]
+    \\    ret
+    \\
+;
+
+// Small copies: 0..15 bytes. The tbz tree is the memcpy-advsimd.S
+// small path at the same pinned commit; every access is sized to the
+// count, so guard-page tails stay safe. All loads precede all stores
+// within each class, so overlapping moves stay correct.
+const small_tree =
+    \\    .p2align 4
+    \\.Lfm_sve_cpy0_15:
+    \\    add    x4, x1, x2
+    \\    add    x5, x0, x2
+    \\    tbz    x2, 3, .Lfm_sve_cpy0_7
+    \\    ldr    x6, [x1]
+    \\    ldr    x7, [x4, -8]
+    \\    str    x6, [x0]
+    \\    str    x7, [x5, -8]
+    \\    ret
+    \\
+    \\.Lfm_sve_cpy0_7:
+    \\    tbz    x2, 2, .Lfm_sve_cpy0_3
+    \\    ldr    w6, [x1]
+    \\    ldr    w8, [x4, -4]
+    \\    str    w6, [x0]
+    \\    str    w8, [x5, -4]
+    \\    ret
+    \\
+    \\.Lfm_sve_cpy0_3:
+    \\    cbz    x2, .Lfm_sve_cpy0_done
+    \\    lsr    x14, x2, 1
+    \\    ldrb    w6, [x1]
+    \\    ldrb    w10, [x4, -1]
+    \\    ldrb    w8, [x1, x14]
+    \\    strb    w6, [x0]
+    \\    strb    w8, [x0, x14]
+    \\    strb    w10, [x5, -1]
+    \\.Lfm_sve_cpy0_done:
+    \\    ret
+    \\
+;
+
+const small_head = switch (tuning.copy_small) {
+    .sve => small_sve,
+    .neon => small_neon,
+    .hybrid => small_hybrid,
+};
+
+const small_block = if (tuning.copy_small == .sve) "" else small_tree;
 
 comptime {
     if (enabled) {
@@ -61,20 +175,10 @@ comptime {
             \\fastmem_sve_copy:
             \\.cfi_startproc
             \\hint 34
-            \\    cntb    x6
-            \\    cmp    x2, 128
-            \\    b.hi    .Lfm_sve_cpy_long
-            \\    cmp    x2, x6, lsl 1
-            \\    b.hi    .Lfm_sve_cpy32_128
             \\
-            \\    whilelo p0.b, xzr, x2
-            \\    whilelo p1.b, x6, x2
-            \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
-            \\    ld1b    z1.b, p1/z, [x1, 1, mul vl]
-            \\    st1b    z0.b, p0, [x0, 0, mul vl]
-            \\    st1b    z1.b, p1, [x0, 1, mul vl]
-            \\    ret
+            ++ small_head ++
             \\
+            ++ small_block ++
             \\    // Medium copies: 33..128 bytes.
             \\.Lfm_sve_cpy32_128:
             \\    add    x4, x1, x2

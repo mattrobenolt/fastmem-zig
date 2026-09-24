@@ -4,7 +4,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0 WITH LLVM-exception
 //
 // Ported from ARM-software/optimized-routines string/aarch64/memset-sve.S
-// @ 5e20a93f440ca771bcdb757cc13c3beee217e534.
+// @ 5e20a93f440ca771bcdb757cc13c3beee217e534. The neon small-path
+// variant reuses the store tree of string/aarch64/memset-advsimd.S at
+// the same pinned commit (already ported in memset_advsimd.zig).
 //
 // Port notes (the only intentional differences from upstream):
 // - The C preprocessor macros of asmdefs.h are expanded: ENTRY / END
@@ -25,12 +27,56 @@
 // - The whole block is gated on the SVE CPU feature and the ELF object
 //   format at comptime (the directives below are ELF-only), so non-SVE
 //   or non-ELF builds never see these instructions.
+// - The below-16 path is selected at comptime per CPU model
+//   (src/aarch64/tuning.zig): the upstream predicated SVE store (.sve)
+//   or the advsimd store tree (.neon). Everything at 16 and above is
+//   upstream in both variants.
 
 const builtin = @import("builtin");
+const tuning = @import("tuning.zig");
 
 const enabled = builtin.cpu.arch == .aarch64 and
     builtin.target.ofmt == .elf and
     builtin.cpu.has(.aarch64, .sve);
+
+// Upstream below-16 path: one predicated store.
+const small_sve =
+    \\.Lfm_sve_set_16:
+    \\    whilelo p0.b, xzr, x2
+    \\    st1b    z0.b, p0, [x0]
+    \\    ret
+    \\
+;
+
+// Below-16 store tree from memset-advsimd.S at the same pinned commit.
+// Every store is sized to the count, so guard-page tails stay safe.
+const small_neon =
+    \\.Lfm_sve_set_16:
+    \\    add    x4, x0, x2
+    \\    cmp    x2, 4
+    \\    b.lo    .Lfm_sve_set_0_3
+    \\    lsr    x3, x2, 3
+    \\    sub    x5, x4, x3, lsl 2
+    \\    str    s0, [x0]
+    \\    str    s0, [x0, x3, lsl 2]
+    \\    str    s0, [x5, -4]
+    \\    str    s0, [x4, -4]
+    \\    ret
+    \\.Lfm_sve_set_0_3:
+    \\    cbz    x2, .Lfm_sve_set_0_done
+    \\    lsr    x3, x2, 1
+    \\    strb    w1, [x0]
+    \\    strb    w1, [x0, x3]
+    \\    strb    w1, [x4, -1]
+    \\.Lfm_sve_set_0_done:
+    \\    ret
+    \\
+;
+
+const small_block = switch (tuning.set_small) {
+    .sve => small_sve,
+    .neon => small_neon,
+};
 
 comptime {
     if (enabled) {
@@ -65,11 +111,8 @@ comptime {
             \\    ret
             \\
             \\    .p2align 4
-            \\.Lfm_sve_set_16:
-            \\    whilelo p0.b, xzr, x2
-            \\    st1b    z0.b, p0, [x0]
-            \\    ret
             \\
+            ++ small_block ++
             \\    .p2align 4
             \\.Lfm_sve_set_128:
             \\    bic    x3, x0, 15
