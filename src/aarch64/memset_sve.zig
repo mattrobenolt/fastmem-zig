@@ -15,6 +15,8 @@
 //   given .hidden visibility.
 // - SKIP_ZVA_CHECK is not defined, so the runtime DCZID_EL0 check on
 //   the ZVA path is kept, as upstream writes it without the define.
+// - Immediate expressions are written #( ...); upstream writes them
+//   bare. Both forms assemble to the same bytes.
 // - The GNU_PROPERTY note (BTI/PAC marking of the linked binary) is
 //   omitted: it is link-level metadata, and no other object in a Zig
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
