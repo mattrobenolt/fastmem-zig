@@ -141,12 +141,9 @@ def quantile(values: list[float], fraction: float) -> float:
     return ordered[below] + (ordered[above] - ordered[below]) * (position - below)
 
 
-def significant(value: float, interval: tuple[float, float], floor: float | None) -> bool:
-    return (
-        floor is not None
-        and (interval[1] < 1 or interval[0] > 1)
-        and abs(math.log(value)) > math.log1p(floor)
-    )
+def significant(interval: tuple[float, float], floor: float | None) -> bool:
+    """The whole interval lies outside the band [1 / (1 + floor), 1 + floor]."""
+    return floor is not None and (interval[0] > 1 + floor or interval[1] < 1 / (1 + floor))
 
 
 def geomean(values: list[float]) -> float:
@@ -347,7 +344,6 @@ def summarize(
             row["comparison"] != "A/A"
             and row["rounds"] >= 5
             and significant(
-                row["ratio"],
                 tuple(row["ci95"]),
                 max(floor, minimum_effect) if floor is not None else None,
             )

@@ -70,13 +70,16 @@ def test_math() -> None:
     assert geomean([0.5, 2]) == pytest.approx(1)
     assert quantile([0, 1, 2, 3, 4], 0.95) == pytest.approx(3.8)
     assert quantile([7], 0.95) == 7
-    assert significant(0.9, (0.88, 0.92), 0.02)
-    assert not significant(0.99, (0.98, 0.999), 0.02)
-    assert not significant(0.9, (0.8, 1.01), 0.02)
-    assert not significant(0.9, (0.88, 0.92), None)
-    # The floor applies to |log ratio|: a speedup to 1/1.05 equals a slowdown to 1.05.
-    assert significant(1 / 1.06, (0.9, 0.95), 0.05)
-    assert not significant(1 / 1.04, (0.9, 0.97), 0.05)
+    assert significant((0.88, 0.92), 0.02)
+    assert significant((1.03, 1.2), 0.02)
+    assert not significant((0.98, 0.999), 0.02)
+    assert not significant((0.8, 1.01), 0.02)
+    # The point is above the floor, but the interval reaches into the floor band.
+    assert not significant((1.01, 1.2), 0.02)
+    assert not significant((0.88, 0.92), None)
+    # The band is symmetric on the log scale: 1 / 1.05 and 1.05 are equally far from 1.
+    assert significant((0.9, 0.95), 0.05)
+    assert not significant((0.9, 0.97), 0.05)
 
 
 @pytest.mark.parametrize(

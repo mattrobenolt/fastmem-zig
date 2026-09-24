@@ -30,8 +30,8 @@ def write(path: Path, summary: dict[str, Any]) -> None:
         "A flagged outlier round leaves the interval but stays in the ratio.",
         "The noise floor is the 95th percentile of |log A/A ratio| in the operation/size group,",
         "pooled across profiles and implementations. Distribution cases use operation/tier groups.",
-        "An asterisk requires at least five rounds and an interval outside 1.",
-        "The |log ratio| must also exceed the noise floor and the configured minimum effect.",
+        "An asterisk requires at least five rounds and an interval entirely outside",
+        "[1/(1+m), 1+m], where m is the larger of the noise floor and the minimum effect.",
         "",
     ]
     text += ["| Variant | Revision |", "|---|---|"]
