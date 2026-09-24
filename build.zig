@@ -334,6 +334,14 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
         });
         refused.expect_errors = .{ .contains = "fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)" };
         step.dependOn(&refused.step);
+        const strong = b.addObject(.{
+            .name = b.fmt("export-strong-{s}", .{arch}),
+            .root_module = exportFixture(b, tuning, target, .ReleaseFast, false, true, true),
+        });
+        const strong_check = b.addSystemCommand(&.{"python3"});
+        strong_check.addFileArg(b.path("src/export/check_object.py"));
+        strong_check.addFileArg(strong.getEmittedBin());
+        step.dependOn(&strong_check.step);
         // Dynamic executable and DSO: hidden definitions must stay local in both.
         for ([_]bool{ false, true }) |shared| {
             const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, true, true);

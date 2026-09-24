@@ -36,8 +36,10 @@ strong kernel, and parity is the goal.
   compiler-rt, also with `-lc`. Only a program that needs nothing from
   compiler-rt calls glibc through the PLT.
 - A strong `memcpy` export in the program wins over compiler-rt and glibc.
-  In ReleaseFast, every `@memcpy` call binds to it. In Debug, the
-  self-hosted backends inline `@memcpy` and do not call the symbol.
+  In ReleaseFast, every `@memcpy` call binds to it. The P6 Debug probes
+  show runtime copy and move calls on both self-hosted backends. Fill
+  uses inline `rep stosb` on x86_64 and a call on aarch64.
+  See `docs/export-layer.md` for the backend limits and binary tests.
 - LLVM can turn the loop in a `memcpy` implementation into a call to
   `memcpy`: that is infinite recursion. The fastmem module must build with
   `no_builtin = true`. With `-fno-builtin` on the calling module, `@memcpy`
