@@ -1104,6 +1104,7 @@ Target-hardware execution remains the fleet acceptance gate.
 `bench test` defaults to `ReleaseFast`. The repeatable `--optimize` option also accepts `Debug` and `ReleaseSafe`.
 Each mode runs both CPU variants. The manifest records the modes, and each variant retains separate build and execution files.
 Non-default variant names include the mode, for example `target-Debug`.
+Debug execution allows 3600 seconds per variant. Other modes retain the 600-second limit.
 The summary parser rejects a binary whose optimization mode differs from the requested mode.
 
 ```sh
