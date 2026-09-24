@@ -18,7 +18,7 @@ def record(cpu: str = "sapphirerapids", **kwargs: Any) -> dict[str, Any]:
         "status": "pass",
         "cpu": cpu,
         "optimize": "ReleaseFast",
-        "cases": 17351760,
+        "cases": 27620876,
         "set_available": False,
         "impl": {"copy": "zig-simd", "move": "zig-simd", "set": "unavailable"},
         **kwargs,
