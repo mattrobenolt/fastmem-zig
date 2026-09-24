@@ -335,9 +335,31 @@ Analysis:
   - `fastmem_abi/builtin` for each revision.
   - `fastmem_inline/builtin_const` for const cases.
   - `A/A` against the baseline for every implementation.
-- Compute every ratio with the same estimator. Use the logarithms of the
-  round medians of the two cells. The ratio is `exp(median(c_i - r_j))`
-  over all pairs of rounds: the two-sample Hodges-Lehmann estimate.
+- Two variants run in separate processes. For A/A and revision rows, use
+  the logarithms of the round medians of the two cells. The ratio is
+  `exp(median(c_i - r_j))` over all pairs of rounds: the two-sample
+  Hodges-Lehmann estimate.
+- For these rows, compute the exact Mann-Whitney interval over all
+  rounds: `[d_(k), d_(nm+1-k)]` of the sorted pairwise log differences.
+- The implementations of one variant run in the same processes. Round `i`
+  of the candidate and round `i` of the reference share one process. For
+  these rows, use the per-round log ratios `l_i = log(c_i / r_i)`.
+- For these rows, the ratio is `exp` of the median of the Walsh averages
+  `(l_i + l_j) / 2`, `i <= j`: the one-sample Hodges-Lehmann estimate.
+  The interval is the exact Wilcoxon signed-rank interval
+  `[w_(k), w_(N+1-k)]` of the sorted Walsh averages.
+- In both methods, `k` is the largest value that gives a coverage of at
+  least 95%. If no `k` reaches 95%, `k` is 1: the full range.
+- Record the exact coverage in `ci_level` and the method in `ci_method`
+  (`mann-whitney` or `signed-rank`). `report.md` shows the level of each
+  row. The analysis has no random component.
+- The Mann-Whitney coverage is 96.8% for 5 against 5 rounds. The
+  signed-rank coverage is 93.75% for 5 rounds, 96.9% for 6 rounds, and
+  95.3% for 7 rounds. For 5 and 6 rounds, the paired interval is the range
+  of the per-round ratios. That range needs no symmetry assumption.
+- A row with fewer than 5 rounds has insufficient evidence
+  (`evidence: "insufficient"`). It gets no mark, and its goal components
+  are NA.
 - Flag an outlier round in each cell with at least 5 rounds. A round is
   an outlier if its log distance from the median of the other rounds is
   larger than both of these values:
@@ -345,26 +367,15 @@ Analysis:
     median absolute deviation, minimum 0.005).
   - `log(1.05)`.
 - If two or more rounds of a cell meet this condition, flag no round.
-  Such a cell is multimodal, not spiky.
-- Keep an outlier round in the ratio. Remove it from the interval. Report
-  it in `summary.json` (`outliers`), in each row that uses the cell
-  (`outlier_rounds`), and in `report.md`.
-- Compute the 95% interval with the exact Mann-Whitney method on the
-  rounds that are not outliers. The interval is `[d_(k), d_(nm+1-k)]` of the sorted
-  pairwise log differences. `k` is the largest value that gives a
-  coverage of at least 95%.
-- Widen the interval to include the ratio. Record the exact coverage in
-  `ci_level` and the round counts in `ci_rounds`. The analysis has no
-  random component.
-- The coverage is 96.8% for 5 against 5 rounds and for 4 against 5
-  rounds. It is 97.1% for 4 against 4 rounds. With 3 rounds on each side,
-  the interval is the full range and covers 90%.
+- Report each outlier in `summary.json` (`outliers`), in each row that
+  uses the cell (`outlier_rounds`), and in `report.md`. An outlier stays
+  in every ratio and every interval.
 - The noise floor is per (target, op, size): the 95th percentile of
   `|log ratio|` over the A/A rows of the group, pooled across profiles and
   all impls. Interpolate linearly between order statistics. Report the
   floor as `exp(q) - 1`. `dist` cases use one floor per (op, size tier).
   Interval endpoints do not enter the floor.
-- Mark a ratio as significant only if the run has at least 5 rounds and
+- Mark a ratio as significant only if the row has sufficient evidence and
   the whole interval is outside `[1/(1+m), 1+m]`. `m` is the larger value
   of the floor and `minimum_effect`.
 - Revisions with different case sets are compared on their common cases,
@@ -378,7 +389,9 @@ Analysis:
 
 The evidence comes from `bench-results/20260924T041207Z-baseline-016/`.
 That run has 7 targets and 5 rounds. Its `aa` variant runs the same binary
-as `v0`, so every A/A difference is noise.
+as `v0`, so every A/A difference is noise. "Old" is the analysis before
+736ab60. "Rejected" is 736ab60 to 7da76c3: it removed outlier rounds from
+the interval and used the two-sample interval for all rows.
 
 A spike is a round median more than 10% above the median of the 10 runs
 of its cell. These facts describe the spikes:
@@ -422,55 +435,84 @@ puts one run of each round slot on each side: 1630 (case, impl) rows.
 | c8g | 1.01 / 3.49 | 1.08 / 3.57 | 0.93 / 3.19 |
 | c9g | 1.09 / 4.01 | 1.14 / 3.34 | 0.97 / 3.36 |
 
-Pairs by round index do not help: the paired median is less stable than
-the two-sample estimate on every target. Within one variant, the v0 and
-aa estimates of the same ratio differ by about the same amount with and
-without pairs. The paired rank interval also cannot reach 95% with 5
-rounds (93.75%). The two-sample estimator therefore applies to all
-comparisons.
+For separate processes, pairs by round index do not help: the paired
+median is less stable than the two-sample estimate on every target. The
+floor therefore uses the two-sample estimate.
 
-With 5 rounds, no distribution-free interval can ignore one spiky round.
-The bootstrap and the order-statistic interval of the median both reach
-the extreme round. Outlier rounds therefore leave the interval. In the
-point estimate, the Hodges-Lehmann median already resists one spike. The
-removal of outliers from the estimate made the p90 floor worse on c7a
-(9.9% to 16%) and c8a (7.1% to 14%), so the estimate keeps them.
+Two exact nulls from the review of the rejected analysis set the interval
+rules:
 
-The table compares the old and new analysis on the null. "Interval
-misses 1" and "lower > 1.00" count all 16 splits. "Marks" use floors from
-the other cases of the group (leave-one-case-out), on the aa-v0 split.
-The floors are the median / p90 / max over the 105 groups (%).
+- Independent null with a minority mode: each round draws one log value
+  from `(-0.005, 0, 0.005, 0.295, 0.3, 0.305)`, 5 rounds on each side,
+  all 6^10 assignments. The Mann-Whitney interval over all rounds misses
+  1 in 1.408%. With flagged rounds removed, it misses 8.482%. A minority
+  mode that appears once in 5 rounds is a legitimate draw, not an error.
+- Dependent null: 5 processes with a factor `z` from `(-0.024, -0.012,
+  -0.001, 0.001, 0.012, 0.024)`. The candidate takes `exp(z)` and the
+  reference takes `exp(-z)`. Both have the same distribution. The
+  two-sample interval claims 96.8% and misses 1 in 8.436% of the 7776
+  assignments. The paired interval misses 6.250%, its exact level.
 
-| Target | Interval misses 1 (old, new) | Lower > 1.00 (old, new) | Marks (old, new) | Old floors | New floors |
+`bench/tests/test_coverage.py` holds both nulls and one analyze-level
+counterexample of each. The analyze-level tests fail on 7da76c3.
+
+The table compares the three analyses on the cross-process null (16
+splits). "Marks" use floors from the other cases of the group
+(leave-one-case-out), on the aa-v0 split. The floors are the median / p90
+/ max over the 105 groups (%). The rejected and new floors are identical.
+
+| Target | Interval misses 1 (old, rejected, new) | Lower > 1.00 | Marks | Old floors | New floors |
 |---|---|---|---|---|---|
-| c7i | 13.0%, 3.9% | 6.5%, 2.0% | 0.37%, 0.61% | 3.5 / 14 / 38 | 0.40 / 3.1 / 8.8 |
-| c8i | 12.8%, 3.5% | 6.4%, 1.7% | 0.31%, 0.49% | 3.6 / 12 / 58 | 0.28 / 1.7 / 4.8 |
-| c7a | 12.0%, 3.3% | 5.5%, 1.6% | 0.31%, 0.37% | 14 / 50 / 93 | 0.47 / 9.9 / 21 |
-| c8a | 11.6%, 3.5% | 5.8%, 1.9% | 0.06%, 0.06% | 12 / 173 / 373 | 0.24 / 7.1 / 28 |
-| c7g | 12.7%, 3.2% | 4.0%, 1.0% | 0.25%, 0.25% | 3.2 / 14 / 100 | 0.31 / 1.9 / 13 |
-| c8g | 11.7%, 3.3% | 6.0%, 1.6% | 0.18%, 0.31% | 2.5 / 14 / 27 | 0.25 / 2.2 / 8.8 |
-| c9g | 11.6%, 2.7% | 4.7%, 1.2% | 0.06%, 0.06% | 2.1 / 11 / 18 | 0.23 / 2.0 / 7.0 |
+| c7i | 13.0%, 3.9%, 3.6% | 6.5%, 2.0%, 1.8% | 0.37%, 0.61%, 0.37% | 3.5 / 14 / 38 | 0.40 / 3.1 / 8.8 |
+| c8i | 12.8%, 3.5%, 3.2% | 6.4%, 1.7%, 1.5% | 0.31%, 0.49%, 0.25% | 3.6 / 12 / 58 | 0.28 / 1.7 / 4.8 |
+| c7a | 12.0%, 3.3%, 2.5% | 5.5%, 1.6%, 1.2% | 0.31%, 0.37%, 0.00% | 14 / 50 / 93 | 0.47 / 9.9 / 21 |
+| c8a | 11.6%, 3.5%, 2.8% | 5.8%, 1.9%, 1.5% | 0.06%, 0.06%, 0.06% | 12 / 173 / 373 | 0.24 / 7.1 / 28 |
+| c7g | 12.7%, 3.2%, 2.9% | 4.0%, 1.0%, 1.0% | 0.25%, 0.25%, 0.12% | 3.2 / 14 / 100 | 0.31 / 1.9 / 13 |
+| c8g | 11.7%, 3.3%, 3.0% | 6.0%, 1.6%, 1.4% | 0.18%, 0.31%, 0.12% | 2.5 / 14 / 27 | 0.25 / 2.2 / 8.8 |
+| c9g | 11.6%, 2.7%, 2.5% | 4.7%, 1.2%, 1.0% | 0.06%, 0.06%, 0.00% | 2.1 / 11 / 18 | 0.23 / 2.0 / 7.0 |
 
-The old bootstrap interval covered only 87% to 88%. A mark rule that only
-requires the interval to exclude 1 and the ratio to pass the floor marked
-0.6% to 2.5% of null rows. The band rule above marks 0.06% to 0.6%.
+The old bootstrap interval covered only 87% to 88%. The new Mann-Whitney
+interval misses 2.5% to 3.6%, below its 3.17% limit on six targets. On
+c7i, 3.6% is within the random error of 16 correlated splits.
+
+A within-process null from the data splits each cell into two halves of
+its own samples: samples 0 and 3 against samples 1 and 2. The halves come
+from the same process and case, and they alternate in time. Each half
+contributes the median of its two samples per round. The null has 3260
+rows per target (v0 and aa).
+
+| Target | Interval misses 1 (old, rejected, new) | New level |
+|---|---|---|
+| c7i | 14.1%, 2.4%, 6.5% | 93.75% |
+| c8i | 14.2%, 2.6%, 7.6% | 93.75% |
+| c7a | 11.6%, 3.2%, 6.1% | 93.75% |
+| c8a | 8.8%, 1.3%, 6.6% | 93.75% |
+| c7g | 14.1%, 3.2%, 7.9% | 93.75% |
+| c8g | 14.0%, 2.7%, 7.4% | 93.75% |
+| c9g | 12.0%, 2.2%, 7.5% | 93.75% |
+
+The halves share the state of their process. This positive dependence
+makes the two-sample interval conservative on this null. The dependent
+null above shows that the two-sample interval fails for other dependence.
+The new misses are 6.1% to 7.9% against a limit of 6.25%. A part of the
+excess is a real difference between the halves: on c7g, c8g, and c9g, v0
+and aa miss in the same direction for the same cell 1.5 to 2.9 times as
+often as independent processes give.
 
 The new analysis keeps real effects. `builtin/glibc` for memset above 64
 bytes stays marked on 36 of 36 rows on every target. c7i memcpy from 65
 to 256 bytes stays marked on 24 of 24 rows. Some within-variant pairs
 have all 10 round ratios between 1.02 and 1.05, or all between 1/1.05 and
-1/1.02. The old analysis marked 34% to 57% of these pairs. The new
-analysis marks 91% to 100%.
+1/1.02. The old, rejected, and new analyses mark 34% to 57%, 91% to 100%,
+and 91% to 100% of these pairs.
 
-G3 compares 134 copy cases and 233 move cases against 1.00. On the null,
-1.6 to 4.6 fastmem_abi A/A rows per (target, op) have a lower bound above
-1.00 (old: 3.0 to 16). At least one such row occurs in 69% to 100% of the
-null splits. A per-case 95% interval cannot remove this effect of
-multiple comparisons. The goal evidence therefore reports the A/A count
-next to each G2, G3, and G4 const count. For the G2 case threshold of
-1.10, no fastmem_abi A/A row of copy or move has a lower bound above 1.10
-in any null split. The set `builtin` rows of c8g do in 31% of the splits
-(the multimodal `set/*/3` and `set/*/7` cells).
+G3 compares 134 copy cases and 233 move cases. A rule of "lower bound
+above 1.00" gives 2.5 to 10 false violations per (target, op) on the
+within-process null. The G3 rule `lower > 1 + max(floor, 0.01)` gives
+0, except 0.5 for c7g move. The G2 case rule (lower bound above 1.10)
+gives 0 on every target. The G4 const rule (lower bound above 1.00, 13
+cases) gives at least one false violation for 4 of the 14 (target,
+variant) pairs.
 
 The floor falls as the rounds increase. A whole-run bootstrap from the 10
 runs gives the p90 group floor (%) for n rounds on each side. It is
@@ -487,7 +529,8 @@ optimistic because it repeats runs.
 | c9g | 1.9 | 1.0 | 0.7 | 0.5 | 5 |
 
 The maximum group floor stays above 2% at 20 rounds on every target
-(2.3% to 5.0%). The multimodal cells cause it.
+(2.3% to 5.0%). The multimodal cells cause it. A paired interval reaches
+95% only with 6 or more rounds.
 
 ## Measurement binary: bench-fastmem
 
@@ -761,26 +804,32 @@ The schema-v2 adapter reports these comparisons for each common case:
 - Each fastmem implementation against itself in the baseline revision.
 
 Ratios use candidate time divided by reference time.
-The adapter uses the round estimator and the per-operation, per-size A/A floors of the Analysis section.
+The adapter uses the round estimators and the per-operation, per-size A/A floors of the Analysis section.
+Rows between two variants use the Mann-Whitney interval.
+Rows between two implementations of one variant use the paired signed-rank interval.
 Significance requires at least five rounds and an available A/A floor.
 Distribution floors remain per operation and size tier.
 
 Both output files contain a Goals section for each target, revision, and operation.
 The machine representation is `targets.<target>.goals` in `summary.json`.
 Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, NA, or INVALID status.
-Missing cases, fewer than five rounds, or absent A/A evidence produce NA for the affected component.
+Missing cases, fewer than five rounds (insufficient evidence), or absent A/A evidence produce NA for the affected component.
+Each component lists the interval levels of its rows in `ci_levels`.
 
 G2 includes the fixed standard runtime cases and `dist/small` and `dist/mixed`.
 Its evidence includes the overall geometric mean, tier means, and significant regressions above 1.10.
-A goal row violates its threshold when the confidence interval lower bound exceeds that threshold.
-The goal check does not add the A/A floor or minimum effect to the threshold.
-The A/A floor and minimum effect apply only to significance marks against 1.0.
+A G2 row violates its threshold when the confidence interval lower bound exceeds that threshold.
+The G2 check does not add the A/A floor or minimum effect to the threshold.
+The tier criterion uses the tier geometric mean of the ratios, with no interval.
 Each G2, G3, and G4 const entry contains an `aa_reference` object.
-It counts the A/A rows of the same implementation and cases with a lower bound above the same threshold.
+It applies the rule of the goal to the A/A rows of the same implementation and cases.
 That count is the violation count of a null. It does not change the verdict.
+A/A rows use the Mann-Whitney interval, so the count is a reference for the paired goal rows, not a calibration.
 
 G3 requires the standard runtime cases and both synthetic distributions.
-It reports the worst ratio and significant regressions above 1.00.
+A case violates G3 only when its whole interval lies above `1 + max(floor, 0.01)`.
+G3 tests hundreds of cases against 1.00, and this margin controls the false violations of a null.
+The evidence contains the worst ratio, the rule, and the violations.
 G4 evaluates `dist/small` and the const timing component independently.
 The const component applies only to copy.
 Its no-call component is NA: `checked by binary test, P4`.
@@ -788,6 +837,7 @@ A copy timing pass therefore does not imply a complete G4 pass.
 
 The goal implementation is `bench/fastmem_bench/goals.py`.
 The goal tests are `bench/tests/test_v2.py`.
+The coverage regressions are `bench/tests/test_coverage.py`.
 The thresholds come from G2 through G4 in `docs/fastmem-plan.md`.
 
 ### Delegation evidence
