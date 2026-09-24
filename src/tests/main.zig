@@ -26,6 +26,7 @@ const Case = struct {
 };
 var current: Case = .{};
 var count: u64 = 0;
+var path_counts: [3]u64 = @splat(0);
 var started_ns: i96 = 0;
 var fault_address: ?u64 = null;
 var fault_region: ?[]const u8 = null;
@@ -65,9 +66,15 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
     const c = @as(*volatile Case, &current).*;
     var writer: Io.Writer = .fixed(&buffer);
     json.Stringify.value(.{
-        .schema = 1,
+        .schema = 2,
+        .matrix = "g1-v2",
         .status = status,
         .cases = count,
+        .path_cases = .{
+            .runtime = path_counts[@intFromEnum(Path.runtime)],
+            .abi = path_counts[@intFromEnum(Path.abi)],
+            .constant = path_counts[@intFromEnum(Path.constant)],
+        },
         .elapsed_ns = elapsed_ns,
         .cpu = builtin.cpu.model.name,
         .max_size = max_size,
@@ -160,6 +167,7 @@ fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !
     paths.call(op, c.path, dest, source, c.value);
     if (!mem.eql(u8, expected, dst.bytes)) return error.DestinationOrCanaryMismatch;
     count += 1;
+    path_counts[@intFromEnum(c.path)] += 1;
 }
 
 fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: []const u32, path: Path) !void {
@@ -229,6 +237,7 @@ fn overlapOne(
     paths.call(.move, path, buf.bytes[dest..][0..len], buf.bytes[source..][0..len], 0);
     if (!mem.eql(u8, expected, buf.bytes)) return error.OverlapOrCanaryMismatch;
     count += 1;
+    path_counts[@intFromEnum(c.path)] += 1;
 }
 
 fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: []const u32, path: Path) !void {

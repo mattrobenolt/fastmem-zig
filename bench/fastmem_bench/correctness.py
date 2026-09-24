@@ -60,12 +60,61 @@ def build_binary(config: Config, target: str, cpu: str, path: Path) -> dict[str,
     }
 
 
-def parse_summary(text: str, cpu: str) -> dict[str, Any]:
+MIB = 1024 * 1024
+
+
+def default_max_size(cpu: str) -> int:
+    return {"znver4": 16, "znver5": 16, "sapphirerapids": 67, "graniterapids": 302}.get(
+        cpu, 1
+    ) * MIB
+
+
+def dense_sizes(max_size: int) -> list[int]:
+    dense_limit = min(max_size, MIB)
+    lengths = []
+    power = 1024
+    while power <= dense_limit:
+        lengths.extend(n for n in (power - 1, power, power + 1) if n <= dense_limit)
+        power *= 2
+    for base in (4095, 4096, 4097):
+        multiple = base
+        while multiple <= dense_limit:
+            lengths.append(multiple)
+            multiple *= 2
+    return lengths
+
+
+def expected_counts(max_size: int, *, has_set: bool) -> dict[str, int]:
+    """Independent arithmetic for the g1-v2 matrix, including deliberate duplicate sizes."""
+    counts = dict.fromkeys(("runtime", "abi", "constant"), 0)
+
+    def add(path: str, length: int, offsets: int, overlap_offsets: int) -> None:
+        gaps = 4 if length > MIB else 9 if path != "runtime" else 139 if length > 1024 else 129
+        counts[path] += 6 * offsets**2 + 4 * overlap_offsets * gaps
+        if has_set:
+            counts[path] += 6 * offsets
+
+    for length in range(1025):
+        add("runtime", length, 64, 4)
+        add("abi", length, 4, 1)
+    for length in range(1, 257):
+        add("constant", length, 4, 1)
+    for length in dense_sizes(max_size):
+        add("runtime", length, 8 if length <= 65536 else 2, 4)
+        add("abi", length, 2, 1)
+    if max_size > MIB:
+        for length in (max_size - 1, max_size):
+            add("runtime", length, 1, 1)
+            add("abi", length, 1, 1)
+    return counts
+
+
+def parse_summary(text: str, cpu: str, max_size: int | None = None) -> dict[str, Any]:
     lines = text.splitlines()
     if len(lines) != 1:
         raise ValueError("Expected one correctness JSON summary")
     result = json.loads(lines[0])
-    if not isinstance(result, dict) or result.get("schema") != 1:
+    if not isinstance(result, dict) or result.get("schema") != 2 or result.get("matrix") != "g1-v2":
         raise ValueError("Invalid correctness summary schema")
     if result.get("status") not in {"pass", "fail"}:
         raise ValueError("Invalid correctness status")
@@ -82,17 +131,52 @@ def parse_summary(text: str, cpu: str) -> dict[str, Any]:
         not isinstance(impl.get(op), str) or not impl[op] for op in ("copy", "move", "set")
     ):
         raise ValueError("Missing correctness kernel identifiers")
+    if result["set_available"] == (impl["set"] == "unavailable"):
+        raise ValueError("Set availability disagrees with the kernel identifier")
+    check_matrix(result, cpu, max_size)
     return result
 
 
-def execute_binary(box: Box, binary: Path, remote: str, path: Path, cpu: str) -> dict[str, Any]:
+def check_matrix(result: dict[str, Any], cpu: str, max_size: int | None) -> None:
+    ceiling = default_max_size(cpu) if max_size is None else max_size
+    if result.get("max_size") != ceiling or not 1024 <= ceiling <= 512 * MIB:
+        raise ValueError("Correctness size ceiling mismatch")
+    if result.get("link_libc") is not True:
+        raise ValueError("Correctness binary must match benchmark libc linkage")
+    expected = expected_counts(ceiling, has_set=result["set_available"])
+    counts = result.get("path_cases")
+    if (
+        not isinstance(counts, dict)
+        or set(counts) != set(expected)
+        or any(
+            type(counts[path]) is not int or not 0 <= counts[path] <= expected[path]
+            for path in expected
+        )
+    ):
+        raise ValueError("Invalid correctness path counts")
+    if result["cases"] != sum(counts.values()):
+        raise ValueError("Correctness total disagrees with path counts")
+    if result["status"] == "pass" and counts != expected:
+        raise ValueError(f"Incomplete correctness matrix: expected {expected}, received {counts}")
+
+
+def execute_binary(
+    box: Box,
+    binary: Path,
+    remote: str,
+    path: Path,
+    cpu: str,
+    *,
+    max_size: int | None = None,
+) -> dict[str, Any]:
     path.mkdir(parents=True, exist_ok=True)
     box.upload(binary, remote)
     directory = shlex.quote(remote)
+    ceiling = default_max_size(cpu) if max_size is None else max_size
     # Save both channels and the exit status, including faults and missing interpreters.
     command = (
         f"cd {directory} && "
-        "(ulimit -c 0; ./fastmem-tests >summary.json 2>stderr.txt; "
+        f"(ulimit -c 0; ./fastmem-tests --max-size {ceiling} >summary.json 2>stderr.txt; "
         "status=$?; printf '%s\\n' \"$status\" >exit-status.txt)"
     )
     try:
@@ -101,7 +185,7 @@ def execute_binary(box: Box, binary: Path, remote: str, path: Path, cpu: str) ->
         box.download(remote, path)
     status = int((path / "exit-status.txt").read_text().strip())
     try:
-        summary = parse_summary((path / "summary.json").read_text(), cpu)
+        summary = parse_summary((path / "summary.json").read_text(), cpu, ceiling)
     except (ValueError, OSError) as error:
         raise ValueError(f"Suite exit={status}: {error}") from error
     summary["exit_status"] = status
@@ -131,6 +215,7 @@ def run_variant(
                 remote,
                 local / "raw",
                 cpu,
+                max_size=default_max_size(config.targets[target]["zig_cpu"]),
             )
         )
     except Exception as error:  # noqa: BLE001 — preserve the other variant's evidence

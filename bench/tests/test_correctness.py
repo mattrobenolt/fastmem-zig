@@ -13,12 +13,18 @@ from fastmem_bench import correctness as c
 
 
 def record(cpu: str = "sapphirerapids", **kwargs: Any) -> dict[str, Any]:
+    ceiling = kwargs.get("max_size", c.default_max_size(cpu))
+    counts = c.expected_counts(ceiling, has_set=kwargs.get("set_available", False))
     return {
-        "schema": 1,
+        "schema": 2,
+        "matrix": "g1-v2",
+        "path_cases": counts,
+        "max_size": ceiling,
+        "link_libc": True,
         "status": "pass",
         "cpu": cpu,
         "optimize": "ReleaseFast",
-        "cases": 27620876,
+        "cases": sum(counts.values()),
         "set_available": False,
         "impl": {"copy": "zig-simd", "move": "zig-simd", "set": "unavailable"},
         **kwargs,
@@ -28,7 +34,7 @@ def record(cpu: str = "sapphirerapids", **kwargs: Any) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "change",
     [
-        {"schema": 2},
+        {"schema": 1},
         {"status": "skip"},
         {"cpu": "native"},
         {"optimize": "Debug"},
@@ -50,7 +56,14 @@ def test_reject_incomplete_summary(text: str) -> None:
 
 
 def test_zero_cases_failure_is_valid() -> None:
-    assert c.parse_summary(json.dumps(record(status="fail", cases=0)), "sapphirerapids")
+    assert c.parse_summary(
+        json.dumps(
+            record(
+                status="fail", cases=0, path_cases=dict.fromkeys(("runtime", "abi", "constant"), 0)
+            )
+        ),
+        "sapphirerapids",
+    )
 
 
 def test_cpu_contract() -> None:
@@ -142,7 +155,11 @@ def setup(config: Config, monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock]:
     monkeypatch.setattr(c.subprocess, "run", Mock(return_value=Mock(stdout="0.16.0\n")))
     builder = Mock(return_value={"sha256": "hash"})
     monkeypatch.setattr(c, "build_binary", builder)
-    monkeypatch.setattr(c, "execute_binary", lambda *args: record(cpu=args[-1]))
+    monkeypatch.setattr(
+        c,
+        "execute_binary",
+        lambda *args, **kwargs: record(cpu=args[-1], max_size=kwargs["max_size"]),
+    )
     return fleet, builder
 
 
@@ -231,3 +248,46 @@ def test_jsonless_death_keeps_exit_status(tmp_path: Path, exit_status: int) -> N
     box.download.side_effect = download
     with pytest.raises(ValueError, match=f"exit={exit_status}"):
         c.execute_binary(box, tmp_path / "binary", "/root/test", tmp_path, "sapphirerapids")
+
+
+@pytest.mark.parametrize(
+    ("cpu", "mib"),
+    [
+        ("znver4", 16),
+        ("znver5", 16),
+        ("sapphirerapids", 67),
+        ("graniterapids", 302),
+        ("generic", 1),
+        ("neoverse_v3", 1),
+    ],
+)
+def test_nt_ceilings(cpu: str, mib: int) -> None:
+    assert c.default_max_size(cpu) == mib * c.MIB
+
+
+def test_verified_native_matrix_count() -> None:
+    assert sum(c.expected_counts(c.MIB, has_set=False).values()) == 27620876
+
+
+@pytest.mark.parametrize(("has_set", "impl"), [(True, "unavailable"), (False, "set-kernel")])
+def test_reject_set_availability_mismatch(has_set: bool, impl: str) -> None:
+    summary = record(set_available=has_set)
+    summary["impl"]["set"] = impl
+    with pytest.raises(ValueError, match="Set availability"):
+        c.parse_summary(json.dumps(summary), "sapphirerapids")
+
+
+def test_reject_partial_pass_even_when_counts_agree() -> None:
+    summary = record()
+    summary["cases"] -= 1
+    summary["path_cases"]["constant"] -= 1
+    with pytest.raises(ValueError, match="Incomplete correctness matrix"):
+        c.parse_summary(json.dumps(summary), "sapphirerapids")
+
+
+def test_baseline_uses_host_ceiling(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    setup(config, monkeypatch)
+    execute = Mock(return_value=record(cpu="x86_64_v3", max_size=67 * c.MIB))
+    monkeypatch.setattr(c, "execute_binary", execute)
+    c.run_variant(config, Mock(), "intel", "baseline", "x86_64_v3", path=config.root)
+    assert execute.call_args.kwargs["max_size"] == 67 * c.MIB
