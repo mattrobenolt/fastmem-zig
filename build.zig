@@ -129,6 +129,7 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const test_step = b.step("test", "Run tests");
+    test_step.dependOn(addExportTests(b, x86_options));
     // Compile the shipped binaries too: a module-graph error (for example
     // one file imported by two modules) only shows up when they build.
     test_step.dependOn(&bench_exe.step);
@@ -271,4 +272,75 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
         const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("codegen/{s}.o", .{cpu}));
         step.dependOn(&install.step);
     }
+}
+
+fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
+    const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
+    for ([_][]const u8{ "aarch64", "x86_64" }) |arch| {
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
+            .cpu_features = if (std.mem.eql(u8, arch, "x86_64")) "x86_64_v3" else "generic",
+        }) catch unreachable);
+        for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .ReleaseSafe }) |mode| {
+            for ([_]bool{ false, true }) |libc| {
+                for ([_]bool{ false, true }) |division| {
+                    const name = b.fmt("export-{s}-{s}-libc{d}-div{d}", .{ arch, @tagName(mode), @intFromBool(libc), @intFromBool(division) });
+                    const fixture = exportFixture(b, tuning, target, mode, libc, division, true);
+                    const exe = b.addExecutable(.{ .name = name, .root_module = fixture });
+                    const check = b.addSystemCommand(&.{"python3"});
+                    check.addFileArg(b.path("src/export/check.py"));
+                    check.addArgs(&.{ "--arch", arch, "--division", if (division) "yes" else "no" });
+                    if (!libc) check.addArg("--run");
+                    check.addFileArg(exe.getEmittedBin());
+                    step.dependOn(&check.step);
+                }
+            }
+        }
+        // Dynamic executable and DSO: hidden definitions must stay local in both.
+        for ([_]bool{ false, true }) |shared| {
+            const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, true, true);
+            const artifact = if (shared)
+                b.addLibrary(.{ .name = b.fmt("export-shared-{s}", .{arch}), .root_module = fixture, .linkage = .dynamic })
+            else
+                b.addExecutable(.{ .name = b.fmt("export-dynamic-{s}", .{arch}), .root_module = fixture });
+            const check = b.addSystemCommand(&.{"python3"});
+            check.addFileArg(b.path("src/export/check.py"));
+            check.addArgs(&.{ "--arch", arch, "--division", "yes" });
+            if (shared) check.addArg("--shared");
+            check.addFileArg(artifact.getEmittedBin());
+            step.dependOn(&check.step);
+        }
+    }
+    return step;
+}
+
+fn exportFixture(
+    b: *std.Build,
+    tuning: *std.Build.Step.Options,
+    target: std.Build.ResolvedTarget,
+    mode: std.builtin.OptimizeMode,
+    libc: bool,
+    division: bool,
+    enabled: bool,
+) *std.Build.Module {
+    const kernel = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .no_builtin = true,
+        .omit_frame_pointer = true,
+    });
+    kernel.addOptions("fastmem_options", tuning);
+    const options = b.addOptions();
+    options.addOption(bool, "division", division);
+    options.addOption(bool, "enabled", enabled);
+    const fixture = b.createModule(.{
+        .root_source_file = b.path("src/export/consumer.zig"),
+        .target = target,
+        .optimize = mode,
+        .link_libc = libc,
+        .imports = &.{.{ .name = "fastmem", .module = kernel }},
+    });
+    fixture.addOptions("export_options", options);
+    fixture.addCSourceFile(.{ .file = b.path("src/export/consumer.c"), .flags = &.{ "-fno-builtin", "-fno-stack-protector" } });
+    return fixture;
 }

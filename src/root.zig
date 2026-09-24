@@ -231,8 +231,39 @@ else if (on_aarch64)
 else
     undefined;
 
+/// Replace the memory symbols in this link with strong, hidden kernel aliases.
+/// Call once from the root comptime block. See docs/export-layer.md.
+pub fn exportSymbols() void {
+    if (builtin.target.ofmt != .elf or
+        (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64))
+        @compileError("fastmem.exportSymbols requires aarch64 or x86_64 ELF");
+    if (builtin.zig_backend != .stage2_llvm)
+        @compileError("fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)");
+
+    if (on_aarch64) {
+        // @export rejects extern functions. ELF aliases preserve the exact
+        // ABI entry address without a trampoline or another memory loop.
+        const prefix = if (on_aarch64_sve) "fastmem_sve_" else "fastmem_advsimd_";
+        _ = aarch64_memcpy_sve;
+        _ = aarch64_memcpy_advsimd;
+        _ = aarch64_memset_sve;
+        _ = aarch64_memset_advsimd;
+        _ = struct {
+            comptime {
+                asm (".globl memcpy\n.hidden memcpy\n.set memcpy, " ++ prefix ++ "copy\n" ++
+                        ".globl memmove\n.hidden memmove\n.set memmove, " ++ prefix ++ "move\n" ++
+                        ".globl memset\n.hidden memset\n.set memset, " ++ prefix ++ "set\n");
+            }
+        };
+    } else {
+        @export(abi.memcpy, .{ .name = "memcpy", .linkage = .strong, .visibility = .hidden });
+        @export(abi.memmove, .{ .name = "memmove", .linkage = .strong, .visibility = .hidden });
+        @export(abi.memset, .{ .name = "memset", .linkage = .strong, .visibility = .hidden });
+    }
+}
+
 /// C-ABI entry points with the libc signatures, each returning dest.
-/// Not exported (P6 owns the export layer); the bench measures these as
+/// Not exported unless exportSymbols is called. The bench measures these as
 /// fastmem_abi. On aarch64 the entries are the kernel symbols (see
 /// above); elsewhere they are generic Zig wrappers.
 pub const abi = struct {
