@@ -90,8 +90,12 @@ fastmem is MIT (`LICENSE`).
 fastmem is done when all of these are true on all seven targets (c7i,
 c8i, c7a, c8a, c7g, c8g, c9g), built with the `-Dcpu` of `bench.toml`.
 Every number comes from the harness, with at least 5 rounds. A threshold
-in a goal (for example 1.10) is violated when the 95% CI lower bound of
-the ratio is above it. The A/A noise floor decides only the significance
+in a goal (for example 1.10) is violated when the lower bound of the
+ratio's confidence interval is above it. Comparisons between processes use
+an exact two-sample interval; comparisons inside the same processes use an
+exact paired interval over rounds. The report states the actual confidence
+level (93.75% for a paired comparison with 5 rounds). Outlier rounds are
+flagged and reported, and never removed. The A/A noise floor decides only the significance
 marks against 1.0. The standard suite includes the fixed profiles, the
 `dist/small` and `dist/mixed` distributions, and the comptime-size cases.
 A build in which fastmem calls `memcpy`, `memmove`, or `memset` through a
@@ -118,8 +122,10 @@ G2. Kernel parity with glibc (C-ABI call, runtime length).
 - No size tier has a geometric mean above 1.05.
 - No single case is significantly slower than 1.10.
 
-G3. Never slower than compiler-rt. No case of `fastmem_abi / builtin` is
-significantly above 1.00.
+G3. Never slower than compiler-rt. No case of `fastmem_abi / builtin` has
+its whole confidence interval above 1 + max(floor, 0.01). (A per-case test
+against exactly 1.00 fails on noise alone when it runs over hundreds of
+cases.)
 
 G4. The inline advantage.
 - On the small-size distribution (`dist/small`), `fastmem_inline / glibc`
