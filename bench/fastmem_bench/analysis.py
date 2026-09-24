@@ -3,6 +3,9 @@
 One round is one process run, and the round is the unit of independence.
 Each (variant, case, implementation, round) cell reduces to the median of its
 samples. A ratio compares the round medians of two cells on the log scale.
+Cells of two variants come from separate processes: a two-sample comparison.
+Cells of one variant come from the same processes: a paired comparison.
+Outlier rounds are reported only. They never leave an estimate or interval.
 The design and its evidence are in docs/bench-design.md, section "Analysis".
 """
 
@@ -10,7 +13,6 @@ import logging
 import math
 import statistics
 from collections import defaultdict
-from collections.abc import Collection
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,8 @@ OUTLIER_Z = 5.0
 OUTLIER_MIN = math.log1p(0.05)
 OUTLIER_SCALE_MIN = 0.005
 OUTLIER_MIN_ROUNDS = 5
+# Fewer rounds give insufficient evidence: no mark and no goal verdict.
+MIN_ROUNDS = 5
 MAD_TO_SD = 1.4826
 TIERS = (
     (16, "0-16"),
@@ -52,6 +56,8 @@ def round_medians(rounds: list[list[float]]) -> list[float]:
 
 def outlier_rounds(values: list[float]) -> list[int]:
     """Return the one round that departs from the other rounds of its cell, if any.
+
+    The flag is for reports only. No estimate or interval removes the round.
 
     A round departs when its log distance from the median of the other rounds
     exceeds both OUTLIER_Z robust standard deviations of those rounds and
@@ -86,49 +92,93 @@ def rank_counts(n: int, m: int) -> tuple[int, ...]:
 
 
 @cache
-def rank_interval(n: int, m: int, level: float = CONFIDENCE) -> tuple[int, float]:
-    """Return k and the exact coverage of [d_(k), d_(nm+1-k)] of the pairwise differences.
+def signed_rank_counts(n: int) -> tuple[int, ...]:
+    """Count the sign assignments of n paired differences by the signed-rank statistic T."""
+    counts = [1]
+    for rank in range(1, n + 1):
+        extended = [0] * (len(counts) + rank)
+        for total, count in enumerate(counts):
+            extended[total] += count
+            extended[total + rank] += count
+        counts = extended
+    return tuple(counts)
 
-    If no interval reaches the level, k is 1: the full range and its coverage.
+
+def order_statistic_rank(counts: tuple[int, ...], size: int, level: float) -> tuple[int, float]:
+    """Return k and the coverage of [x_(k), x_(size+1-k)] for a null count distribution.
+
+    The coverage of k is 1 - 2 P(statistic <= k - 1). k is the largest value that
+    reaches the level. If no value reaches it, k is 1: the full range.
     """
-    if n < 1 or m < 1:
-        raise ValueError("Intervals require nonempty samples")
-    counts = rank_counts(n, m)
-    total = math.comb(n + m, n)
+    total = sum(counts)
     k, below = 1, counts[0]
-    while 2 * (k + 1) <= n * m + 1 and 1 - 2 * (below + counts[k]) / total >= level:
+    while 2 * (k + 1) <= size + 1 and 1 - 2 * (below + counts[k]) / total >= level:
         below += counts[k]
         k += 1
     return k, 1 - 2 * below / total
+
+
+@cache
+def rank_interval(n: int, m: int, level: float = CONFIDENCE) -> tuple[int, float]:
+    """Exact Mann-Whitney rank and coverage for n against m independent rounds."""
+    if n < 1 or m < 1:
+        raise ValueError("Intervals require nonempty samples")
+    return order_statistic_rank(rank_counts(n, m), n * m, level)
+
+
+@cache
+def signed_rank_interval(n: int, level: float = CONFIDENCE) -> tuple[int, float]:
+    """Exact Wilcoxon signed-rank rank and coverage for n paired rounds."""
+    if n < 1:
+        raise ValueError("Intervals require nonempty samples")
+    return order_statistic_rank(signed_rank_counts(n), n * (n + 1) // 2, level)
 
 
 def hodges_lehmann(candidate: list[float], baseline: list[float]) -> float:
     return statistics.median(x - y for x in candidate for y in baseline)
 
 
-def compare_rounds(
-    candidate: list[float],
-    baseline: list[float],
-    *,
-    candidate_outliers: Collection[int] = (),
-    baseline_outliers: Collection[int] = (),
+def interval_row(
+    point: float, ordered: list[float], rank: tuple[int, float], method: str
 ) -> dict[str, Any]:
-    """Compare positive round medians. Outlier rounds leave the interval, not the estimate."""
-    left = [math.log(value) for value in candidate]
-    right = [math.log(value) for value in baseline]
-    point = hodges_lehmann(left, right)
-    kept_left = [value for index, value in enumerate(left) if index not in candidate_outliers]
-    kept_right = [value for index, value in enumerate(right) if index not in baseline_outliers]
-    k, coverage = rank_interval(len(kept_left), len(kept_right))
-    differences = sorted(x - y for x in kept_left for y in kept_right)
-    low = min(differences[k - 1], point)
-    high = max(differences[-k], point)
+    k, coverage = rank
     return {
         "ratio": math.exp(point),
-        "ci95": [math.exp(low), math.exp(high)],
+        "ci95": [math.exp(ordered[k - 1]), math.exp(ordered[-k])],
         "ci_level": coverage,
-        "ci_rounds": [len(kept_left), len(kept_right)],
+        "ci_method": method,
     }
+
+
+def compare_independent(candidate: list[float], baseline: list[float]) -> dict[str, Any]:
+    """Compare round medians of separate processes (A/A and revisions).
+
+    The ratio is the two-sample Hodges-Lehmann estimate. The interval is the exact
+    Mann-Whitney interval over all rounds.
+    """
+    left = [math.log(value) for value in candidate]
+    right = [math.log(value) for value in baseline]
+    differences = sorted(x - y for x in left for y in right)
+    rank = rank_interval(len(left), len(right))
+    return interval_row(statistics.median(differences), differences, rank, "mann-whitney")
+
+
+def compare_paired(candidate: list[float], baseline: list[float]) -> dict[str, Any]:
+    """Compare round medians of two implementations measured in the same processes.
+
+    Round i of the candidate and round i of the baseline share one process. The
+    ratio is the one-sample Hodges-Lehmann estimate of the per-round log ratios.
+    The interval is the exact Wilcoxon signed-rank interval over their Walsh
+    averages. It needs no independence between the two implementations.
+    """
+    if len(candidate) != len(baseline) or not candidate:
+        raise ValueError("A paired comparison requires matched nonempty rounds")
+    ratios = [math.log(x / y) for x, y in zip(candidate, baseline, strict=True)]
+    walsh = sorted(
+        (ratios[i] + ratios[j]) / 2 for i in range(len(ratios)) for j in range(i, len(ratios))
+    )
+    rank = signed_rank_interval(len(ratios))
+    return interval_row(statistics.median(walsh), walsh, rank, "signed-rank")
 
 
 def quantile(values: list[float], fraction: float) -> float:
@@ -278,9 +328,10 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
         right = cells.get((reference, case, reference_impl))
         if left is None or right is None:
             return
-        estimate = compare_rounds(
-            left[0], right[0], candidate_outliers=left[1], baseline_outliers=right[1]
-        )
+        # One variant runs all of its implementations in the same processes.
+        method = compare_paired if candidate == reference else compare_independent
+        estimate = method(left[0], right[0])
+        rounds = min(len(left[0]), len(right[0]))
         rows.append(
             {
                 "case": case,
@@ -295,7 +346,8 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
                 "baseline_ns": statistics.median(right[0]),
                 **estimate,
                 "outlier_rounds": {"candidate": left[1], "baseline": right[1]},
-                "rounds": min(len(left[0]), len(right[0])),
+                "rounds": rounds,
+                "evidence": "sufficient" if rounds >= MIN_ROUNDS else "insufficient",
                 "floor_group": floor_group(details[case]),
             }
         )
@@ -333,8 +385,11 @@ def summarize(
     noise_floors = {
         group: math.expm1(quantile(values, FLOOR_QUANTILE)) for group, values in departures.items()
     }
-    if any(row["rounds"] < 5 for row in rows):
-        warnings.append("Fewer than five rounds: significance marks are disabled.")
+    if any(row["evidence"] == "insufficient" for row in rows):
+        warnings.append(
+            f"Fewer than {MIN_ROUNDS} rounds: insufficient evidence."
+            " Significance marks and goal verdicts are disabled."
+        )
     groups: dict[tuple[str, str, str, str, str], list[float]] = defaultdict(list)
     for row in rows:
         floor = noise_floors.get(row["floor_group"])
@@ -342,7 +397,7 @@ def summarize(
         row["minimum_effect"] = minimum_effect
         row["significant"] = (
             row["comparison"] != "A/A"
-            and row["rounds"] >= 5
+            and row["evidence"] == "sufficient"
             and significant(
                 tuple(row["ci95"]),
                 max(floor, minimum_effect) if floor is not None else None,

@@ -5,13 +5,15 @@ import pytest
 
 from fastmem_bench.analysis import (
     analyze,
-    compare_rounds,
+    compare_independent,
+    compare_paired,
     geomean,
     hodges_lehmann,
     outlier_rounds,
     quantile,
     rank_interval,
     round_medians,
+    signed_rank_interval,
     significant,
     tier,
 )
@@ -61,12 +63,25 @@ def test_reject_invalid(tmp_path: Path, mutation: str) -> None:
 def test_math() -> None:
     assert round_medians([[8, 9, 30], [9, 10]]) == [9, 9.5]
     assert hodges_lehmann([1, 2], [0]) == 1.5
-    assert compare_rounds([2], [4]) == {
+    assert compare_independent([2], [4]) == {
         "ratio": 0.5,
         "ci95": [0.5, 0.5],
         "ci_level": 0,
-        "ci_rounds": [1, 1],
+        "ci_method": "mann-whitney",
     }
+    assert compare_paired([2], [4]) == {
+        "ratio": 0.5,
+        "ci95": [0.5, 0.5],
+        "ci_level": 0,
+        "ci_method": "signed-rank",
+    }
+    # Walsh averages of the per-round log ratios log 2, log 4, log 8: the estimate is log 4.
+    paired = compare_paired([2, 4, 8], [1, 1, 1])
+    assert paired["ratio"] == pytest.approx(4)
+    assert paired["ci95"] == pytest.approx([2, 8])
+    assert paired["ci_level"] == pytest.approx(0.75)
+    with pytest.raises(ValueError, match="matched"):
+        compare_paired([1, 2], [1])
     assert geomean([0.5, 2]) == pytest.approx(1)
     assert quantile([0, 1, 2, 3, 4], 0.95) == pytest.approx(3.8)
     assert quantile([7], 0.95) == 7
@@ -106,19 +121,32 @@ def test_outlier_rounds() -> None:
     assert outlier_rounds([1.0, 1.0, 1.0, 4.7]) == []
 
 
-def test_one_spiky_round_moves_neither_ratio_nor_interval() -> None:
+@pytest.mark.parametrize(
+    ("rounds", "k", "coverage"),
+    [
+        (1, 1, 0),
+        (3, 1, 0.75),
+        (5, 1, 0.9375),
+        (6, 1, 1 - 2 / 64),
+        (7, 3, 1 - 6 / 128),
+        (8, 4, 1 - 10 / 256),
+    ],
+)
+def test_signed_rank_interval(rounds: int, k: int, coverage: float) -> None:
+    assert signed_rank_interval(rounds) == (k, pytest.approx(coverage))
+
+
+def test_spiky_round_stays_in_ratio_and_interval() -> None:
     clean = [1.00, 1.01, 0.99, 1.02, 1.00]
     spiky = [1.00, 1.01, 4.73, 1.02, 1.00]
     baseline = [1.0, 1.0, 1.01, 0.99, 1.0]
-    reference = compare_rounds(clean, baseline)
-    unflagged = compare_rounds(spiky, baseline)
-    flagged = compare_rounds(spiky, baseline, candidate_outliers=outlier_rounds(spiky))
-    assert unflagged["ratio"] == pytest.approx(reference["ratio"], abs=0.011)
-    assert flagged["ratio"] == unflagged["ratio"]
-    assert unflagged["ci95"][1] > 4
-    assert flagged["ci95"][1] < 1.03
-    assert flagged["ci_rounds"] == [4, 5]
-    assert flagged["ci_level"] == pytest.approx(1 - 4 / 126)
+    assert outlier_rounds(spiky) == [2]
+    reference = compare_independent(clean, baseline)
+    estimate = compare_independent(spiky, baseline)
+    assert estimate["ratio"] == pytest.approx(reference["ratio"], abs=0.011)
+    # The flag is a report. The interval keeps the spike on its side.
+    assert estimate["ci95"][1] > 4
+    assert estimate["ci_level"] == pytest.approx(1 - 8 / 252)
 
 
 @pytest.mark.parametrize(
