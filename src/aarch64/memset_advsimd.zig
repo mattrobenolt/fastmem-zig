@@ -20,8 +20,8 @@
 // - The GNU_PROPERTY note (BTI/PAC marking of the linked binary) is
 //   omitted: it is link-level metadata, and no other object in a Zig
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
-// - Immediate expressions use #( ...) so the integrated assembler
-//   parses them.
+// - Immediate expressions are written #( ...); upstream writes them
+//   bare. Both forms assemble to the same bytes.
 // - The whole block is gated on the absence of the SVE CPU feature and
 //   on the ELF object format at comptime (the directives below are
 //   ELF-only); the local labels collide with memset_sve.zig only if
