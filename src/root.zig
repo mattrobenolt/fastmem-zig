@@ -139,7 +139,12 @@ const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c)
 
 // The AOR kernel symbols already carry the libc signatures and, like
 // the libc originals, return dest in x0 (the kernels never write x0).
-// The abi wrappers below therefore compile to a single direct branch.
+// The abi entries below are therefore the kernel symbol addresses
+// themselves: a call through them lands directly in the kernel, exactly
+// like the harness's dlsym pointer into glibc. A Zig wrapper compiles
+// to a `b` trampoline, and that extra taken branch is measurable at
+// small sizes (fleet run 20260924T064442Z-aor-g2: set 0-16 was
+// 1.28-1.33x glibc on c7g/c8g with an instruction-identical body).
 const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
     @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
 else if (on_aarch64)
@@ -163,10 +168,14 @@ else
 
 /// C-ABI entry points with the libc signatures, each returning dest.
 /// Not exported (P6 owns the export layer); the bench measures these as
-/// fastmem_abi.
+/// fastmem_abi. On aarch64 the entries are the kernel symbols (see
+/// above); elsewhere they are generic Zig wrappers.
 pub const abi = struct {
-    pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
+    pub const memcpy: LibcCopyFn = if (on_aarch64) libc_copy_fn else memcpyGeneric;
+    pub const memmove: LibcCopyFn = if (on_aarch64) libc_move_fn else memmoveGeneric;
+    pub const memset: LibcSetFn = if (on_aarch64) libc_set_fn else memsetGeneric;
+
+    fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -174,8 +183,7 @@ pub const abi = struct {
         return dest;
     }
 
-    pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_move_fn(dest, src, n);
+    fn memmoveGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -183,8 +191,7 @@ pub const abi = struct {
         return dest;
     }
 
-    pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_set_fn(dest, c, n);
+    fn memsetGeneric(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
