@@ -16,12 +16,17 @@ def git(root: Path, *args: str) -> str:
 
 
 def create_run(
-    root: Path, label: str, targets: list[str], instances: dict[str, str]
+    root: Path,
+    label: str,
+    targets: list[str],
+    instances: dict[str, str],
+    *,
+    results_dir: Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
         raise ValueError("Run label must contain only letters, numbers, underscores, or hyphens")
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + label
-    path = root / "bench-results" / run_id
+    path = (results_dir or root / "bench-results") / run_id
     path.mkdir(parents=True)  # Refuse to overwrite another run in the same second.
     manifest = {
         "run_id": run_id,

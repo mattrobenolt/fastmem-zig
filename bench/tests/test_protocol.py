@@ -47,7 +47,12 @@ class FakeBox:
         self.downloaded = True
         for variant in ("v0", "aa"):
             for index in range(2):
-                measurement(destination / "raw" / variant / f"r{index}.jsonl")
+                folder = (
+                    destination
+                    if destination.name in {"v0", "aa"}
+                    else destination / "raw" / variant
+                )
+                measurement(folder / f"r{index}.jsonl")
 
 
 def setup(config: Config) -> tuple[Path, Build]:

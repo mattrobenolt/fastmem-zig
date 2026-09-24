@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import ContextVar
 from dataclasses import dataclass
-from threading import Lock
+from threading import Event, Lock
 
 from rich.live import Live
 from rich.table import Table
@@ -12,7 +12,16 @@ from rich.table import Table
 _progress: ContextVar[Callable[[str], None] | None] = ContextVar("progress", default=None)
 
 
+_cancelled: ContextVar[Event | None] = ContextVar("cancelled", default=None)
+
+
+def check_cancelled() -> None:
+    if (event := _cancelled.get()) is not None and event.is_set():
+        raise InterruptedError("Run interrupted")
+
+
 def progress(message: str) -> None:
+    check_cancelled()
     if callback := _progress.get():
         callback(message)
 
@@ -29,6 +38,7 @@ def parallel[T](
     states = dict.fromkeys(names, "pending")
     results: dict[str, Outcome[T]] = {}
     lock = Lock()
+    cancelled = Event()
 
     def table() -> Table:
         result = Table("Task", "State")
@@ -47,20 +57,26 @@ def parallel[T](
                 live.update(table())
 
         def task(name: str) -> T:
+            cancellation = _cancelled.set(cancelled)
             token = _progress.set(lambda message: update(name, message))
             try:
                 progress("running")
                 return function(name)
             finally:
                 _progress.reset(token)
+                _cancelled.reset(cancellation)
 
         futures = {pool.submit(task, name): name for name in states}
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                results[name] = Outcome(value=future.result())
-                update(name, "done")
-            except Exception as error:  # noqa: BLE001 — isolate each remote task
-                results[name] = Outcome(error=error)
-                update(name, f"failed: {error}")
+        try:
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    results[name] = Outcome(value=future.result())
+                    update(name, "done")
+                except Exception as error:  # noqa: BLE001 — isolate each remote task
+                    results[name] = Outcome(error=error)
+                    update(name, f"failed: {error}")
+        except BaseException:
+            cancelled.set()
+            raise
     return results

@@ -30,11 +30,11 @@ def topology(text: str) -> list[dict[str, Any]]:
     return result
 
 
-def collect(box: Box, root: Path) -> dict[str, Any]:
-    path = root / "bench-results/.facts" / f"{box.instance_id}.json"
+def collect(box: Box, results_dir: Path) -> dict[str, Any]:
+    path = results_dir / ".facts" / f"{box.instance_id}.json"
     if path.exists():
         return json.loads(path.read_text())
-    facts: dict[str, Any] = {"instance_id": box.instance_id}
+    facts: dict[str, Any] = {"instance_id": box.instance_id, "errors": {}}
     for name, command in {
         "cpuinfo": "cat /proc/cpuinfo",
         "lscpu": "lscpu -J",
@@ -45,12 +45,16 @@ def collect(box: Box, root: Path) -> dict[str, Any]:
         "image_version": "cat /etc/bench-image",
         "nixos_version": "nixos-version",
     }.items():
-        value = box.run(command).strip()
-        facts[name] = (
-            topology(value)
-            if name == "topology"
-            else (json.loads(value) if name in {"lscpu", "identity"} else value)
-        )
+        try:
+            value = box.run(command).strip()
+            facts[name] = (
+                topology(value)
+                if name == "topology"
+                else (json.loads(value) if name in {"lscpu", "identity"} else value)
+            )
+        except Exception as error:  # noqa: BLE001 — host probes are optional
+            facts[name] = None
+            facts["errors"][name] = str(error)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
         handle.write(json.dumps(facts, indent=2) + "\n")

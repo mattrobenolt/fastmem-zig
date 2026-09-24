@@ -5,9 +5,18 @@ profile = "fastmem-bench"
 adapter = "fastmem_bench"
 remote_dir = "/root/bench"
 image_version = "1"
+tofu_dir = "infra/base"
+key_output = "key_file"
+templates_output = "launch_template_ids"
+ssh_user = "root"
+results_dir = "bench-results"
+cache_dir = ".bench-cache"
+# Fractional minimum effect for significance marks.
+minimum_effect = 0.0
 
 [fleet]
 default_ttl = "4h"
+max_ttl = "12h"
 default_owner = "agent"
 
 [targets.c7i]

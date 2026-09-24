@@ -8,7 +8,7 @@ import click
 from ec2bench.cli import box_for, ensure_up
 from ec2bench.config import Config
 from ec2bench.fleet import Fleet, tags
-from ec2bench.parallel import parallel, progress
+from ec2bench.parallel import Outcome, parallel, progress
 from ec2bench.runs import create_run, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze
 from fastmem_bench.build import build_all, disassemble, provenance, resolve
@@ -27,7 +27,7 @@ from fastmem_bench.report import write
 @click.option("--up", "launch", is_flag=True, help="Launch missing targets first.")
 @click.option("--label", default="run", show_default=True)
 @click.pass_obj
-def run(
+def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle visible
     config: Config,
     *,
     revisions: tuple[str, ...],
@@ -40,11 +40,14 @@ def run(
 ) -> None:
     """Cross-build revisions and measure interleaved rounds across the fleet."""
     fleet = Fleet(config)
+    fleet.reap()
     names = config.select(targets)
+    startup = {}
     if launch:
         names = names or list(config.targets)
-        ensure_up(fleet, names)
-    if not names:
+        startup = ensure_up(fleet, names)
+        names = [name for name, outcome in startup.items() if outcome.error is None]
+    if not names and not launch:
         names = config.select(
             [
                 tags(instance)["Target"]
@@ -52,14 +55,15 @@ def run(
                 if instance["State"]["Name"] == "running" and "Target" in tags(instance)
             ]
         )
-    if not names:
+    if not names and not startup:
         raise click.ClickException("No running targets. Use --up or select a target.")
     instances = {name: fleet.one(name) for name in names}
     path, manifest = create_run(
         config.root,
         label,
-        names,
+        list(startup) if launch else names,
         {name: instance["InstanceId"] for name, instance in instances.items()},
+        results_dir=config.results_dir,
     )
     seed = secrets.randbits(32)
     sources = resolve(config, revisions)
@@ -98,7 +102,11 @@ def run(
             if warning:
                 warnings.append(warning)
         box = box_for(fleet, instances[name], outputs)
-        box.ready(config.project["image_version"])
+        try:
+            box.ready(config.project["image_version"])
+        except Exception:
+            fleet.terminate([instances[name]["InstanceId"]])
+            raise
         protocol = execute(
             config, box, selected, path, suite=suite, schedule=schedule, aa=not no_aa, seed=seed
         )
@@ -109,6 +117,9 @@ def run(
         return result
 
     results = parallel(names, measure)
+    results.update(
+        {name: Outcome(error=outcome.error) for name, outcome in startup.items() if outcome.error}
+    )
     summary = {
         "run_id": path.name,
         "variants": {source.variant: source.revision for source in sources},

@@ -10,10 +10,28 @@ from collections.abc import Callable
 from pathlib import Path
 
 
+class RemoteError(subprocess.SubprocessError):
+    """A transport error with remote diagnostics."""
+
+
+def checked(args: list[str], *, timeout: float) -> str:
+    try:
+        return subprocess.run(
+            args, check=True, capture_output=True, text=True, timeout=timeout
+        ).stdout
+    except subprocess.CalledProcessError as error:
+        raise RemoteError(f"{error}: {error.stderr[-2000:] if error.stderr else ''}") from error
+    except subprocess.TimeoutExpired as error:
+        raise RemoteError(f"{error}: {error.stderr[-2000:] if error.stderr else ''}") from error
+
+
 class Box:
-    def __init__(self, instance_id: str, host: str, key: Path, cache: Path) -> None:
+    def __init__(
+        self, instance_id: str, host: str, key: Path, cache: Path, *, user: str = "root"
+    ) -> None:
         self.instance_id = instance_id
         self.host = host
+        self.user = user
         cache.mkdir(parents=True, exist_ok=True)
         # Unix socket paths have a short limit. Hash the repository-specific directory.
         digest = hashlib.sha256(str(cache.resolve()).encode()).hexdigest()[:12]
@@ -25,6 +43,10 @@ class Box:
             "BatchMode=yes",
             "-o",
             "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
             "-o",
             "StrictHostKeyChecking=accept-new",
             "-o",
@@ -41,16 +63,14 @@ class Box:
 
     @property
     def destination(self) -> str:
-        return f"root@{self.host}"
+        return f"{self.user}@{self.host}"
 
     def run(
         self, command: str, *, timeout: float = 120, stream: Callable[[str], None] | None = None
     ) -> str:
         args = ["ssh", *self.options, self.destination, command]
         if stream is None:
-            return subprocess.run(
-                args, check=True, capture_output=True, text=True, timeout=timeout
-            ).stdout
+            return checked(args, timeout=timeout)
         output: list[str] = []
         with subprocess.Popen(
             args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -74,7 +94,7 @@ class Box:
             if timed_out.is_set():
                 raise subprocess.TimeoutExpired(args, timeout)
             if process.returncode:
-                raise subprocess.CalledProcessError(process.returncode, args, "".join(output))
+                raise RemoteError(f"SSH exit {process.returncode}: {''.join(output)[-2000:]}")
         return "".join(output)
 
     def ready(self, image_version: str, *, timeout: float = 900) -> None:
@@ -100,7 +120,7 @@ class Box:
         self._rsync(f"{self.destination}:{source}/", str(destination) + "/")
 
     def _rsync(self, source: str, destination: str) -> None:
-        subprocess.run(
+        checked(
             [
                 "rsync",
                 "-az",
@@ -110,7 +130,6 @@ class Box:
                 source,
                 destination,
             ],
-            check=True,
             timeout=300,
         )
 

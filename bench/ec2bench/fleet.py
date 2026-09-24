@@ -10,7 +10,7 @@ from typing import Any
 
 import boto3
 
-from ec2bench.config import Config, duration
+from ec2bench.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class Fleet:
 
     def outputs(self) -> dict[str, Any]:
         output = subprocess.run(
-            ["tofu", "-chdir=infra/base", "output", "-json"],
+            ["tofu", f"-chdir={self.config.tofu_dir}", "output", "-json"],
             cwd=self.config.root,
             check=True,
             capture_output=True,
@@ -83,12 +83,13 @@ class Fleet:
         return {key: value["value"] for key, value in json.loads(output.stdout).items()}
 
     def key_path(self, outputs: dict[str, Any]) -> Path:
-        path = Path(outputs["key_file"])
-        return path if path.is_absolute() else self.config.root / "infra/base" / path
+        path = Path(outputs[self.config.project.get("key_output", "key_file")])
+        return self.config.tofu_dir / path
 
     def launch(
         self, target: str, ttl: str, size: str | None, outputs: dict[str, Any]
     ) -> dict[str, Any]:
+        lifetime = self.config.ttl(ttl)
         self.config.select([target])
         found = self.selected([target])
         if found:
@@ -107,7 +108,7 @@ class Fleet:
             "ManagedBy": "ec2bench",
             "Name": f"{self.config.project['name']}-{target}",
             "Target": target,
-            "ExpiresAt": (datetime.now(UTC) + duration(ttl)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ExpiresAt": (datetime.now(UTC) + lifetime).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "Owner": self.config.fleet["default_owner"],
         }
         response = self.client.run_instances(
@@ -115,15 +116,21 @@ class Fleet:
             MaxCount=1,
             InstanceType=instance_type,
             LaunchTemplate={
-                "LaunchTemplateId": outputs["launch_template_ids"][target_config["arch"]],
+                "LaunchTemplateId": outputs[
+                    self.config.project.get("templates_output", "launch_template_ids")
+                ][target_config["arch"]],
                 "Version": "$Latest",
             },
             TagSpecifications=[
                 {
                     "ResourceType": resource,
-                    "Tags": [{"Key": key, "Value": value} for key, value in values.items()],
+                    "Tags": [
+                        {"Key": key, "Value": value}
+                        for key, value in values.items()
+                        if resource == "instance" or key in {"Project", "ManagedBy"}
+                    ],
                 }
-                for resource in ("instance", "volume")
+                for resource in ("instance", "volume", "network-interface")
             ],
         )
         launched = response["Instances"][0]
@@ -162,8 +169,9 @@ class Fleet:
             self.client.terminate_instances(InstanceIds=ids)
 
     def extend(self, names: list[str], ttl: str) -> None:
+        lifetime = self.config.ttl(ttl)
         ids = [instance["InstanceId"] for instance in self.selected(names)]
-        value = (datetime.now(UTC) + duration(ttl)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        value = (datetime.now(UTC) + lifetime).strftime("%Y-%m-%dT%H:%M:%SZ")
         if ids:
             self.client.create_tags(Resources=ids, Tags=[{"Key": "ExpiresAt", "Value": value}])
 

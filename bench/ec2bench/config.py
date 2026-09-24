@@ -35,11 +35,17 @@ class Config:
         root = find_root(root)
         raw = tomllib.loads((root / "bench.toml").read_text())
         project = raw["project"]
-        for key in ("name", "region", "profile", "remote_dir", "image_version"):
+        for key in ("name", "region", "profile", "image_version"):
             if not isinstance(project.get(key), str) or not project[key]:
                 raise ValueError(f"project.{key} must be a nonempty string")
-        fleet = {"default_ttl": "4h", "default_owner": "agent", **raw.get("fleet", {})}
-        duration(fleet["default_ttl"])
+        fleet = {
+            "default_ttl": "4h",
+            "max_ttl": "12h",
+            "default_owner": "agent",
+            **raw.get("fleet", {}),
+        }
+        if duration(fleet["default_ttl"]) > duration(fleet["max_ttl"]):
+            raise ValueError("fleet.default_ttl exceeds fleet.max_ttl")
         targets = raw.get("targets", {})
         for name, target in targets.items():
             if not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
@@ -47,6 +53,26 @@ class Config:
             if not target.get("instance_type") or target.get("arch") not in {"x86_64", "arm64"}:
                 raise ValueError(f"Invalid instance_type or arch for {name}")
         return cls(root, project, fleet, targets)
+
+    @property
+    def results_dir(self) -> Path:
+        return self.root / self.project.get("results_dir", "bench-results")
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.root / self.project.get("cache_dir", ".bench-cache")
+
+    @property
+    def tofu_dir(self) -> Path:
+        return self.root / self.project.get("tofu_dir", "infra/base")
+
+    def ttl(self, value: str) -> timedelta:
+        requested = duration(value)
+        if requested > duration(self.fleet.get("max_ttl", "12h")):
+            raise ValueError(
+                f"TTL {value} exceeds fleet.max_ttl ({self.fleet.get('max_ttl', '12h')})"
+            )
+        return requested
 
     def select(self, names: tuple[str, ...] | list[str]) -> list[str]:
         selected = list(dict.fromkeys(names))
