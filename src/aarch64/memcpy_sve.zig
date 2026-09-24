@@ -77,36 +77,47 @@ const head_sve =
     \\
 ;
 
-// The 0..15 fallthrough tree shared by the neon and hybrid heads.
-// Classes are ordered so the smallest sizes take no predicted-taken
-// branches: 1..3 bytes fall through (tbz tree of memcpy-advsimd.S,
-// inverted). Every access is sized to the count, so guard-page tails
-// stay safe; all loads precede all stores within a class, so
-// overlapping moves stay correct.
+// The 0..15 fallthrough tree shared by the neon and hybrid heads,
+// entered with the n < 16 test already done: testing small first keeps
+// 1..3 bytes at zero predicted-taken branches and 15 instructions
+// (compiler-rt's memmove runs 14 at 1..3; the extra one is the BTI
+// landing pad). The previous layout ran the 128/32/16 range checks
+// first, which put 20 instructions on the 1..3 path and measured
+// 1.333x compiler-rt there on Neoverse V3 (fleet run
+// 20260924T102308Z-p3-arm-small, copy and move at every 1..3 profile).
+// Classes are ordered so the smallest sizes fall through (tbz tree of
+// memcpy-advsimd.S, inverted). Every access is sized to the count, so
+// guard-page tails stay safe; all loads precede all stores within a
+// class, so overlapping moves stay correct. The end pointers (x4/x5)
+// are computed inside the 4..15 classes instead of hoisted: the 1..3
+// class derives its tail index from the count directly.
 fn tree(comptime p: []const u8) []const u8 {
     return std.fmt.comptimePrint(
-        \\    add    x4, x1, x2
-        \\    add    x5, x0, x2
         \\    tbnz    x2, 3, .Lfm_sve_{s}_ge8
         \\    tbnz    x2, 2, .Lfm_sve_{s}_ge4
         \\    cbz    x2, .Lfm_sve_{s}_ret0
         \\    lsr    x14, x2, 1
+        \\    sub    x15, x2, 1
         \\    ldrb    w6, [x1]
-        \\    ldrb    w10, [x4, -1]
         \\    ldrb    w8, [x1, x14]
+        \\    ldrb    w10, [x1, x15]
         \\    strb    w6, [x0]
         \\    strb    w8, [x0, x14]
-        \\    strb    w10, [x5, -1]
+        \\    strb    w10, [x0, x15]
         \\    ret
         \\.Lfm_sve_{s}_ge4:
+        \\    add    x4, x1, x2
         \\    ldr    w6, [x1]
         \\    ldr    w8, [x4, -4]
+        \\    add    x5, x0, x2
         \\    str    w6, [x0]
         \\    str    w8, [x5, -4]
         \\    ret
         \\.Lfm_sve_{s}_ge8:
+        \\    add    x4, x1, x2
         \\    ldr    x6, [x1]
         \\    ldr    x7, [x4, -8]
+        \\    add    x5, x0, x2
         \\    str    x6, [x0]
         \\    str    x7, [x5, -8]
         \\    ret
@@ -116,20 +127,21 @@ fn tree(comptime p: []const u8) []const u8 {
     , .{ p, p, p, p, p, p });
 }
 
-// Neon head: fixed boundaries, no cntb/whilelo. 16..32 is one
-// overlapping 16-byte pair; the tree covers 0..15.
+// Neon head: the tree first (n < 16), then fixed boundaries, no
+// cntb/whilelo. 16..32 is one overlapping 16-byte pair. Testing small
+// first costs one extra predicted-taken branch at 33..128 (the n >= 16
+// branch); the 1..3 class is the one the fleet shows failing G3, so
+// the trade goes this way.
 fn head_neon(comptime p: []const u8) []const u8 {
     return std.fmt.comptimePrint(
-        \\    cmp    x2, 128
-        \\    b.hi    .Lfm_sve_cpy_long
-        \\    cmp    x2, 32
-        \\    b.hi    .Lfm_sve_cpy_gt32
         \\    cmp    x2, 16
         \\    b.hs    .Lfm_sve_{s}_ge16
         \\
     , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
         \\    .p2align 4
         \\.Lfm_sve_{s}_ge16:
+        \\    cmp    x2, 32
+        \\    b.hi    .Lfm_sve_cpy_gt32
         \\    add    x4, x1, x2
         \\    ldr    q0, [x1]
         \\    ldr    q1, [x4, -16]
@@ -142,20 +154,18 @@ fn head_neon(comptime p: []const u8) []const u8 {
 }
 
 // Hybrid head: the tree below 16, the predicated SVE pair for
-// 16..2*VL. The cntb hoist keeps every class at one taken branch.
+// 16..2*VL. The cntb sits in the >= 16 block: the tree never needs it.
 fn head_hybrid(comptime p: []const u8) []const u8 {
     return std.fmt.comptimePrint(
-        \\    cntb    x6
-        \\    cmp    x2, 128
-        \\    b.hi    .Lfm_sve_cpy_long
-        \\    cmp    x2, x6, lsl 1
-        \\    b.hi    .Lfm_sve_cpy_gt32
         \\    cmp    x2, 16
         \\    b.hs    .Lfm_sve_{s}_ge16
         \\
     , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
         \\    .p2align 4
         \\.Lfm_sve_{s}_ge16:
+        \\    cntb    x6
+        \\    cmp    x2, x6, lsl 1
+        \\    b.hi    .Lfm_sve_cpy_gt32
         \\    whilelo p0.b, xzr, x2
         \\    whilelo p1.b, x6, x2
         \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
@@ -215,6 +225,8 @@ const mid_neon =
     \\
     \\    .p2align 4
     \\.Lfm_sve_cpy_gt32:
+    \\    cmp    x2, 128
+    \\    b.hi    .Lfm_sve_cpy_long
     \\    cmp    x2, 64
     \\    b.hi    .Lfm_sve_cpy65_128
     \\    add    x4, x1, x2
