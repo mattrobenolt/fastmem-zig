@@ -120,6 +120,9 @@ for op in ("move", "set"):
                   if re.search(r", [^%]*\([^)]*\)$", line)]
         if n in (1, 4, 8, 15):
             budget = {1: 12, 4: 11, 8: 9, 15: 9}[n] if op == "move" else 11
+            # Zen schedules the return-register move before the single-byte store.
+            if op == "set" and n == 1 and high_regs and cpu in ("znver4", "znver5"):
+                budget = 12
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
