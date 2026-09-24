@@ -1,4 +1,5 @@
 //! Byte fills with straight-line classes and model-specific large paths.
+const builtin = @import("builtin");
 const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
@@ -63,16 +64,46 @@ pub inline fn set(dst: [*]u8, value: u8, n: usize) void {
     if (!small(tuning.inline_max, false, dst, value, n)) _ = kernel(dst, value, n);
 }
 
-pub fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n == 0) return dst;
+    const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
+    if (n <= 16) {
+        if (n == 0) return dst;
+        const d: [*]u8 = @ptrCast(dst.?);
+        if (n >= 8) {
+            pair(8, d, byte, n);
+        } else if (n >= 4) {
+            pair(4, d, byte, n);
+        } else if (n >= 2) {
+            pair(2, d, byte, n);
+        } else {
+            d[0] = byte;
+        }
+        return dst;
+    }
+    const d: [*]u8 = @ptrCast(dst.?);
+    if (n <= 32) {
+        pair(16, d, byte, n);
+        return dst;
+    }
+    return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, mediumKernel, .{ dst, value, n });
+}
+
+noinline fn mediumKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
     const d: [*]u8 = @ptrCast(dst.?);
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    if (!small(8 * w, true, d, byte, n)) large(d, byte, n);
+    if (!small(8 * w, true, d, byte, n)) return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, largeKernel, .{ dst, value, n });
     return dst;
 }
 
-noinline fn large(dst: [*]u8, value: u8, n: usize) void {
+noinline fn largeKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    large(@ptrCast(dst.?), @truncate(@as(c_uint, @bitCast(value))), n);
+    return dst;
+}
+
+fn large(dst: [*]u8, value: u8, n: usize) void {
     @disableIntrinsics();
     if (t.memset_nt_min) |threshold| {
         if (n >= threshold) return stream(dst, value, n);

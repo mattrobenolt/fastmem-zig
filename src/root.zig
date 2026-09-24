@@ -200,8 +200,9 @@ else
 /// Not exported (P6 owns the export layer); the bench measures these as
 /// fastmem_abi.
 pub const abi = struct {
-    pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_x86) return @call(.never_inline, x86_move.kernel, .{ dest, src, n });
+    pub const memcpy = if (on_x86) x86_move.kernel else memcpyFallback;
+
+    fn memcpyFallback(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
@@ -210,8 +211,9 @@ pub const abi = struct {
         return dest;
     }
 
-    pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_x86) return @call(.never_inline, x86_move.kernel, .{ dest, src, n });
+    pub const memmove = if (on_x86) x86_move.kernel else memmoveFallback;
+
+    fn memmoveFallback(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (comptime on_aarch64) return libc_move_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
@@ -220,8 +222,9 @@ pub const abi = struct {
         return dest;
     }
 
-    pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_x86) return @call(.never_inline, x86_set.kernel, .{ dest, c, n });
+    pub const memset = if (on_x86) x86_set.kernel else memsetFallback;
+
+    fn memsetFallback(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
         if (comptime on_aarch64) return libc_set_fn(dest, c, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);

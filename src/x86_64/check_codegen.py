@@ -87,9 +87,9 @@ require(any("copyLarge" in name for name in syms), "runtime copy specialization 
 
 kernel_counts = {}
 for op in ("move", "set"):
-    name = f"x86_64.{op}.kernel"
+    name = f"x86_64.{op}.mediumKernel"
     paths = []
-    for n in ((64, 65, 128, 129, 256, 257, 511, 512) if wide else (32, 64, 65, 128, 129, 256)):
+    for n in ((64, 65, 128, 129, 256, 257, 511, 512) if wide else (33, 64, 65, 128, 129, 256)):
         text = class_path(name, n)
         register = "%zmm" if wide else "%ymm"
         require(register in text, f"kernel {op}/{n} lacks {register}")
@@ -101,6 +101,20 @@ for op in ("move", "set"):
     if wide and op == "set":
         text = "\n".join(i for _, i in body(name))
         require(re.search(r"vmovdqu8.*\{%k", text), "masked memset store missing")
+
+small_counts = {}
+for op in ("move", "set"):
+    small_counts[op] = {}
+    for n in (0, 1, 4, 8, 15, 16, 17, 31, 32):
+        text = class_path(f"x86_64.{op}.kernel", n)
+        require(not re.search(r"vzeroupper|%[yz]mm|push|pop|%rsp", text), f"small {op}/{n} has vector cleanup or frame")
+        lines = text.splitlines()
+        stores = [i + 1 for i, line in enumerate(lines)
+                  if re.search(r", [^%]*\([^)]*\)$", line)]
+        small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
+    entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
+    medium = "\n".join(i for _, i in body(f"x86_64.{op}.mediumKernel"))
+    require(not re.search(r"\b(?:call\w*|push\w*|pop\w*)\b", entry + medium), f"{op} entry is not a leaf")
 
 for op, kernel in (("copy", "move"), ("move", "move"), ("set", "set")):
     code = body(f"probe_abi_{op}")
@@ -121,6 +135,6 @@ if cpu in ("sapphirerapids", "graniterapids"):
 else:
     require("movsb" not in large and "stosb" not in large, "unexpected REP path")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
-                  "kernel_classes": kernel_counts, "abi": "one direct branch",
+                  "kernel_classes": kernel_counts, "abi": "direct alias", "small_paths": small_counts,
                   "vector": "zmm" if wide else "ymm", "vzeroupper": "present",
                   "mem_symbol_references": 0}))

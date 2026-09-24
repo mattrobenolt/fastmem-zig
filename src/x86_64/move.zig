@@ -1,4 +1,5 @@
 //! Independent implementation of the behavioral design in x86_64-design.md.
+const builtin = @import("builtin");
 const ops = @import("ops.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
@@ -71,12 +72,44 @@ pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: u
     }
 }
 
-pub fn kernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n == 0) return dst;
+    if (n <= 16) {
+        if (n == 0) return dst;
+        const d: [*]u8 = @ptrCast(dst.?);
+        const s: [*]const u8 = @ptrCast(src.?);
+        if (n >= 8) {
+            pair(u64, d, s, n);
+        } else if (n >= 4) {
+            pair(u32, d, s, n);
+        } else if (n >= 2) {
+            pair(u16, d, s, n);
+        } else {
+            d[0] = s[0];
+        }
+        return dst;
+    }
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
-    if (!small(8 * w, d, s, n)) large(.may_overlap, d, s, n);
+    if (n <= 32) {
+        pair(@Vector(16, u8), d, s, n);
+        return dst;
+    }
+    return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, mediumKernel, .{ dst, src, n });
+}
+
+noinline fn mediumKernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (!small(8 * w, d, s, n)) return @call(if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto, largeKernel, .{ dst, src, n });
+    return dst;
+}
+
+// The matching return convention permits a tail transfer from the leaf entry.
+noinline fn largeKernel(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    large(.may_overlap, @ptrCast(dst.?), @ptrCast(src.?), n);
     return dst;
 }
 
@@ -85,7 +118,7 @@ noinline fn copyLarge(dst: [*]u8, src: [*]const u8, n: usize) void {
     if (!small(8 * w, dst, src, n)) large(.disjoint, dst, src, n);
 }
 
-noinline fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
+fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
     @disableIntrinsics();
     const distance = @intFromPtr(dst) -% @intFromPtr(src);
     if (overlap == .may_overlap) {
