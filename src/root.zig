@@ -30,14 +30,14 @@ const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
-const copy_impl_name = if (on_aarch64_sve)
+const copy_impl_name: []const u8 = if (on_aarch64_sve)
     "aor-sve-5e20a93"
 else if (on_aarch64)
     "aor-advsimd-5e20a93"
 else
     "zig-simd";
 
-const set_impl_name = if (on_aarch64)
+const set_impl_name: []const u8 = if (on_aarch64)
     copy_impl_name
 else
     "zig-vector";
