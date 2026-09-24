@@ -42,10 +42,23 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
             "\"detail\":\"{s}\",\"case\":{{\"op\":\"{s}\",\"len\":{d},\"src\":{d}," ++
             "\"dst\":{d},\"gap\":{d},\"side\":\"{s}\",\"value\":{d}}}}}\n",
         .{
-            status,                   count,             elapsed_ns,        builtin.cpu.model.name, @tagName(builtin.mode),
-            @hasDecl(fastmem, "set"), fastmem.impl.copy, fastmem.impl.move, fastmem.impl.set,       detail,
-            @tagName(c.op),           c.len,             c.src,             c.dst,                  c.gap,
-            @tagName(c.side),         c.value,
+            status,
+            count,
+            elapsed_ns,
+            builtin.cpu.model.name,
+            @tagName(builtin.mode),
+            @hasDecl(fastmem, "set"),
+            fastmem.impl.copy,
+            fastmem.impl.move,
+            fastmem.impl.set,
+            detail,
+            @tagName(c.op),
+            c.len,
+            c.src,
+            c.dst,
+            c.gap,
+            @tagName(c.side),
+            c.value,
         },
     ) catch return;
     _ = linux.write(1, line.ptr, line.len);
