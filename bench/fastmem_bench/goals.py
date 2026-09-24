@@ -45,7 +45,7 @@ CONST_SIZES = (1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256)
 
 def required_cases(op: str, chunk: int) -> set[str]:
     profiles = {
-        "copy": ["aligned", "misaligned", "cross-lane"],
+        "copy": ["aligned", "misaligned", "cross-lane", "page-offset"],
         "move": ["disjoint"]
         + [
             f"{direction}-gap{gap}"

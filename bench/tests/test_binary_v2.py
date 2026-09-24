@@ -32,8 +32,12 @@ def test_native_quick_resolution_and_balance() -> None:
     measurement = parse_text(result.stdout)
     probe = json.loads(subprocess.check_output([str(PROBE)], text=True))
     verify_probe(measurement, probe)
-    assert measurement.end["cases"] == 96
+    assert measurement.end["cases"] == 104
     assert measurement.meta["samples"] == 4
+    assert any(
+        row["profile"] == "page-offset" and row["src_off"] == 0 and row["dst_off"] == 2048
+        for row in measurement.samples
+    )
     rows = measurement.samples
     for case in {row["case"] for row in rows}:
         selected = [row for row in rows if row["case"] == case]
@@ -70,7 +74,7 @@ def test_native_histogram_and_standard_coverage(tmp_path: Path) -> None:
     assert {row["size"] for row in measurement.samples} == {24}
     result = invoke("--suite", "standard", "--list")
     records: list[dict[str, Any]] = [json.loads(line) for line in result.stdout.splitlines()]
-    assert records[-1]["cases"] == 415
+    assert records[-1]["cases"] == 448
     cases = {row["case"] for row in records[1:-1]}
     assert {"copy/const/256", "move/dist/small", "set/dist/mixed"} <= cases
     result = invoke("--suite", "large", "--list")

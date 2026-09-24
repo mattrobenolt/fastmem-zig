@@ -423,7 +423,7 @@ The operation is `copy`, `move`, or `set`.
 
 | Operation | Profiles |
 |---|---|
-| copy | `aligned`: offsets 0/0, `misaligned`: offsets 1/3, `cross-lane`: offsets `chunk-1`/`chunk/2` |
+| copy | `aligned`: offsets 0/0, `misaligned`: offsets 1/3, `cross-lane`: offsets `chunk-1`/`chunk/2`, `page-offset`: offsets 0/2048 |
 | move | `disjoint`, plus `fwd-gapN` and `bwd-gapN` for gaps 1, `chunk-1`, and `chunk+1` |
 | set | `aligned`: destination offset 0, `misaligned`: destination offset 3 |
 
@@ -456,11 +456,13 @@ The const suite uses the `copy/const/<size>` profile at these sizes:
 ```
 
 The standard suite also includes all const cases and both synthetic distributions for every operation.
-With the current API, standard contains 415 cases and quick contains 96 cases.
+With the current API, standard contains 448 cases and quick contains 104 cases.
 These counts follow the construction in `buildCases` and the native coverage test.
 
 All buffers come from page-aligned anonymous `mmap` mappings sized for the case.
-Each mapping has 1024 additional bytes for offsets and zero-length pointer validity.
+Fixed mappings include their maximum offset plus one additional byte.
+Distribution mappings include 512 additional bytes for their offsets.
+The `page-offset` profile separates the source and destination offsets modulo 4096 by 2048 bytes.
 The loop does not mutate source bytes between operations.
 Copy and move read a destination byte after each operation.
 Set writes the nonzero byte 165 and reads a destination byte.
@@ -590,7 +592,7 @@ They do not scale wall-clock time with the PMU time fields.
 The end record has this shape:
 
 ```json
-{"type":"end","cases":96,"elapsed_ns":123456789}
+{"type":"end","cases":104,"elapsed_ns":123456789}
 ```
 
 The field `cases` counts selected cases, not samples.

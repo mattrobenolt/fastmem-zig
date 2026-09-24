@@ -496,7 +496,7 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
         for (sizes) |size| {
             for ([_]Op{ .copy, .set }) |op| {
                 const profiles: []const []const u8 = if (op == .copy)
-                    &.{ "aligned", "misaligned", "cross-lane" }
+                    &.{ "aligned", "misaligned", "cross-lane", "page-offset" }
                 else
                     &.{ "aligned", "misaligned" };
                 for (profiles, 0..) |profile, index| {
@@ -509,6 +509,7 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
                     case.dst_off = switch (index) {
                         1 => 3,
                         2 => chunk_bytes / 2,
+                        3 => 2048,
                         else => 0,
                     };
                     try addCase(arena, &cases, cfg, case);
@@ -546,7 +547,8 @@ const Buffers = struct {
     src: []align(page_size_min) u8,
     dst: []align(page_size_min) u8,
     fn init(case: Case) !Buffers {
-        const len = @as(u64, case.max_len) + 1024;
+        const padding: u64 = if (case.seq != null) 512 else @as(u64, @max(case.src_off, case.dst_off)) + 1;
+        const len = @as(u64, case.max_len) + padding;
         const src = try mapBytes(len);
         errdefer posix.munmap(src);
         const dst = try mapBytes(len);
