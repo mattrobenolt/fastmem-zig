@@ -80,12 +80,13 @@ pub fn build(b: *std.Build) void {
     const libc_probe_step = b.step("libc-probe", "Build the libc symbol probe");
     libc_probe_step.dependOn(&install_libc_probe.step);
 
-    // Static Linux correctness binary: no interpreter or fleet library dependency.
+    // Match benchmark libc linkage until the kernels remove libc delegation.
     const correctness = b.addExecutable(.{
         .name = "fastmem-tests",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests/main.zig"),
             .target = target,
+            .link_libc = true,
             .optimize = optimize,
             .imports = &.{.{ .name = "fastmem", .module = mod }},
         }),

@@ -10,9 +10,12 @@ const json = std.json;
 const Io = std.Io;
 const process = std.process;
 
-const Op = enum { copy, move, set };
+const paths = @import("paths.zig");
+const Op = paths.Op;
+const Path = paths.Path;
 const Case = struct {
     op: Op = .copy,
+    path: Path = .runtime,
     source_order: enum { below, above, shared } = .below,
     len: u32 = 0,
     src: u32 = 0,
@@ -70,6 +73,7 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
         .max_size = max_size,
         .optimize = @tagName(builtin.mode),
         .set_available = @hasDecl(fastmem, "set"),
+        .link_libc = builtin.link_libc,
         .impl = fastmem.impl,
         .detail = detail,
         .fault_address = fault_address,
@@ -142,15 +146,6 @@ fn fill(dest: []u8, value: u8) void {
     for (dest) |*d| d.* = value;
 }
 
-fn call(comptime op: Op, dest: []u8, source: []const u8, value: u8) void {
-    const result: void = switch (op) {
-        .copy => fastmem.copy(u8, dest, source),
-        .move => fastmem.move(u8, dest, source),
-        .set => if (@hasDecl(fastmem, "set")) fastmem.set(u8, dest, value),
-    };
-    _ = result;
-}
-
 fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !void {
     @as(*volatile Case, &current).* = c;
     // Synthetic test bytes contain no secrets.
@@ -162,17 +157,18 @@ fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !
         fill(expected[c.dst..][0..c.len], c.value)
     else
         reference(expected[c.dst..][0..c.len], source);
-    call(op, dest, source, c.value);
+    paths.call(op, c.path, dest, source, c.value);
     if (!mem.eql(u8, expected, dst.bytes)) return error.DestinationOrCanaryMismatch;
     count += 1;
 }
 
-fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: []const u32) !void {
+fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: []const u32, path: Path) !void {
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (offsets) |s| {
             for (offsets) |d| {
                 var c: Case = .{
                     .len = len,
+                    .path = path,
                     .src = src.offset(side, len, @intCast(s)),
                     .dst = dst.offset(side, len, @intCast(d)),
                     .side = side,
@@ -190,6 +186,7 @@ fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32
                     try check(.set, src, dst, expected, .{
                         .op = .set,
                         .len = len,
+                        .path = path,
                         .src = 0,
                         .dst = dst.offset(side, len, @intCast(d)),
                         .side = side,
@@ -210,12 +207,14 @@ fn overlapOne(
     len: u32,
     gap: u32,
     inset: u32,
+    path: Path,
 ) !void {
     const base = buf.offset(side, len + gap, inset);
     const source = base + if (backward) @as(u32, 0) else gap;
     const dest = base + if (backward) gap else @as(u32, 0);
     const c: Case = .{
         .op = .move,
+        .path = path,
         .source_order = .shared,
         .len = len,
         .src = source,
@@ -227,23 +226,24 @@ fn overlapOne(
     reference(buf.bytes, original);
     reference(expected, original);
     reference(expected[dest..][0..len], original[source..][0..len]);
-    call(.move, buf.bytes[dest..][0..len], buf.bytes[source..][0..len], 0);
+    paths.call(.move, path, buf.bytes[dest..][0..len], buf.bytes[source..][0..len], 0);
     if (!mem.eql(u8, expected, buf.bytes)) return error.OverlapOrCanaryMismatch;
     count += 1;
 }
 
-fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: []const u32) !void {
+fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: []const u32, path: Path) !void {
     var gaps: [139]u32 = undefined;
     for (gaps[0..129], 0..) |*gap, i| gap.* = @intCast(i);
     const extra = [_]u32{ 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len / 2, len -| 1 };
     @memcpy(gaps[129..], &extra);
     const sparse = [_]u32{ 0, 4095, len / 2, len -| 1 };
-    const selected = if (len > mib) &sparse else gaps[0..@as(u32, if (len > 1024) 139 else 129)];
+    const entry_gaps = [_]u32{ 0, 1, 128, 3841, 4000, 4096, 8192, len / 2, len -| 1 };
+    const selected = if (path != .runtime and len <= mib) &entry_gaps else if (len > mib) &sparse else gaps[0..@as(u32, if (len > 1024) 139 else 129)];
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (selected) |gap| {
             for (offsets) |inset| {
                 inline for (.{ false, true }) |backward| {
-                    try overlapOne(side, backward, buf, expected, original, len, gap, @intCast(inset));
+                    try overlapOne(side, backward, buf, expected, original, len, gap, @intCast(inset), path);
                 }
             }
         }
@@ -255,10 +255,11 @@ fn sizeClass(
     sizes: []const u32,
     offsets: []const u32,
     overlap_offsets: []const u32,
+    path: Path,
 ) !void {
     var maximum: u32 = 0;
     for (sizes) |len| maximum = @max(maximum, len);
-    const capacity = maximum + @max(256, if (maximum > 1024) @max(8192, maximum - 1) + 64 else 0);
+    const capacity = maximum + @max(256, if (maximum > 1024 or path != .runtime) @max(8192, maximum - 1) + 64 else 0);
     var windows: [3]Guarded = undefined;
     var initialized: u32 = 0;
     defer for (windows[0..initialized]) |window| window.deinit();
@@ -296,8 +297,8 @@ fn sizeClass(
         if (linux.errno(rc) != .SUCCESS) return error.ProtectFailed;
     }
     for (sizes) |len| {
-        try disjoint(src, above, dst, expected, len, offsets);
-        try overlap(dst, expected, original, len, overlap_offsets);
+        try disjoint(src, above, dst, expected, len, offsets, path);
+        try overlap(dst, expected, original, len, overlap_offsets, path);
     }
 }
 
@@ -320,25 +321,30 @@ fn run(allocator: mem.Allocator) !void {
     for (&small, 0..) |*len, i| len.* = @intCast(i);
     var offsets: [64]u32 = undefined;
     for (&offsets, 0..) |*offset, i| offset.* = @intCast(i);
-    try sizeClass(allocator, &small, &offsets, &.{ 0, 1, 17, 63 });
+    try sizeClass(allocator, &small, &offsets, &.{ 0, 1, 17, 63 }, .runtime);
+    try sizeClass(allocator, &small, &.{ 0, 1, 17, 63 }, &.{0}, .abi);
+    try sizeClass(allocator, small[1..257], &.{ 0, 1, 17, 63 }, &.{0}, .constant);
     // Each large size gets its own page-rounded window, not a 1 MiB small-case mapping.
     const dense_limit = @min(max_size, mib);
     var power: u32 = 1024;
     while (power <= dense_limit) : (power *= 2) {
         for ([_]u32{ power - 1, power, power + 1 }) |len| {
             if (len > dense_limit) continue;
-            try sizeClass(allocator, &.{len}, offsetsFor(len), &.{ 0, 1, 17, 63 });
+            try sizeClass(allocator, &.{len}, offsetsFor(len), &.{ 0, 1, 17, 63 }, .runtime);
+            try sizeClass(allocator, &.{len}, &.{ 0, 1 }, &.{0}, .abi);
         }
     }
     for ([_]u32{ 4095, 4096, 4097 }) |base| {
         var multiplier: u32 = 1;
         while (base * multiplier <= dense_limit) : (multiplier *= 2) {
-            try sizeClass(allocator, &.{base * multiplier}, offsetsFor(base * multiplier), &.{ 0, 1, 17, 63 });
+            try sizeClass(allocator, &.{base * multiplier}, offsetsFor(base * multiplier), &.{ 0, 1, 17, 63 }, .runtime);
+            try sizeClass(allocator, &.{base * multiplier}, &.{ 0, 1 }, &.{0}, .abi);
         }
     }
     if (max_size > mib) {
         for ([_]u32{ max_size - 1, max_size }) |len| {
-            try sizeClass(allocator, &.{len}, &.{0}, &.{0});
+            try sizeClass(allocator, &.{len}, &.{0}, &.{0}, .runtime);
+            try sizeClass(allocator, &.{len}, &.{0}, &.{0}, .abi);
         }
     }
 }
