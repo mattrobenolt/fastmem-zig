@@ -12,9 +12,16 @@
 //! - hybrid: the tbz tree below 16, the SVE predicated pair for
 //!           16..2*VL.
 //!
+//! For move the same three variants apply, selected independently:
+//! the shared-buffer gap1 overlap cases punish the NEON q-pair at
+//! 16..32 (store-to-load forwarding chains across benchmark
+//! iterations), so the move default keeps the SVE pair there (.hybrid)
+//! on V3 while copy takes the pure tree (.neon).
+//!
 //! For set:
 //! - sve:    the AOR memset-sve.S predicated store below 16.
-//! - neon:   the AOR memset-advsimd.S store tree below 16.
+//! - neon:   the AOR memset-advsimd.S store tree below 16, inverted so
+//!           1..3 bytes fall through every branch.
 //!
 //! The neon/hybrid tree blocks reuse the small-size classes of the
 //! in-tree advsimd ports (same upstream files, same pinned commit, same
@@ -39,20 +46,22 @@ pub const SetSmall = enum { sve, neon };
 
 const aarch64_cpu = std.Target.aarch64.cpu;
 
-const default_copy_small: CopySmall = if (builtin.cpu.model == &aarch64_cpu.neoverse_v3)
-    .neon
-else
-    .sve;
+const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 
-const default_set_small: SetSmall = if (builtin.cpu.model == &aarch64_cpu.neoverse_v3)
-    .neon
-else
-    .sve;
+const default_copy_small: CopySmall = if (on_neoverse_v3) .neon else .sve;
+const default_move_small: CopySmall = if (on_neoverse_v3) .hybrid else .sve;
+const default_set_small: SetSmall = if (on_neoverse_v3) .neon else .sve;
 
 pub const copy_small: CopySmall = blk: {
     if (std.mem.eql(u8, options.small_copy, "auto")) break :blk default_copy_small;
     break :blk std.meta.stringToEnum(CopySmall, options.small_copy) orelse
         @compileError("unknown -Dsmall-copy value: " ++ options.small_copy);
+};
+
+pub const move_small: CopySmall = blk: {
+    if (std.mem.eql(u8, options.small_move, "auto")) break :blk default_move_small;
+    break :blk std.meta.stringToEnum(CopySmall, options.small_move) orelse
+        @compileError("unknown -Dsmall-move value: " ++ options.small_move);
 };
 
 pub const set_small: SetSmall = blk: {

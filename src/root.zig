@@ -24,6 +24,9 @@ const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
 const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
 const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
 const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
+// Loop-free small-size classes inlined at the call site (no call at
+// all at <= 64 bytes; the C-ABI kernels handle the rest).
+const aarch64_small = @import("aarch64/small.zig");
 
 // The kernel ports carry ELF-only directives (.type/.hidden/.size), so
 // non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
@@ -75,6 +78,10 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         const s_addr = @intFromPtr(s);
         std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
         std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        if (bytes <= aarch64_small.max_inline) {
+            aarch64_small.copyMove(d, s, bytes);
+            return;
+        }
         if (comptime on_aarch64_sve) {
             aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
         } else {
@@ -91,6 +98,12 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         const bytes = source.len * @sizeOf(T);
         const d: [*]u8 = @ptrCast(dest.ptr);
         const s: [*]const u8 = @ptrCast(source.ptr);
+        if (bytes <= aarch64_small.max_inline) {
+            // The small classes are overlap-safe (all loads precede all
+            // stores), so copy and move share them.
+            aarch64_small.copyMove(d, s, bytes);
+            return;
+        }
         if (comptime on_aarch64_sve) {
             aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
         } else {
@@ -114,6 +127,10 @@ pub inline fn set(comptime T: type, dest: []T, value: T) void {
         if (T == u8 or allBytesEqual(bytes)) {
             const len = dest.len * @sizeOf(T);
             const d: [*]u8 = @ptrCast(dest.ptr);
+            if (len <= aarch64_small.max_inline) {
+                aarch64_small.set(d, bytes[0], len);
+                return;
+            }
             if (comptime on_aarch64_sve) {
                 aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
             } else {

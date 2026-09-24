@@ -8,10 +8,12 @@ pub fn build(b: *std.Build) void {
     // aarch64 kernel small-path overrides (src/aarch64/tuning.zig).
     // "auto" keeps the per-CPU-model default; the fleet A/Bs variants
     // as revisions that flip the table, these options serve local runs.
-    const small_copy = b.option([]const u8, "small-copy", "aarch64 SVE copy/move small path: auto|sve|neon|hybrid") orelse "auto";
+    const small_copy = b.option([]const u8, "small-copy", "aarch64 SVE copy small path: auto|sve|neon|hybrid") orelse "auto";
+    const small_move = b.option([]const u8, "small-move", "aarch64 SVE move small path: auto|sve|neon|hybrid") orelse "auto";
     const small_set = b.option([]const u8, "small-set", "aarch64 SVE memset small path: auto|sve|neon") orelse "auto";
     const tuning_options = b.addOptions();
     tuning_options.addOption([]const u8, "small_copy", small_copy);
+    tuning_options.addOption([]const u8, "small_move", small_move);
     tuning_options.addOption([]const u8, "small_set", small_set);
     const tuning_mod = tuning_options.createModule();
 
