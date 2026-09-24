@@ -18,6 +18,13 @@ fastmem has two layers:
 glibc is the reference that we measure against. fastmem does not use
 glibc at run time and does not depend on libc.
 
+The explicit module works alone. A consumer can call `fastmem.copy`,
+`move`, and `set` without `exportSymbols()`, and keep its own `memcpy`,
+`memmove`, or `memset` definitions. fastmem never calls those symbols.
+
+Non-goal: upstreaming to Zig's compiler-rt (Matt, 2026-09-24). fastmem is
+a standalone module.
+
 ## Why "faster than glibc" is possible
 
 A glibc call from Zig goes through the PLT to an ifunc-selected function.
