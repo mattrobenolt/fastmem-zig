@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
+    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .straight_1k;
     const x86_options = tuningOptions(b, x86_variant);
     mod.addOptions("fastmem_options", x86_options);
 
