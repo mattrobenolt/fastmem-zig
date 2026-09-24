@@ -71,7 +71,7 @@ noinline fn fastmemMove(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) [
     return dst;
 }
 noinline fn fastmemSet(dst: [*]u8, value: c_int, len: usize) callconv(.c) [*]u8 {
-    if (has_fastmem_set) fastmem.set(u8, dst[0..len], @truncate(@as(c_uint, @bitCast(value))));
+    if (has_fastmem_set) fastmem.set(dst[0..len], @truncate(@as(c_uint, @bitCast(value))));
     return dst;
 }
 comptime {
@@ -704,7 +704,7 @@ inline fn loopBody(
             .fastmem_inline => switch (op) {
                 .copy => fastmem.copy(u8, dst[0..len], src[0..len]),
                 .move => fastmem.move(u8, dst[0..len], src[0..len]),
-                .set => if (has_fastmem_set) fastmem.set(u8, dst[0..len], set_value),
+                .set => if (has_fastmem_set) fastmem.set(dst[0..len], set_value),
             },
             .builtin_const => @memcpy(dst[0..len], src[0..len]),
         }

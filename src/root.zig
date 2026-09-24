@@ -4,6 +4,7 @@
 //! decisions can diverge cleanly, while still sharing the low-level
 //! load/store primitives and the overlap-safe forward kernel.
 
+const builtin = @import("builtin");
 const std = @import("std");
 const testing = std.testing;
 
@@ -14,6 +15,43 @@ const memcpy_impl = @import("memcpy.zig");
 pub const CopyFlags = memcpy_impl.Flags;
 const memmove_impl = @import("memmove.zig");
 pub const MoveFlags = memmove_impl.Flags;
+
+// aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
+// The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
+// generic-aarch64 path. The gates are complementary, so exactly one pair
+// emits its global asm per build.
+const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
+const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
+const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
+const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
+
+const on_aarch64 = builtin.cpu.arch == .aarch64;
+const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
+
+/// Names of the kernel implementations in this build, one per operation.
+pub const Impl = struct {
+    copy: []const u8,
+    move: []const u8,
+    set: []const u8,
+};
+
+const copy_impl_name = if (on_aarch64_sve)
+    "aor-sve-5e20a93"
+else if (on_aarch64)
+    "aor-advsimd-5e20a93"
+else
+    "zig-simd";
+
+const set_impl_name = if (on_aarch64)
+    copy_impl_name
+else
+    "zig-vector";
+
+pub const impl: Impl = .{
+    .copy = copy_impl_name,
+    .move = copy_impl_name,
+    .set = set_impl_name,
+};
 
 /// Public snapshot of the current memcpy and memmove tuning knobs.
 pub const Flags = struct {
@@ -27,11 +65,67 @@ pub const flags: Flags = .{
 };
 
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
+    if (comptime on_aarch64) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        // Same non-overlap contract as memcpy_impl.copy.
+        const d_addr = @intFromPtr(d);
+        const s_addr = @intFromPtr(s);
+        std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
+        std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        if (comptime on_aarch64_sve) {
+            aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
+        } else {
+            aarch64_memcpy_advsimd.fastmem_advsimd_copy(d, s, bytes);
+        }
+        return;
+    }
     memcpy_impl.copy(T, dest, source);
 }
 
 pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
+    if (comptime on_aarch64) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        if (comptime on_aarch64_sve) {
+            aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
+        } else {
+            aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
+        }
+        return;
+    }
     memmove_impl.move(T, dest, source);
+}
+
+/// Fill `dest` with `value`. Prefer over @memset for runtime-sized fills.
+pub fn set(dest: []u8, value: u8) void {
+    if (comptime on_aarch64) {
+        if (comptime on_aarch64_sve) {
+            aarch64_memset_sve.fastmem_sve_set(dest.ptr, value, dest.len);
+        } else {
+            aarch64_memset_advsimd.fastmem_advsimd_set(dest.ptr, value, dest.len);
+        }
+        return;
+    }
+    setFallback(dest, value);
+}
+
+// Portable fallback for targets without a dedicated kernel. The loops live
+// in a non-inline function of this no_builtin module so LLVM cannot idiom-
+// recognize them into a memset call (which would recurse under
+// exportSymbols).
+fn setFallback(dest: []u8, value: u8) void {
+    const chunk: @Vector(32, u8) = @splat(value);
+    var i: usize = 0;
+    while (i + 32 <= dest.len) : (i += 32) {
+        const p: *align(1) @Vector(32, u8) = @ptrCast(dest.ptr + i);
+        p.* = chunk;
+    }
+    while (i < dest.len) : (i += 1) dest[i] = value;
 }
 
 test "copy: all size classes" {
