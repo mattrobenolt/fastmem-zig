@@ -522,7 +522,10 @@ The fields `time_enabled` and `time_running` expose multiplexing in nanoseconds.
 They are per-sample deltas because `PERF_EVENT_IOC_RESET` does not reset those kernel time fields.
 The group reset does reset all event counts.
 
-A failed open, ioctl, or read disables the group for the rest of the run.
+A ref-cycles open failure retries the group with only cycles and instructions.
+The meta error names the failed event, and `perf.events` names the retained group.
+A successful retry keeps `perf.available` true.
+Other open failures and all ioctl or read failures disable the group for the rest of the run.
 Affected samples contain null counter and time fields.
 Earlier successful samples retain their counts.
 The meta record contains the error and sets `perf.available` to false.
@@ -559,9 +562,9 @@ Each evidence object contains these fields:
 | `dli_fbase` | Positive integer base address |
 | `offset` | Nonnegative integer `address - dli_fbase` |
 
-The `perf.events` list names the requested events, even when the group is unavailable.
+The `perf.events` list names the final attempted group, including any ref-cycles fallback.
 The `perf.error` field is a diagnostic string or null.
-The `perf.available` field is true only when no counter error occurs during the run.
+The `perf.available` field is true when the final group remains usable throughout the run.
 
 A sample has this shape. The numbers are illustrative, not benchmark evidence.
 

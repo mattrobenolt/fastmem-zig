@@ -191,54 +191,107 @@ const Counts = struct {
     time_enabled: u64,
     time_running: u64,
 };
+const PerfError = struct {
+    event: []const u8,
+    action: []const u8,
+    detail: []const u8,
+};
+const PerfSystem = struct {
+    fn open(config: linux.PERF.COUNT.HW, group: i32) usize {
+        var attr: linux.perf_event_attr = .{};
+        attr.type = .HARDWARE;
+        attr.config = @intFromEnum(config);
+        attr.read_format = 8 | 1 | 2; // GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING.
+        attr.flags.disabled = group == -1;
+        attr.flags.exclude_kernel = true;
+        attr.flags.exclude_hv = true;
+        return linux.perf_event_open(&attr, 0, -1, group, 0);
+    }
+    fn close(fd: i32) void {
+        _ = linux.close(fd);
+    }
+};
 const Perf = struct {
     fds: [3]i32 = .{ -1, -1, -1 },
-    failure: ?[]const u8 = null,
+    failure: ?PerfError = null,
+    warning: ?PerfError = null,
+    event_count: u8 = 2,
     previous_enabled: u64 = 0,
     previous_running: u64 = 0,
-    const want_ref = builtin.cpu.arch == .x86_64;
-    const count = if (want_ref) 3 else 2;
-    const names: []const []const u8 = if (want_ref)
-        &.{ "cycles", "instructions", "ref-cycles" }
-    else
-        &.{ "cycles", "instructions" };
+    const names = [_][]const u8{ "cycles", "instructions", "ref-cycles" };
     const group_flag = 1;
 
     fn init() Perf {
-        var self: Perf = .{};
-        const configs = [_]linux.PERF.COUNT.HW{ .CPU_CYCLES, .INSTRUCTIONS, .REF_CPU_CYCLES };
-        for (configs[0..count], 0..) |config, index| {
-            var attr: linux.perf_event_attr = .{};
-            attr.type = .HARDWARE;
-            attr.config = @intFromEnum(config);
-            // GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING (linux perf_event.h).
-            attr.read_format = 8 | 1 | 2;
-            attr.flags.disabled = index == 0;
-            attr.flags.exclude_kernel = true;
-            attr.flags.exclude_hv = true;
-            const rc = linux.perf_event_open(&attr, 0, -1, self.fds[0], 0);
-            if (linux.errno(rc) != .SUCCESS) {
-                self.failure = @tagName(linux.errno(rc));
-                self.close();
-                return self;
-            }
-            self.fds[index] = @intCast(rc);
-        }
-        // Probe every ioctl before the first measurement.
+        var self = openEvents(PerfSystem, builtin.cpu.arch == .x86_64);
         self.begin();
         _ = self.end();
         return self;
     }
-    fn close(self: *Perf) void {
+    fn openEvents(comptime system: type, want_ref: bool) Perf {
+        var self: Perf = .{ .event_count = if (want_ref) 3 else 2 };
+        const configs = [_]linux.PERF.COUNT.HW{ .CPU_CYCLES, .INSTRUCTIONS, .REF_CPU_CYCLES };
+        for (0..2) |_| {
+            for (configs[0..self.event_count], 0..) |config, index| {
+                const rc = system.open(config, self.fds[0]);
+                if (linux.errno(rc) != .SUCCESS) {
+                    self.failure = .{
+                        .event = names[index],
+                        .action = "perf_event_open",
+                        .detail = @tagName(linux.errno(rc)),
+                    };
+                    self.closeWith(system);
+                    if (index != 2) return self;
+                    // Unsupported ref-cycles must not hide cycles and instructions.
+                    self.warning = self.failure;
+                    self.failure = null;
+                    self.event_count = 2;
+                    break;
+                }
+                self.fds[index] = @intCast(rc);
+            }
+            if (self.fds[0] >= 0) return self;
+        }
+        unreachable;
+    }
+    fn closeWith(self: *Perf, comptime system: type) void {
         for (&self.fds) |*fd| {
-            if (fd.* >= 0) _ = linux.close(fd.*);
+            if (fd.* >= 0) system.close(fd.*);
             fd.* = -1;
         }
+    }
+    fn close(self: *Perf) void {
+        self.closeWith(PerfSystem);
+    }
+    fn eventNames(self: Perf) []const []const u8 {
+        return names[0..self.event_count];
+    }
+    fn errorMessage(self: Perf, buffer: []u8) ?[]const u8 {
+        const first = self.warning orelse self.failure orelse return null;
+        const message = fmt.bufPrint(buffer, "{s}({s}): {s}", .{
+            first.action, first.event, first.detail,
+        }) catch unreachable;
+        if (self.warning != null) {
+            if (self.failure) |failure| {
+                const rest = fmt.bufPrint(buffer[message.len..], ". {s}({s}): {s}", .{
+                    failure.action, failure.event, failure.detail,
+                }) catch unreachable;
+                return buffer[0 .. message.len + rest.len];
+            }
+        }
+        return message;
     }
     fn ioctl(self: *Perf, request: u32) bool {
         const err = linux.errno(linux.ioctl(self.fds[0], request, group_flag));
         if (err == .SUCCESS) return true;
-        self.failure = @tagName(err);
+        self.failure = .{
+            .event = "cycles group",
+            .action = switch (request) {
+                0x2403 => "reset",
+                0x2400 => "enable",
+                else => "disable",
+            },
+            .detail = @tagName(err),
+        };
         self.close();
         return false;
     }
@@ -249,17 +302,21 @@ const Perf = struct {
     }
     fn end(self: *Perf) ?Counts {
         if (self.failure != null or !self.ioctl(0x2401)) return null;
-        var data: [3 + count]u64 = undefined;
-        const bytes = mem.asBytes(&data);
-        const n = posix.read(self.fds[0], bytes) catch {
-            self.failure = "perf group read failed";
+        var data: [6]u64 = undefined;
+        const bytes = mem.sliceAsBytes(data[0 .. 3 + self.event_count]);
+        const n = posix.read(self.fds[0], bytes) catch |err| {
+            self.failure = .{
+                .event = "cycles group",
+                .action = "read",
+                .detail = @errorName(err),
+            };
             self.close();
             return null;
         };
-        if (n != bytes.len or data[0] != count or
+        if (n != bytes.len or data[0] != self.event_count or
             data[1] < self.previous_enabled or data[2] < self.previous_running)
         {
-            self.failure = "invalid perf group read";
+            self.failure = .{ .event = "cycles group", .action = "read", .detail = "invalid data" };
             self.close();
             return null;
         }
@@ -271,18 +328,48 @@ const Perf = struct {
         return .{
             .cycles = data[3],
             .instructions = data[4],
-            .ref_cycles = if (want_ref) data[5] else null,
+            .ref_cycles = if (self.event_count == 3) data[5] else null,
             .time_enabled = enabled,
             .time_running = running,
         };
     }
 };
 
+test "perf retries without ref-cycles and identifies the failed event" {
+    const Fake = struct {
+        var opens: u8 = 0;
+        var closes: u8 = 0;
+        fn open(config: linux.PERF.COUNT.HW, group: i32) usize {
+            opens += 1;
+            if (config == .CPU_CYCLES) std.debug.assert(group == -1);
+            if (config == .REF_CPU_CYCLES)
+                return @bitCast(-@as(isize, @intFromEnum(linux.E.NOENT)));
+            return 100 + @as(usize, opens);
+        }
+        fn close(_: i32) void {
+            closes += 1;
+        }
+    };
+    var perf = Perf.openEvents(Fake, true);
+    defer perf.closeWith(Fake);
+    try testing.expectEqual(@as(u8, 5), Fake.opens);
+    try testing.expectEqual(@as(u8, 2), Fake.closes);
+    try testing.expectEqual(@as(u8, 2), perf.event_count);
+    try testing.expect(perf.failure == null);
+    var buffer: [512]u8 = undefined;
+    try testing.expectEqualStrings(
+        "perf_event_open(ref-cycles): NOENT",
+        perf.errorMessage(&buffer).?,
+    );
+    try testing.expectEqualStrings("instructions", perf.eventNames()[1]);
+}
+
 test "perf consecutive samples reset instructions for the whole group" {
     var perf: Perf = .init();
     defer perf.close();
-    if (perf.failure) |failure| {
-        print("perf test skipped: {s}\n", .{failure});
+    if (perf.failure != null) {
+        var buffer: [512]u8 = undefined;
+        print("perf test skipped: {s}\n", .{perf.errorMessage(&buffer).?});
         return error.SkipZigTest;
     }
     var counts: [2]Counts = undefined;
@@ -547,7 +634,10 @@ const Buffers = struct {
     src: []align(page_size_min) u8,
     dst: []align(page_size_min) u8,
     fn init(case: Case) !Buffers {
-        const padding: u64 = if (case.seq != null) 512 else @as(u64, @max(case.src_off, case.dst_off)) + 1;
+        const padding: u64 = if (case.seq != null)
+            512
+        else
+            @as(u64, @max(case.src_off, case.dst_off)) + 1;
         const len = @as(u64, case.max_len) + padding;
         const src = try mapBytes(len);
         errdefer posix.munmap(src);
@@ -777,6 +867,7 @@ fn jsonLine(w: *Io.Writer, value: anytype) !void {
     try w.writeByte('\n');
 }
 fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
+    var perf_error: [512]u8 = undefined;
     try jsonLine(w, .{
         .type = "meta",
         .schema = 2,
@@ -806,8 +897,8 @@ fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
         },
         .perf = .{
             .available = perf.failure == null,
-            .events = Perf.names,
-            .@"error" = perf.failure,
+            .events = perf.eventNames(),
+            .@"error" = perf.errorMessage(&perf_error),
         },
     });
 }
@@ -877,8 +968,9 @@ fn run(init: process.Init) !void {
     } else for (output.items) |sample| try emitSample(w, sample);
     try jsonLine(w, .{ .type = "end", .cases = cases.len, .elapsed_ns = elapsed });
     try w.flush();
-    if (perf.failure) |failure|
-        print("bench-fastmem: perf unavailable: {s}\n", .{failure});
+    var perf_error: [512]u8 = undefined;
+    if (perf.errorMessage(&perf_error)) |message|
+        print("bench-fastmem: perf: {s}\n", .{message});
 }
 pub fn main(init: process.Init) void {
     run(init) catch |err| {
