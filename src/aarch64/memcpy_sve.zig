@@ -340,46 +340,26 @@ const long_path =
     \\
 ;
 
-const move_entry =
-    \\.p2align 6
-    \\.globl fastmem_sve_move
-    \\.hidden fastmem_sve_move
-    \\.type fastmem_sve_move, %function
-    \\fastmem_sve_move:
-    \\
-;
-
-const copy_entry =
-    \\.p2align 6
-    \\.globl fastmem_sve_copy
-    \\.hidden fastmem_sve_copy
-    \\.type fastmem_sve_copy, %function
-    \\fastmem_sve_copy:
-    \\.cfi_startproc
-    \\
-;
-
-const full_asm = if (aliased)
-    // Same variant on both entries: one shared head, as upstream.
-    move_entry ++ copy_entry ++ "    hint 34\n" ++ head(copy_v, "cpy")
-else
-    move_entry ++ "    hint 34\n" ++ head(move_v, "mov") ++
-        copy_entry ++ "    hint 34\n" ++ head(copy_v, "cpy");
-
+// Both entries share the mid and long blocks. The shared section keeps
+// the split move head adjacent to copy, including its original padding.
 comptime {
     if (enabled) {
-        asm (".text\n.arch armv8-a+sve\n" ++
-            full_asm ++
-            (if (need_sve_mid) mid_sve else "") ++
-            (if (need_neon_mid) mid_neon else "") ++
-            long_path ++
-            \\
-            \\// END (__memcpy_aarch64_sve)
-            \\.cfi_endproc
-            \\.size fastmem_sve_copy, .-fastmem_sve_copy
-        );
+        @export(&moveEntry, .{ .name = "fastmem_sve_move", .visibility = .hidden });
+        @export(&copyEntry, .{ .name = "fastmem_sve_copy", .visibility = .hidden });
     }
 }
 
-pub extern fn fastmem_sve_copy(dst: [*]u8, src: [*]const u8, len: usize) void;
-pub extern fn fastmem_sve_move(dst: [*]u8, src: [*]const u8, len: usize) void;
+pub const moveEntry = if (aliased) copyEntry else splitMoveEntry;
+
+fn splitMoveEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.naked) void {
+    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ head(move_v, "mov") ++ ".p2align 6\n" ::: .{ .memory = true });
+}
+
+pub fn copyEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.naked) void {
+    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ head(copy_v, "cpy") ++
+            (if (need_sve_mid) mid_sve else "") ++
+            (if (need_neon_mid) mid_neon else "") ++ long_path ::: .{ .memory = true });
+}
+
+pub const fastmem_sve_copy: *const fn ([*]u8, [*]const u8, usize) callconv(.c) void = @ptrCast(&copyEntry);
+pub const fastmem_sve_move: *const fn ([*]u8, [*]const u8, usize) callconv(.c) void = @ptrCast(&moveEntry);

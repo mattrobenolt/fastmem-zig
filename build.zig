@@ -279,6 +279,8 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
 
 fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
     const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
+    step.dependOn(addExportCollisionTests(b, tuning));
+    step.dependOn(addArmByteTests(b));
     for ([_][]const u8{ "aarch64", "x86_64" }) |arch| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
             .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
@@ -416,4 +418,85 @@ fn addStdExportTests(b: *std.Build, tuning: *std.Build.Step.Options) void {
     run.addFileArg(b.path("src/root.zig"));
     run.addFileArg(tuning.getOutput());
     b.step("test-export-std", "Run upstream std tests with memory exports, native and x86 qemu").dependOn(&run.step);
+}
+
+fn addExportCollisionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
+    const step = b.step("test-export-collisions", "Reject competing memory definitions");
+    for ([_][]const u8{ "generic", "neoverse_v3", "x86_64_v3" }) |cpu| {
+        const arch = if (std.mem.eql(u8, cpu, "x86_64_v3")) "x86_64" else "aarch64";
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
+            .cpu_features = cpu,
+        }) catch unreachable);
+        const kernel = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .no_builtin = true,
+        });
+        kernel.addOptions("fastmem_options", tuning);
+        const Kind = enum { strong, weak, default, compiler_rt };
+        for ([_]Kind{ .strong, .weak, .default, .compiler_rt }) |kind| {
+            for ([_][]const u8{ "memcpy", "memmove", "memset" }) |symbol| {
+                // One bundled compiler-rt build already collides on all three names.
+                if (kind == .compiler_rt and !std.mem.eql(u8, symbol, "memcpy")) continue;
+                const options = b.addOptions();
+                options.addOption(Kind, "kind", kind);
+                options.addOption([]const u8, "symbol", symbol);
+                const fixture = b.createModule(.{
+                    .root_source_file = b.path("src/export/collision.zig"),
+                    .target = target,
+                    .optimize = .ReleaseFast,
+                    .imports = &.{.{ .name = "fastmem", .module = kernel }},
+                });
+                fixture.addOptions("collision_options", options);
+                const obj = b.addObject(.{
+                    .name = b.fmt("collision-{s}-{s}-{s}", .{
+                        cpu, symbol, @tagName(kind),
+                    }),
+                    .root_module = fixture,
+                });
+                if (kind == .compiler_rt) obj.bundle_compiler_rt = true;
+                obj.expect_errors = .{
+                    .contains = b.fmt("exported symbol collision: {s}", .{symbol}),
+                };
+                step.dependOn(&obj.step);
+            }
+        }
+    }
+    return step;
+}
+
+fn addArmByteTests(b: *std.Build) *std.Build.Step {
+    const step = b.step("test-export-arm-bytes", "Pin measured aarch64 kernel instruction bytes");
+    const defaults = b.addOptions();
+    inline for (.{ "copy", "move", "set" }) |op| {
+        defaults.addOption([]const u8, "small_" ++ op, "auto");
+    }
+    for ([_][]const u8{ "generic", "neoverse_v1", "neoverse_v2", "neoverse_v3" }) |cpu| {
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = "aarch64-linux-gnu",
+            .cpu_features = cpu,
+        }) catch unreachable);
+        const kernel = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .no_builtin = true,
+        });
+        kernel.addOptions("fastmem_options", defaults);
+        const obj = b.addObject(.{
+            .name = b.fmt("kernel-bytes-{s}", .{cpu}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/export/kernel_bytes.zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+                .imports = &.{.{ .name = "fastmem", .module = kernel }},
+            }),
+        });
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/export/check_kernel_bytes.py"));
+        check.addArg(cpu);
+        check.addFileArg(obj.getEmittedBin());
+        step.dependOn(&check.step);
+    }
+    return step;
 }

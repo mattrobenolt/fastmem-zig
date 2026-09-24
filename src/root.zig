@@ -211,23 +211,23 @@ const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c)
 // small sizes (fleet run 20260924T064442Z-aor-g2: set 0-16 was
 // 1.28-1.33x glibc on c7g/c8g with an instruction-identical body).
 const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
-    @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
+    @ptrCast(&aarch64_memcpy_sve.copyEntry)
 else if (on_aarch64)
-    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_copy" })
+    @ptrCast(&aarch64_memcpy_advsimd.copyEntry)
 else
     undefined;
 
 const libc_move_fn: LibcCopyFn = if (on_aarch64_sve)
-    @extern(LibcCopyFn, .{ .name = "fastmem_sve_move" })
+    @ptrCast(&aarch64_memcpy_sve.moveEntry)
 else if (on_aarch64)
-    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_move" })
+    @ptrCast(&aarch64_memcpy_advsimd.copyEntry)
 else
     undefined;
 
 const libc_set_fn: LibcSetFn = if (on_aarch64_sve)
-    @extern(LibcSetFn, .{ .name = "fastmem_sve_set" })
+    @ptrCast(&aarch64_memset_sve.setEntry)
 else if (on_aarch64)
-    @extern(LibcSetFn, .{ .name = "fastmem_advsimd_set" })
+    @ptrCast(&aarch64_memset_advsimd.setEntry)
 else
     undefined;
 
@@ -240,23 +240,9 @@ pub fn exportSymbols() void {
     if (builtin.zig_backend != .stage2_llvm)
         @compileError("fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)");
 
-    if (on_aarch64) {
-        // @export rejects extern functions. ELF aliases preserve the exact
-        // ABI entry address without a trampoline or another memory loop.
-        const prefix = if (on_aarch64_sve) "fastmem_sve_" else "fastmem_advsimd_";
-        _ = abi;
-        _ = struct {
-            comptime {
-                asm (".globl memcpy\n.hidden memcpy\n.set memcpy, " ++ prefix ++ "copy\n" ++
-                        ".globl memmove\n.hidden memmove\n.set memmove, " ++ prefix ++ "move\n" ++
-                        ".globl memset\n.hidden memset\n.set memset, " ++ prefix ++ "set\n");
-            }
-        };
-    } else {
-        @export(abi.memcpy, .{ .name = "memcpy", .linkage = .strong, .visibility = .hidden });
-        @export(abi.memmove, .{ .name = "memmove", .linkage = .strong, .visibility = .hidden });
-        @export(abi.memset, .{ .name = "memset", .linkage = .strong, .visibility = .hidden });
-    }
+    @export(abi.memcpy, .{ .name = "memcpy", .linkage = .strong, .visibility = .hidden });
+    @export(abi.memmove, .{ .name = "memmove", .linkage = .strong, .visibility = .hidden });
+    @export(abi.memset, .{ .name = "memset", .linkage = .strong, .visibility = .hidden });
 }
 
 /// C-ABI entry points with the libc signatures, each returning dest.

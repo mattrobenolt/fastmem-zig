@@ -194,26 +194,11 @@ const body = switch (tuning.set_small) {
 } ++ tail_common;
 
 comptime {
-    if (enabled) {
-        asm (
-            \\.text
-            \\.arch armv8-a+sve
-            \\
-            \\// ENTRY (__memset_aarch64_sve)
-            \\.p2align 6
-            \\.globl fastmem_sve_set
-            \\.hidden fastmem_sve_set
-            \\.type fastmem_sve_set, %function
-            \\fastmem_sve_set:
-            \\.cfi_startproc
-            \\hint 34
-            \\
-            ++ body ++
-            \\// END (__memset_aarch64_sve)
-            \\.cfi_endproc
-            \\.size fastmem_sve_set, .-fastmem_sve_set
-        );
-    }
+    if (enabled) @export(&setEntry, .{ .name = "fastmem_sve_set", .visibility = .hidden });
 }
 
-pub extern fn fastmem_sve_set(dst: [*]u8, val: u8, len: usize) void;
+pub fn setEntry() align(64) callconv(.naked) void {
+    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ body ::: .{ .memory = true });
+}
+
+pub const fastmem_sve_set: *const fn ([*]u8, u8, usize) callconv(.c) void = @ptrCast(&setEntry);
