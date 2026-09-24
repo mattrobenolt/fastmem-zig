@@ -191,3 +191,32 @@ def test_goal_ci_threshold_does_not_add_aa_floor() -> None:
     assert goals["G2"]["status"] == "FAIL"
     assert goals["G3"]["status"] == "FAIL"
     assert len(goals["G2"]["significant_above_1_10"]) == 1
+
+
+def test_goals_report_the_aa_null_reference() -> None:
+    rows = complete_rows()
+    null = []
+    for case in sorted(required_cases("copy", 16)):
+        item = row(case, "A/A")
+        item.update(variant="aa", candidate_impl="fastmem_abi")
+        null.append(item)
+    null[0].update(ratio=1.2, ci95=[1.15, 1.25])
+    null[1].update(ratio=1.03, ci95=[1.01, 1.05])
+    for size in CONST_SIZES:
+        item = row(f"copy/const/{size}", "A/A")
+        item.update(variant="aa", candidate_impl="fastmem_inline", ci95=[1.001, 1.002])
+        null.append(item)
+    for item in rows:
+        item.setdefault("candidate_impl", item["comparison"].split("/")[0])
+    goal = evaluate(rows + null, ["v0"])[0]
+    assert goal["G2"]["aa_reference"] == {
+        "impl": "fastmem_abi",
+        "threshold": 1.10,
+        "cases": len(required_cases("copy", 16)),
+        "violations": 1,
+    }
+    assert goal["G3"]["aa_reference"]["violations"] == 2
+    assert goal["G4"]["const"]["aa_reference"]["violations"] == len(CONST_SIZES)
+    # The null reference is evidence only. It does not change a verdict.
+    assert goal["G2"]["status"] == "PASS"
+    assert goal["G3"]["status"] == "PASS"

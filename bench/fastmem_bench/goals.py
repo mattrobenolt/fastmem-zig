@@ -84,6 +84,26 @@ def slowdown(row: dict[str, Any], threshold: float) -> bool:
     return row["ci95"][0] > threshold
 
 
+def null_reference(
+    rows: list[dict[str, Any]], op: str, impl: str, cases: set[str], threshold: float
+) -> dict[str, Any]:
+    """Apply a goal threshold to the A/A rows of the same cases: the violations of a null."""
+    null = [
+        row
+        for row in rows
+        if row["comparison"] == "A/A"
+        and row["op"] == op
+        and row["candidate_impl"] == impl
+        and row["case"] in cases
+    ]
+    return {
+        "impl": impl,
+        "threshold": threshold,
+        "cases": len(null),
+        "violations": sum(slowdown(row, threshold) for row in null),
+    }
+
+
 def evaluate(
     rows: list[dict[str, Any]],
     variants: list[str],
@@ -115,6 +135,7 @@ def evaluate(
                 geomean=overall,
                 tier_geomeans=tiers,
                 significant_above_1_10=[detail(row) for row in regressions],
+                aa_reference=null_reference(rows, op, "fastmem_abi", standard, 1.10),
                 status=verdict(
                     g2,
                     overall is not None
@@ -129,6 +150,7 @@ def evaluate(
             g3.update(
                 worst_ratio=max((row["ratio"] for row in compiler), default=None),
                 significant_above_1=[detail(row) for row in regressions],
+                aa_reference=null_reference(rows, op, "fastmem_abi", standard, 1),
                 status=verdict(g3, not regressions),
             )
             small = [
@@ -146,13 +168,13 @@ def evaluate(
             constant = [
                 row for row in selected if row["comparison"] == "fastmem_inline/builtin_const"
             ]
-            const_evidence = evidence_status(
-                constant, {f"copy/const/{size}" for size in CONST_SIZES}
-            )
+            const_cases = {f"copy/const/{size}" for size in CONST_SIZES}
+            const_evidence = evidence_status(constant, const_cases)
             const_regressions = [row for row in constant if slowdown(row, 1)]
             const_evidence.update(
                 measurements=[detail(row) for row in constant],
                 significant_above_1=[detail(row) for row in const_regressions],
+                aa_reference=null_reference(rows, op, "fastmem_inline", const_cases, 1),
                 status=verdict(const_evidence, not const_regressions),
             )
             if op != "copy":
@@ -201,7 +223,9 @@ def detail(row: dict[str, Any]) -> dict[str, Any]:
             "candidate_ns",
             "baseline_ns",
             "significant",
+            "outlier_rounds",
         )
+        if key in row
     }
 
 
