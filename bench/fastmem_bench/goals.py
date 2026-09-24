@@ -54,7 +54,10 @@ def required_cases(op: str, chunk: int) -> set[str]:
         ],
         "set": ["aligned", "misaligned"],
     }[op]
-    return {f"{op}/{profile}/{size}" for profile in profiles for size in STANDARD_SIZES}
+    return {f"{op}/{profile}/{size}" for profile in profiles for size in STANDARD_SIZES} | {
+        f"{op}/dist/small",
+        f"{op}/dist/mixed",
+    }
 
 
 def evidence_status(rows: list[dict[str, Any]], required: set[str]) -> dict[str, Any]:
@@ -78,11 +81,7 @@ def verdict(evidence: dict[str, Any], passed: bool) -> str:
 
 
 def slowdown(row: dict[str, Any], threshold: float) -> bool:
-    return (
-        row["significant"]
-        and row["ci95"][0] > threshold
-        and row["ratio"] - threshold > max(row["noise_floor"] or 0, row["minimum_effect"])
-    )
+    return row["ci95"][0] > threshold
 
 
 def evaluate(rows: list[dict[str, Any]], variants: list[str]) -> list[dict[str, Any]]:
@@ -120,7 +119,7 @@ def evaluate(rows: list[dict[str, Any]], variants: list[str]) -> list[dict[str, 
                 ),
             )
             compiler = [row for row in selected if row["comparison"] == "fastmem_abi/builtin"]
-            g3 = evidence_status(compiler, standard | {f"{op}/dist/small", f"{op}/dist/mixed"})
+            g3 = evidence_status(compiler, standard)
             regressions = [row for row in compiler if slowdown(row, 1)]
             g3.update(
                 worst_ratio=max((row["ratio"] for row in compiler), default=None),

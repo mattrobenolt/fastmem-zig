@@ -81,7 +81,6 @@ def complete_rows() -> list[dict[str, Any]]:
     rows = []
     for case in required_cases("copy", 16):
         rows.extend([row(case, "fastmem_abi/glibc"), row(case, "fastmem_abi/builtin")])
-    rows.extend(row(f"copy/dist/{name}", "fastmem_abi/builtin") for name in ("small", "mixed"))
     rows.append(row("copy/dist/small", "fastmem_inline/glibc", 0.85))
     rows.extend(row(f"copy/const/{size}", "fastmem_inline/builtin_const") for size in CONST_SIZES)
     return rows
@@ -163,3 +162,27 @@ def test_protocol_probe_mismatch_stops_target(config: Any) -> None:
     assert len([command for command in box.commands if command.startswith("systemd-run")]) == 1
     assert any("glibc-memset.asm" in command for command in box.commands)
     assert box.downloaded
+
+
+def test_g2_includes_distributions() -> None:
+    rows = complete_rows()
+    for item in rows:
+        if item["case"] == "copy/dist/small" and item["comparison"] == "fastmem_abi/glibc":
+            item.update(ratio=1.2, ci95=[1.19, 1.21])
+    goal = evaluate(rows, ["v0"])[0]["G2"]
+    assert goal["status"] == "FAIL"
+    assert goal["significant_above_1_10"][0]["case"] == "copy/dist/small"
+    partial = [item for item in rows if item["case"] != "copy/dist/mixed"]
+    assert evaluate(partial, ["v0"])[0]["G2"]["status"] == "NA"
+
+
+def test_goal_ci_threshold_does_not_add_aa_floor() -> None:
+    rows = complete_rows()
+    for item in rows:
+        item.update(noise_floor=0.25, minimum_effect=0.25, significant=False)
+        if item["case"] == "copy/aligned/64":
+            item.update(ratio=1.12, ci95=[1.11, 1.13])
+    goals = evaluate(rows, ["v0"])[0]
+    assert goals["G2"]["status"] == "FAIL"
+    assert goals["G3"]["status"] == "FAIL"
+    assert len(goals["G2"]["significant_above_1_10"]) == 1

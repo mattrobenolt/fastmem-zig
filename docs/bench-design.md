@@ -628,10 +628,11 @@ The machine representation is `targets.<target>.goals` in `summary.json`.
 Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, or NA status.
 Missing cases, fewer than five rounds, or absent A/A evidence produce NA for the affected component.
 
-G2 uses only the fixed standard runtime cases.
+G2 includes the fixed standard runtime cases and `dist/small` and `dist/mixed`.
 Its evidence includes the overall geometric mean, tier means, and significant regressions above 1.10.
-A significant regression above a threshold requires a confidence interval above that threshold and an excess greater than the noise floor.
-The configured minimum effect also applies to that excess.
+A goal row violates its threshold when the confidence interval lower bound exceeds that threshold.
+The goal check does not add the A/A floor or minimum effect to the threshold.
+The A/A floor and minimum effect apply only to significance marks against 1.0.
 
 G3 requires the standard runtime cases and both synthetic distributions.
 It reports the worst ratio and significant regressions above 1.00.
