@@ -17,15 +17,14 @@ from ec2bench.config import Config
 from ec2bench.fleet import Fleet, tags
 from ec2bench.parallel import parallel
 from ec2bench.runs import create_run, write_manifest
-from fastmem_bench.build import source_hash
+from fastmem_bench.build import baseline_cpu, source_hash
 
 
 def cpus(settings: dict[str, Any]) -> dict[str, str]:
     cpu = settings["zig_cpu"]
     if cpu == "native":
         raise ValueError("Correctness cross builds require an explicit CPU model")
-    baseline = "x86_64_v3" if settings["zig_target"].startswith("x86_64-") else "generic"
-    return {"target": cpu, "baseline": baseline}
+    return {"target": cpu, "baseline": baseline_cpu(settings)}
 
 
 def build_binary(

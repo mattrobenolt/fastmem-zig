@@ -14,10 +14,10 @@ from ec2bench.fleet import Fleet, tags
 from ec2bench.parallel import Outcome, parallel, progress
 from ec2bench.runs import create_run, validate_label, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze, validate_effect
-from fastmem_bench.build import build_all, disassemble, provenance, resolve
+from fastmem_bench.build import CPU_MODES, build_all, build_cpu, disassemble, provenance, resolve
 from fastmem_bench.codegen import verify_recorded
 from fastmem_bench.protocol import execute, orders
-from fastmem_bench.report import write
+from fastmem_bench.report import stability_line, write
 
 
 @click.command()
@@ -29,6 +29,14 @@ from fastmem_bench.report import write
     default="standard",
 )
 @click.option("--rounds", type=click.IntRange(min=1), default=5, show_default=True)
+@click.option(
+    "--cpu",
+    "cpu_mode",
+    type=click.Choice(CPU_MODES),
+    default="target",
+    show_default=True,
+    help="target: bench.toml zig_cpu (G2-G4). baseline: baseline_cpu (G6).",
+)
 @click.option(
     "--no-aa", is_flag=True, help="Disable the baseline duplicate and significance marks."
 )
@@ -46,13 +54,14 @@ from fastmem_bench.report import write
     help="Minimum fractional effect for marks. Default: project.minimum_effect or 0.",
 )
 @click.pass_obj
-def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle visible
+def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment lifecycle visible
     config: Config,
     *,
     revisions: tuple[str, ...],
     targets: tuple[str, ...],
     suite: str,
     rounds: int,
+    cpu_mode: str,
     no_aa: bool,
     launch: bool,
     label: str,
@@ -111,6 +120,10 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
         results_dir=config.results_dir,
     )
     seed = secrets.randbits(32)
+    try:
+        cpus = {name: build_cpu(config.targets[name], cpu_mode) for name in names}
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     sources = resolve(config, revisions)
     variants = [source.variant for source in sources]
     schedule = orders([*variants, *([] if no_aa else ["aa"])], rounds, seed)
@@ -120,6 +133,8 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             "bootstrap_seed": BOOTSTRAP_SEED,
             "rounds": rounds,
             "suite": suite,
+            "cpu_mode": cpu_mode,
+            "cpus": cpus,
             "aa": not no_aa,
             "schedule": schedule,
             "schedule_method": "seeded-balanced-latin-square",
@@ -138,7 +153,7 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             "sha256": hashlib.sha256(data).hexdigest(),
         }
     write_manifest(path, manifest)
-    builds = build_all(config, sources, names)
+    builds = build_all(config, sources, names, cpu_mode=cpu_mode)
     manifest.update(provenance(sources, builds))
     manifest["codegen"] = {
         name: {
@@ -196,6 +211,8 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             minimum_effect=effect,
             expected_round_count=rounds,
             probe=protocol["libc_probe"],
+            cpu_mode=cpu_mode,
+            expected_cpu=cpus[name],
         )
         if result["codegen"] != protocol["codegen"]:
             raise ValueError("Analysis codegen evidence disagrees with the build")
@@ -256,6 +273,9 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
                 minimum_effect=effect,
                 expected_round_count=manifest["rounds"],
                 probe=json.loads((run_dir / target / "libc-probe.json").read_text()),
+                # Runs before G6 builds have neither field: they are target-CPU builds.
+                cpu_mode=manifest.get("cpu_mode", "target"),
+                expected_cpu=manifest.get("cpus", {}).get(target),
             )
             expected = manifest.get("codegen", {}).get(target)
             if expected is not None:
@@ -278,6 +298,8 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
     for target, result in targets.items():
         for group, floor in sorted(result.get("noise_floors", {}).items()):
             click.echo(f"{target} {group}: {floor:.4%}")
+        for group in result.get("stability", {}).get("groups", []):
+            click.echo(f"{target} stability: {stability_line(group)}")
         for warning in result.get("warnings", []):
             click.echo(f"{target}: {warning}")
     if any("error" in result for result in targets.values()):

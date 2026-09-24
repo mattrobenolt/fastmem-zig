@@ -13,12 +13,14 @@ import logging
 import math
 import statistics
 from collections import defaultdict
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
 
 from fastmem_bench.goals import evaluate
 from fastmem_bench.jsonl import IMPLEMENTATIONS, parse
+from fastmem_bench.stability import memory_summary, memory_warning, stability
 
 # The estimator has no random component. The runner still records this value.
 BOOTSTRAP_SEED = 20260923
@@ -202,24 +204,33 @@ def geomean(values: list[float]) -> float:
     return math.exp(statistics.fmean(math.log(value) for value in values))
 
 
-def load_rounds(  # noqa: C901 — validate clusters before case intersection
+@dataclass
+class Rounds:
+    data: dict[tuple[str, str, str], dict[int, list[float]]]
+    details: dict[str, dict[str, Any]]
+    warnings: list[str]
+    codegen: dict[str, Any]
+    # The meta memory object of each process, keyed "<variant>/r<round>". None for v2.
+    memory: dict[str, dict[str, Any] | None]
+    cpus: set[str]
+
+
+def load_rounds(  # noqa: C901, PLR0912 — validate clusters before case intersection
     raw: Path,
     variants: list[str],
     *,
     expected_round_count: int | None = None,
     probe: dict[str, Any] | None = None,
-) -> tuple[
-    dict[tuple[str, str, str], dict[int, list[float]]],
-    dict[str, dict[str, Any]],
-    list[str],
-    dict[str, Any],
-]:
+    expected_cpu: str | None = None,
+) -> Rounds:
     data: dict[tuple[str, str, str], dict[int, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     details: dict[str, dict[str, Any]] = {}
     variant_cases: dict[str, set[tuple[str, str]]] = {}
     codegen: dict[str, Any] = {}
+    memory: dict[str, dict[str, Any] | None] = {}
+    cpus: set[str] = set()
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -233,6 +244,11 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
         expected_rounds = rounds
         for path in paths:
             measurement = parse(path, probe=probe)
+            cpu = measurement.meta["cpu"]
+            if expected_cpu is not None and cpu != expected_cpu:
+                raise ValueError(f"{path}: the build CPU is {cpu}, not {expected_cpu}")
+            cpus.add(cpu)
+            memory[f"{variant}/{path.stem}"] = measurement.meta["memory"]
             evidence = measurement.meta["codegen"]
             if variant in codegen and codegen[variant] != evidence:
                 raise ValueError(f"Codegen evidence changed within {variant}")
@@ -266,7 +282,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     data = {key: rounds for key, rounds in data.items() if (key[1], key[2]) in common}
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return data, details, warnings, codegen
+    return Rounds(data, details, warnings, codegen, memory, cpus)
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -289,14 +305,18 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     minimum_effect: float = 0.0,
     expected_round_count: int | None = None,
     probe: dict[str, Any] | None = None,
+    cpu_mode: str = "target",
+    expected_cpu: str | None = None,
 ) -> dict[str, Any]:
     validate_effect(minimum_effect)
-    data, details, warnings, codegen = load_rounds(
+    loaded = load_rounds(
         raw,
         [*variants, *([aa] if aa else [])],
         expected_round_count=expected_round_count,
         probe=probe,
+        expected_cpu=expected_cpu,
     )
+    data, details, warnings, codegen = loaded.data, loaded.details, loaded.warnings, loaded.codegen
     cells: dict[tuple[str, str, str], tuple[list[float], list[int]]] = {}
     for key in sorted(data):
         rounds = data[key]
@@ -368,10 +388,23 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
                 ("fastmem_inline", "builtin_const"),
             ):
                 compare(case, f"{candidate}/{reference}", variant, candidate, variant, reference)
+    memory = memory_summary(loaded.memory)
+    if warning := memory_warning(memory):
+        warnings.append(warning)
     result = summarize(rows, warnings, minimum_effect)
     result["outliers"] = outliers
     result["codegen"] = codegen
-    result["goals"] = evaluate(rows, variants, codegen=codegen)
+    result["cpu"] = {"mode": cpu_mode, "models": sorted(loaded.cpus)}
+    result["memory"] = memory
+    result["stability"] = stability(
+        cells,
+        details,
+        [*variants, *([aa] if aa else [])],
+        codegen,
+        baseline=baseline,
+        aa=aa,
+    )
+    result["goals"] = evaluate(rows, variants, codegen=codegen, cpu_mode=cpu_mode)
     return result
 
 

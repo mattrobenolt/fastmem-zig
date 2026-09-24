@@ -97,6 +97,7 @@ def measurement(
     size: int = 64,
     schema: int = 3,
     memory: dict[str, Any] | None = None,
+    cpu: str = "sapphirerapids",
 ) -> None:
     records: list[dict[str, Any]] = [
         {
@@ -107,7 +108,7 @@ def measurement(
             "rev": "fixture",
             "zig": "0.16.0",
             "target": "x86_64-linux-gnu",
-            "cpu": "sapphirerapids",
+            "cpu": cpu,
             "optimize": "ReleaseFast",
             "link_libc": True,
             "chunk_bytes": 32,

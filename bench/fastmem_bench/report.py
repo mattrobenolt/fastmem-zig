@@ -53,6 +53,7 @@ def write(path: Path, summary: dict[str, Any]) -> None:
         for warning in result.get("warnings", []):
             text += [f"Warning: {warning}", ""]
         text += goal_table(result.get("goals", []))
+        text += stability_table(result)
         text += [f"Minimum effect: {result['minimum_effect']:.4%}.", ""]
         if result["noise_floors"]:
             text += ["| A/A floor group | Noise floor |", "|---|---:|"]
@@ -159,7 +160,7 @@ def goal_table(goals: list[dict[str, Any]]) -> list[str]:
         "|---|---|---|---|---|",
     ]
     for goal in goals:
-        for name in ("G2", "G3", "G4"):
+        for name in ("G2", "G3", "G4", "G6"):
             value = goal[name]
             if name == "G2":
                 evidence = (
@@ -169,7 +170,7 @@ def goal_table(goals: list[dict[str, Any]]) -> list[str]:
                     + level_note(value)
                     + null_note(value)
                 )
-            elif name == "G3":
+            elif name in {"G3", "G6"}:
                 evidence = (
                     f"worst={value['worst_ratio']}, "
                     f"violations ({value['rule']}): {len(value['violations'])}, "
@@ -183,6 +184,8 @@ def goal_table(goals: list[dict[str, Any]]) -> list[str]:
                     f"const={value['const']['status']}"
                     f"{null_note(value['const'])}, no-call=NA (checked by binary test, P4)"
                 )
+                if value["const"].get("missing_cases"):
+                    evidence += f", const missing={len(value['const']['missing_cases'])}"
             if "reason" in value:
                 evidence += ". " + value["reason"]
             text.append(
@@ -190,3 +193,60 @@ def goal_table(goals: list[dict[str, Any]]) -> list[str]:
             )
     text += ["", "Full goal evidence and missing cases appear in `summary.json`.", ""]
     return text
+
+
+def stability_line(group: dict[str, Any]) -> str:
+    rate = group["spike_rate"]
+    share = group["worst_process_share"]
+    text = (
+        f"{'+'.join(group['variants'])}: spikes {group['spikes']}/{group['round_cells']}"
+        f" ({'n/a' if rate is None else f'{rate:.2%}'})"
+    )
+    if share is not None:
+        text += f", worst process {group['worst_process']} {share:.0%}"
+    if floor := group["null_floor"]:
+        text += (
+            f", null floor {floor['candidate']}/{floor['reference']}"
+            f" median {floor['median']:.2%} p90 {floor['p90']:.2%} max {floor['max']:.2%}"
+        )
+    return text
+
+
+def stability_table(result: dict[str, Any]) -> list[str]:
+    stability = result.get("stability")
+    memory = result.get("memory")
+    if not stability:
+        return []
+    text = [
+        "### Measurement stability",
+        "",
+        (
+            f"A spike is a round median more than {stability['spike_threshold']:.0%} above the"
+            " median of its case and implementation over all variants of one binary."
+        ),
+        "",
+        "| Variants | Spikes | Rate | Worst process | Null floor median / p90 / max |",
+        "|---|---:|---:|---|---|",
+    ]
+    for group in stability["groups"]:
+        rate, share, floor = group["spike_rate"], group["worst_process_share"], group["null_floor"]
+        cells = [
+            "+".join(group["variants"]),
+            f"{group['spikes']}/{group['round_cells']}",
+            "n/a" if rate is None else f"{rate:.2%}",
+            "-" if share is None else f"{group['worst_process']} {share:.0%}",
+            f"{floor['median']:.2%} / {floor['p90']:.2%} / {floor['max']:.2%}" if floor else "-",
+        ]
+        text.append("| " + " | ".join(cells) + " |")
+    if memory and memory["arena_processes"]:
+        minimum = memory["thp_coverage_min"]
+        text += [
+            "",
+            (
+                f"Memory: arena in {memory['arena_processes']} of {memory['processes']}"
+                f" processes. THP covered the whole arena in {memory['thp_full_processes']}"
+                f" (minimum start coverage {'unknown' if minimum is None else f'{minimum:.0%}'},"
+                f" policy {', '.join(memory['thp_policies'])})."
+            ),
+        ]
+    return [*text, ""]

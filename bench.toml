@@ -19,44 +19,53 @@ default_ttl = "4h"
 max_ttl = "12h"
 default_owner = "agent"
 
+# zig_cpu is the -Dcpu of the G1-G4 builds. baseline_cpu is the -Dcpu of the G6
+# portable builds (bench run --cpu baseline).
 [targets.c7i]
 instance_type = "c7i.xlarge"
 arch = "x86_64"
 zig_target = "x86_64-linux-gnu"
 zig_cpu = "sapphirerapids"
+baseline_cpu = "x86_64_v3"
 
 [targets.c8i]
 instance_type = "c8i.xlarge"
 arch = "x86_64"
 zig_target = "x86_64-linux-gnu"
 zig_cpu = "graniterapids"
+baseline_cpu = "x86_64_v3"
 
 [targets.c7a]
 instance_type = "c7a.xlarge"
 arch = "x86_64"
 zig_target = "x86_64-linux-gnu"
 zig_cpu = "znver4"
+baseline_cpu = "x86_64_v3"
 
 [targets.c8a]
 instance_type = "c8a.xlarge"
 arch = "x86_64"
 zig_target = "x86_64-linux-gnu"
 zig_cpu = "znver5"
+baseline_cpu = "x86_64_v3"
 
 [targets.c7g]
 instance_type = "c7g.xlarge"
 arch = "arm64"
 zig_target = "aarch64-linux-gnu"
 zig_cpu = "neoverse_v1"
+baseline_cpu = "generic"
 
 [targets.c8g]
 instance_type = "c8g.xlarge"
 arch = "arm64"
 zig_target = "aarch64-linux-gnu"
 zig_cpu = "neoverse_v2"
+baseline_cpu = "generic"
 
 [targets.c9g]
 instance_type = "c9g.xlarge"
 arch = "arm64"
 zig_target = "aarch64-linux-gnu"
 zig_cpu = "neoverse_v3"
+baseline_cpu = "generic"

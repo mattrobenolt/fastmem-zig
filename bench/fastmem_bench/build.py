@@ -79,8 +79,30 @@ def resolve(config: Config, revisions: tuple[str, ...]) -> list[Source]:
     return sources
 
 
+CPU_MODES = ("target", "baseline")
+
+
+def baseline_cpu(settings: dict[str, Any]) -> str:
+    """The G6 portable CPU: bench.toml baseline_cpu, or the plan default for the arch."""
+    arch = settings.get("zig_target", "").split("-")[0] or settings.get("arch")
+    cpu = settings.get("baseline_cpu") or ("x86_64_v3" if arch == "x86_64" else "generic")
+    if not isinstance(cpu, str) or cpu == "native":
+        raise ValueError(f"Invalid baseline_cpu: {cpu!r}")
+    return cpu
+
+
+def build_cpu(settings: dict[str, Any], mode: str) -> str:
+    """The -Dcpu of a build: zig_cpu for target builds, baseline_cpu for G6 builds."""
+    if mode not in CPU_MODES:
+        raise ValueError(f"Unknown CPU mode: {mode}")
+    cpu = settings["zig_cpu"] if mode == "target" else baseline_cpu(settings)
+    if cpu == "native":
+        raise ValueError("Cross builds require an explicit CPU model")
+    return cpu
+
+
 def build_all(
-    config: Config, sources: list[Source], targets: list[str]
+    config: Config, sources: list[Source], targets: list[str], *, cpu_mode: str = "target"
 ) -> dict[str, Outcome[Build]]:
     zig_version = subprocess.run(
         ["zig", "version"], check=True, capture_output=True, text=True, timeout=30
@@ -92,13 +114,13 @@ def build_all(
     def build(name: str) -> Build:
         source, target = pairs[name]
         settings = config.targets[target]
-        if settings["zig_cpu"] == "native":
-            raise ValueError("Cross builds require an explicit CPU model")
+        cpu = build_cpu(settings, cpu_mode)
+        # The key layout is unchanged, so that target-CPU builds keep their cache entries.
         key_data = [
             source.source_hash,
             target,
             settings["zig_target"],
-            settings["zig_cpu"],
+            cpu,
             zig_version,
             source.revision,
             "ReleaseFast",
@@ -116,7 +138,7 @@ def build_all(
                     "build",
                     "install",
                     f"-Dtarget={settings['zig_target']}",
-                    f"-Dcpu={settings['zig_cpu']}",
+                    f"-Dcpu={cpu}",
                     "-Doptimize=ReleaseFast",
                     "-Dlink-libc=true",
                     f"-Drev={source.revision}",

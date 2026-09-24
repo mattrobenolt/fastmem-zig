@@ -126,3 +126,64 @@ def test_early_parse_failure_stops_remaining_rounds(config: Config) -> None:
     assert "cat " in commands[0]
     assert downloads == 2
     assert any(cmd.startswith("systemctl stop") for cmd in box.commands)
+
+
+@pytest.mark.parametrize(
+    ("cpu", "model"), [("baseline", "x86_64_v3"), ("target", "sapphirerapids")]
+)
+def test_run_cpu_mode_reaches_build_manifest_and_goals(
+    config: Config, monkeypatch: pytest.MonkeyPatch, cpu: str, model: str
+) -> None:
+    source = Source("v0", "WORKTREE", config.root, "hash")
+    build = Build(source, "intel", config.root / "prefix", "key", CODEGEN)
+    fleet = Mock()
+    fleet.one.return_value = {"InstanceId": "i-test"}
+    monkeypatch.setattr("fastmem_bench.runner.Fleet", Mock(return_value=fleet))
+    monkeypatch.setattr("fastmem_bench.runner.resolve", Mock(return_value=[source]))
+    builder = Mock(return_value={"v0/intel": Outcome(value=build)})
+    monkeypatch.setattr("fastmem_bench.runner.build_all", builder)
+    monkeypatch.setattr("fastmem_bench.runner.disassemble", Mock(return_value=None))
+    monkeypatch.setattr("fastmem_bench.runner.box_for", Mock(return_value=Mock()))
+    monkeypatch.setattr("ec2bench.runs.git", Mock(return_value="fixture"))
+
+    def execute(
+        _config: Config, _box: Any, _builds: Any, path: Path, **_kwargs: Any
+    ) -> dict[str, Any]:
+        for variant in ("v0", "aa"):
+            for index in range(5):
+                measurement(path / "intel/raw" / variant / f"r{index}.jsonl", cpu=model)
+        return {"warnings": [], "libc_probe": PROBE, "codegen": {"v0": CODEGEN, "aa": CODEGEN}}
+
+    monkeypatch.setattr("fastmem_bench.runner.execute", execute)
+    result = CliRunner().invoke(
+        run, ["--target", "intel", "--cpu", cpu, "--label", "cpu"], obj=config
+    )
+    assert result.exit_code == 0, result.output
+    assert builder.call_args.kwargs["cpu_mode"] == cpu
+    path = next(config.results_dir.glob("*-cpu"))
+    manifest = json.loads((path / "manifest.json").read_text())
+    assert manifest["cpu_mode"] == cpu
+    assert manifest["cpus"] == {"intel": model}
+    summary = json.loads((path / "summary.json").read_text())
+    goals = summary["targets"]["intel"]["goals"]
+    assert summary["targets"]["intel"]["cpu"] == {"mode": cpu, "models": [model]}
+    in_scope = ("G6",) if cpu == "baseline" else ("G2", "G3")
+    out_of_scope = ("G2", "G3", "G4") if cpu == "baseline" else ("G6",)
+    for goal in goals:
+        # The fixture suite is incomplete, so in-scope goals are NA for evidence, not scope.
+        for name in in_scope:
+            assert goal[name]["reason"].startswith("The complete case set")
+        for name in out_of_scope:
+            assert goal[name]["status"] == "NA"
+            assert "CPU" in goal[name]["reason"]
+    # Offline analysis applies the same mode and rejects a mislabeled build.
+    from fastmem_bench.runner import analyze_run
+
+    (path / "intel/libc-probe.json").write_text(json.dumps(PROBE))
+    assert CliRunner().invoke(analyze_run, [str(path)]).exit_code == 0
+    manifest["cpus"]["intel"] = "znver4"
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    result = CliRunner().invoke(analyze_run, [str(path)])
+    assert result.exit_code == 1
+    summary = json.loads((path / "summary.json").read_text())
+    assert "not znver4" in summary["targets"]["intel"]["error"]

@@ -239,7 +239,9 @@ def test_goals_report_the_aa_null_reference() -> None:
     null[1].update(ratio=1.03, ci95=[1.01, 1.05])
     for size in CONST_SIZES:
         item = row(f"copy/const/{size}", "A/A")
-        item.update(variant="aa", candidate_impl="fastmem_inline", ci95=[1.001, 1.002])
+        # Only the 256-byte row is above 1 + max(floor, 0.01): the const rule is the G3 rule.
+        lower = 1.02 if size == 256 else 1.001
+        item.update(variant="aa", candidate_impl="fastmem_inline", ci95=[lower, lower + 0.001])
         null.append(item)
     for item in rows:
         item.setdefault("candidate_impl", item["comparison"].split("/")[0])
@@ -252,7 +254,78 @@ def test_goals_report_the_aa_null_reference() -> None:
     }
     # G3 applies its own rule: 1.01 is not above 1 + max(0.01, 0.01).
     assert goal["G3"]["aa_reference"]["violations"] == 1
-    assert goal["G4"]["const"]["aa_reference"]["violations"] == len(CONST_SIZES)
+    assert goal["G4"]["const"]["aa_reference"] == {
+        "impl": "fastmem_inline",
+        "rule": "lower > 1 + max(floor, 0.01)",
+        "cases": len(CONST_SIZES),
+        "violations": 1,
+    }
     # The null reference is evidence only. It does not change a verdict.
     assert goal["G2"]["status"] == "PASS"
     assert goal["G3"]["status"] == "PASS"
+
+
+def op_rows(op: str) -> list[dict[str, Any]]:
+    rows = []
+    for case in required_cases(op, 16):
+        rows.extend([row(case, "fastmem_abi/glibc"), row(case, "fastmem_abi/builtin")])
+    rows.append(row(f"{op}/dist/small", "fastmem_inline/glibc", 0.85))
+    rows.extend(row(f"{op}/const/{size}", "fastmem_inline/builtin_const") for size in CONST_SIZES)
+    return rows
+
+
+def test_g4_const_covers_every_operation() -> None:
+    rows = op_rows("move") + [item for item in op_rows("set") if item["case"] != "set/const/256"]
+    for item in rows:
+        if item["case"] == "move/const/64":
+            item.update(ratio=1.05, ci95=[1.03, 1.07])
+    goals = {goal["op"]: goal["G4"] for goal in evaluate(rows, ["v0"])}
+    assert goals["move"]["const"]["status"] == "FAIL"
+    assert goals["move"]["status"] == "FAIL"
+    assert goals["move"]["const"]["significant_above_1"][0]["case"] == "move/const/64"
+    assert goals["set"]["const"]["status"] == "NA"
+    assert goals["set"]["const"]["missing_cases"] == ["set/const/256"]
+    assert goals["set"]["small"]["status"] == "PASS"
+    # A copy run without const cases (schema v2 move/set) has no const verdict.
+    assert goals["copy"]["const"]["status"] == "NA"
+
+
+def test_g4_timing_pass_leaves_the_no_call_check_open() -> None:
+    goals = {goal["op"]: goal["G4"] for goal in evaluate(op_rows("set"), ["v0"])}
+    assert goals["set"]["timing_status"] == "PASS"
+    assert goals["set"]["status"] == "NA"
+
+
+def test_g6_applies_only_to_baseline_builds() -> None:
+    rows = complete_rows()
+    target = evaluate(rows, ["v0"])[0]
+    assert target["G6"]["status"] == "NA"
+    assert "--cpu baseline" in target["G6"]["reason"]
+    assert target["G3"]["status"] == "PASS"
+    baseline = evaluate_goals(rows, ["v0"], codegen={"v0": CODEGEN}, cpu_mode="baseline")[0]
+    assert baseline["G6"]["status"] == "PASS"
+    assert baseline["G6"]["rule"] == "lower > 1 + max(floor, 0.01)"
+    for name in ("G2", "G3", "G4"):
+        assert baseline[name]["status"] == "NA"
+        assert "baseline CPU" in baseline[name]["reason"]
+    # The evidence stays available for reading.
+    assert baseline["G2"]["geomean"] == 1
+    with pytest.raises(ValueError, match="Unknown CPU mode"):
+        evaluate_goals(rows, ["v0"], cpu_mode="native")
+
+
+def test_g6_margin_and_delegation() -> None:
+    rows = complete_rows()
+    for item in rows:
+        if item["case"] == "copy/aligned/64" and item["comparison"] == "fastmem_abi/builtin":
+            item.update(ratio=1.03, ci95=[1.02, 1.04])
+    goal = evaluate_goals(rows, ["v0"], codegen={"v0": CODEGEN}, cpu_mode="baseline")[0]
+    assert goal["G6"]["status"] == "FAIL"
+    assert goal["G6"]["violations"][0]["case"] == "copy/aligned/64"
+    delegating = {
+        **CODEGEN,
+        "delegations": [{"caller": "fastmem_copy", "symbol": "memcpy", "address": "0x10"}],
+    }
+    goal = evaluate_goals(rows, ["v0"], codegen={"v0": delegating}, cpu_mode="baseline")[0]
+    assert goal["G6"]["status"] == "INVALID"
+    assert goal["G3"]["status"] == "INVALID"
