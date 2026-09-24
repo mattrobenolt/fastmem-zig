@@ -30,13 +30,6 @@ const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
-/// Names of the kernel implementations in this build, one per operation.
-pub const Impl = struct {
-    copy: []const u8,
-    move: []const u8,
-    set: []const u8,
-};
-
 const copy_impl_name = if (on_aarch64_sve)
     "aor-sve-5e20a93"
 else if (on_aarch64)
@@ -49,7 +42,8 @@ const set_impl_name = if (on_aarch64)
 else
     "zig-vector";
 
-pub const impl: Impl = .{
+/// Names of the kernel implementations in this build, one per operation.
+pub const impl = .{
     .copy = copy_impl_name,
     .move = copy_impl_name,
     .set = set_impl_name,
@@ -104,30 +98,48 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
 }
 
 /// Fill `dest` with `value`. Prefer over @memset for runtime-sized fills.
-pub fn set(dest: []u8, value: u8) void {
+///
+/// The byte kernels are bit-pattern fills: for T != u8 they apply only
+/// when every byte of `value` is equal (checked at runtime; comptime-
+/// known for u8). Other values take the element-wise fallback loop.
+pub fn set(comptime T: type, dest: []T, value: T) void {
+    const bytes: [@sizeOf(T)]u8 = @bitCast(value);
     if (comptime on_aarch64) {
-        if (comptime on_aarch64_sve) {
-            aarch64_memset_sve.fastmem_sve_set(dest.ptr, value, dest.len);
-        } else {
-            aarch64_memset_advsimd.fastmem_advsimd_set(dest.ptr, value, dest.len);
+        if (T == u8 or allBytesEqual(&bytes)) {
+            const len = dest.len * @sizeOf(T);
+            const d: [*]u8 = @ptrCast(dest.ptr);
+            if (comptime on_aarch64_sve) {
+                aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
+            } else {
+                aarch64_memset_advsimd.fastmem_advsimd_set(d, bytes[0], len);
+            }
+            return;
         }
-        return;
     }
-    setFallback(dest, value);
+    setFallback(T, dest, value);
 }
 
-// Portable fallback for targets without a dedicated kernel. The loops live
-// in a non-inline function of this no_builtin module so LLVM cannot idiom-
-// recognize them into a memset call (which would recurse under
-// exportSymbols).
-fn setFallback(dest: []u8, value: u8) void {
-    const chunk: @Vector(32, u8) = @splat(value);
-    var i: usize = 0;
-    while (i + 32 <= dest.len) : (i += 32) {
-        const p: *align(1) @Vector(32, u8) = @ptrCast(dest.ptr + i);
-        p.* = chunk;
+fn allBytesEqual(bytes: []const u8) bool {
+    for (bytes[1..]) |b| if (b != bytes[0]) return false;
+    return true;
+}
+
+// Portable fallback for targets without a dedicated kernel and for
+// non-uniform fill values. The loops live in a non-inline function of
+// this no_builtin module so LLVM cannot idiom-recognize them into a
+// memset call (which would recurse under exportSymbols).
+fn setFallback(comptime T: type, dest: []T, value: T) void {
+    if (comptime (T == u8)) {
+        const chunk: @Vector(32, u8) = @splat(value);
+        var i: usize = 0;
+        while (i + 32 <= dest.len) : (i += 32) {
+            const p: *align(1) @Vector(32, u8) = @ptrCast(dest.ptr + i);
+            p.* = chunk;
+        }
+        while (i < dest.len) : (i += 1) dest[i] = value;
+        return;
     }
-    while (i < dest.len) : (i += 1) dest[i] = value;
+    for (dest) |*d| d.* = value;
 }
 
 test "copy: all size classes" {

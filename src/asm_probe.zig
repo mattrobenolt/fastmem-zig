@@ -17,7 +17,7 @@ export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void {
 }
 
 export fn fastmem_set(dst: [*]u8, value: u8, len: usize) void {
-    fastmem.set(dst[0..len], value);
+    fastmem.set(u8, dst[0..len], value);
 }
 
 export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void {
