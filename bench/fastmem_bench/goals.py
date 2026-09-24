@@ -205,7 +205,8 @@ def evaluate(
             ]
             const_cases = {f"copy/const/{size}" for size in CONST_SIZES}
             const_evidence = evidence_status(constant, const_cases)
-            const_regressions = [row for row in constant if slowdown(row, 1)]
+            # Same multiplicity guard as G3: 13 const sizes per target.
+            const_regressions = [row for row in constant if compiler_slowdown(row)]
             const_evidence.update(
                 measurements=[detail(row) for row in constant],
                 significant_above_1=[detail(row) for row in const_regressions],

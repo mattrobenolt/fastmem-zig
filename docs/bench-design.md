@@ -350,13 +350,21 @@ Analysis:
   `[w_(k), w_(N+1-k)]` of the sorted Walsh averages.
 - In both methods, `k` is the largest value that gives a coverage of at
   least 95%. If no `k` reaches 95%, `k` is 1: the full range.
-- Record the exact coverage in `ci_level` and the method in `ci_method`
+- Record the nominal coverage in `ci_level` and the method in `ci_method`
   (`mann-whitney` or `signed-rank`). `report.md` shows the level of each
   row. The analysis has no random component.
 - The Mann-Whitney coverage is 96.8% for 5 against 5 rounds. The
   signed-rank coverage is 93.75% for 5 rounds, 96.9% for 6 rounds, and
   95.3% for 7 rounds. For 5 and 6 rounds, the paired interval is the range
   of the per-round ratios. That range needs no symmetry assumption.
+- The levels are nominal under a model. The Mann-Whitney interval assumes
+  a location shift between the two processes' log times. The signed-rank
+  interval assumes that the per-round log ratios are symmetric about their
+  center; above 6 rounds an asymmetric distribution can miss more often
+  than the level says. The 5- and 6-round ranges are distribution-free
+  intervals for the median.
+- G4's const rule uses the G3 margin: a const size violates only when its
+  whole interval lies above 1 + max(floor, 0.01).
 - A row with fewer than 5 rounds has insufficient evidence
   (`evidence: "insufficient"`). It gets no mark, and its goal components
   are NA.
