@@ -12,6 +12,11 @@ fn reference(dest: []u8, source: []const u8) void {
     for (dest, source) |*d, value| d.* = value;
 }
 
+fn referenceSet(dest: []u8, value: u8) void {
+    @disableIntrinsics();
+    for (dest) |*byte| byte.* = value;
+}
+
 test "fuzz copy with independent offsets and canaries" {
     try testing.fuzz({}, struct {
         fn run(_: void, smith: *testing.Smith) anyerror!void {
@@ -68,7 +73,7 @@ test "fuzz set with destination canaries" {
             var actual: [max_len + padding]u8 = undefined;
             smith.bytes(&actual);
             var expected = actual;
-            for (expected[offset..][0..len]) |*byte| byte.* = value;
+            referenceSet(expected[offset..][0..len], value);
             fastmem.set(u8, actual[offset..][0..len], value);
             try testing.expectEqualSlices(u8, &expected, &actual);
         }
