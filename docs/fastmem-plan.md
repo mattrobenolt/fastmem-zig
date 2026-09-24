@@ -132,7 +132,7 @@ G4. The inline advantage.
   is 0.90 or less on every target.
 - For every comptime-known size from 1 to 256 bytes, `fastmem.copy`,
   `move`, and `set` generate no call (binary test) and are not slower than
-  the builtin with the same comptime size.
+  the builtin with the same comptime size (same margin rule as G3).
 - The 0.90 value is a target that no measurement supports yet. The
   baseline (P1d) and the first inline prototype decide if it is
   realistic. A change to it needs a new plan entry with the evidence.
