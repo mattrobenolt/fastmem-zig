@@ -8,7 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastmem_bench.jsonl import parse
+from fastmem_bench.goals import evaluate
+from fastmem_bench.jsonl import IMPLEMENTATIONS, parse
 
 BOOTSTRAP_SEED = 20260923
 TIERS = (
@@ -71,14 +72,19 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     variants: list[str],
     *,
     expected_round_count: int | None = None,
+    probe: dict[str, Any] | None = None,
 ) -> tuple[
-    dict[tuple[str, str, str], dict[int, list[float]]], dict[str, dict[str, Any]], list[str]
+    dict[tuple[str, str, str], dict[int, list[float]]],
+    dict[str, dict[str, Any]],
+    list[str],
+    dict[str, Any],
 ]:
     data: dict[tuple[str, str, str], dict[int, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     details: dict[str, dict[str, Any]] = {}
     variant_cases: dict[str, set[tuple[str, str]]] = {}
+    codegen: dict[str, Any] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -91,7 +97,11 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
             raise ValueError(f"Incomplete round set for {variant}: {sorted(rounds)}")
         expected_rounds = rounds
         for path in paths:
-            measurement = parse(path)
+            measurement = parse(path, probe=probe)
+            evidence = measurement.meta["codegen"]
+            if variant in codegen and codegen[variant] != evidence:
+                raise ValueError(f"Codegen evidence changed within {variant}")
+            codegen[variant] = evidence
             cases = {(sample["case"], sample["impl"]) for sample in measurement.samples}
             if variant in variant_cases and cases != variant_cases[variant]:
                 raise ValueError(f"Rounds have different case/implementation sets within {variant}")
@@ -99,6 +109,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
             for sample in measurement.samples:
                 case = sample["case"]
                 detail = {key: sample[key] for key in ("op", "size", "profile")}
+                detail["chunk_bytes"] = measurement.meta["chunk_bytes"]
                 if case in details and detail != details[case]:
                     raise ValueError(f"Case metadata changed for {case}")
                 details[case] = detail
@@ -120,7 +131,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     data = {key: rounds for key, rounds in data.items() if (key[1], key[2]) in common}
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return data, details, warnings
+    return data, details, warnings, codegen
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -134,7 +145,7 @@ def validate_effect(minimum_effect: float) -> None:
         raise ValueError("The minimum effect must be a finite nonnegative fraction")
 
 
-def analyze(
+def analyze(  # noqa: C901 — paired comparisons share one cluster table
     raw: Path,
     variants: list[str],
     baseline: str,
@@ -142,10 +153,14 @@ def analyze(
     aa: str | None = "aa",
     minimum_effect: float = 0.0,
     expected_round_count: int | None = None,
+    probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_effect(minimum_effect)
-    data, details, warnings = load_rounds(
-        raw, [*variants, *([aa] if aa else [])], expected_round_count=expected_round_count
+    data, details, warnings, codegen = load_rounds(
+        raw,
+        [*variants, *([aa] if aa else [])],
+        expected_round_count=expected_round_count,
+        probe=probe,
     )
 
     def clusters(variant: str, case: str, impl: str) -> list[list[float]]:
@@ -191,16 +206,24 @@ def analyze(
 
     for case in sorted(details):
         if aa:
-            for implementation in ("fastmem", "libc", "builtin"):
+            for implementation in IMPLEMENTATIONS:
                 compare(case, "A/A", aa, implementation, baseline, implementation)
         for variant in variants:
             if variant != baseline:
-                compare(case, "revision", variant, "fastmem", baseline, "fastmem")
-            for implementation in ("libc", "builtin"):
-                compare(
-                    case, f"fastmem/{implementation}", variant, "fastmem", variant, implementation
-                )
-    return summarize(rows, warnings, minimum_effect)
+                for implementation in ("fastmem_abi", "fastmem_inline"):
+                    compare(case, "revision", variant, implementation, baseline, implementation)
+            for candidate, reference in (
+                ("builtin", "glibc"),
+                ("fastmem_abi", "glibc"),
+                ("fastmem_inline", "glibc"),
+                ("fastmem_abi", "builtin"),
+                ("fastmem_inline", "builtin_const"),
+            ):
+                compare(case, f"{candidate}/{reference}", variant, candidate, variant, reference)
+    result = summarize(rows, warnings, minimum_effect)
+    result["codegen"] = codegen
+    result["goals"] = evaluate(rows, variants, codegen=codegen)
+    return result
 
 
 def summarize(
@@ -218,6 +241,7 @@ def summarize(
     for row in rows:
         floor = noise_floors.get(row["floor_group"])
         row["noise_floor"] = floor
+        row["minimum_effect"] = minimum_effect
         row["significant"] = (
             row["comparison"] != "A/A"
             and row["rounds"] >= 5

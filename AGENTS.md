@@ -9,9 +9,9 @@ SIMD-optimized `memcpy`/`memmove` in Zig. Goal: match or beat platform libc.
 - `src/common.zig` — shared SIMD load/store primitives, `chunk_bytes`/`stride`.
 - `src/forward.zig` — overlap-safe forward kernel.
 - `src/memcpy.zig`, `src/memmove.zig` — copy/move policy decisions and Flags.
-- `src/bench_fastmem.zig` — benchmark harness: builtin vs fastmem vs optional
-  libc; 9 samples per case with p50/p95; warmup 20 ms, samples 60 ms;
-  benchstat-compatible output lines.
+- `src/bench_fastmem.zig` — schema-v2 JSONL measurements of builtin, glibc,
+  fastmem_abi, and fastmem_inline. Const cases compare builtin_const and
+  fastmem_inline. Defaults: 10 ms warmup, 20 ms samples, balanced sample counts.
 - `src/asm_probe.zig` — C-ABI exports (`fastmem_copy` etc.) for asm inspection.
 - `src/libc_probe.zig` — `dlsym` probe reporting which libc symbols a build
   actually resolves to (JSON on stdout).
@@ -88,5 +88,5 @@ toolchain. Nothing has been benchmarked on 0.16 yet.
 - `std.Target.Cpu.Model` is a struct; compare by pointer:
   `builtin.cpu.model == &std.Target.aarch64.cpu.generic`.
 - Vector width: `std.simd.suggestVectorLength(u8)` — 16 on NEON, 32 on AVX2.
-- Run `ziglint src/` before calling work done; pre-existing warnings in
-  `bench_fastmem.zig` long lines are known and tolerated.
+- Run `ziglint src/` before completion. Existing warnings remain in the kernels
+  and `src/asm_probe.zig`. Modified benchmark files must pass lint.

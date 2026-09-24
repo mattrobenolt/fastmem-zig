@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,8 @@ from typing import Any
 from ec2bench.config import Config
 from ec2bench.parallel import Outcome, parallel
 from ec2bench.runs import git
+from fastmem_bench.codegen import inspect as inspect_codegen
+from fastmem_bench.jsonl import Codegen
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ class Build:
     target: str
     prefix: Path
     cache_key: str
+    codegen: dict[str, Any] | None = None
 
 
 def source_hash(root: Path) -> str:
@@ -99,6 +103,7 @@ def build_all(
             source.revision,
             "ReleaseFast",
             True,
+            "codegen-v1",
         ]
         key = hashlib.sha256(json.dumps(key_data).encode()).hexdigest()
         prefix = config.cache_dir / "build" / key
@@ -131,6 +136,9 @@ def build_all(
                 for binary in ("bench-fastmem", "libc-probe"):
                     if not (temporary / "bin" / binary).is_file():
                         raise FileNotFoundError(f"Build did not install {binary}")
+                verify_builtin_calls(temporary / "bin/bench-fastmem")
+                evidence = inspect_codegen(temporary / "bin/bench-fastmem")
+                (temporary / "bin/codegen.json").write_text(json.dumps(evidence, indent=2) + "\n")
                 (temporary / "complete.json").write_text(
                     json.dumps({"key": key_data, "command": args})
                 )
@@ -145,15 +153,52 @@ def build_all(
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
-        return Build(source, target, prefix, key)
+        return Build(source, target, prefix, key, load_codegen(prefix))
 
     return parallel(pairs, build, workers=os.cpu_count() or 1)
+
+
+def load_codegen(prefix: Path) -> dict[str, Any]:
+    evidence = Codegen.model_validate(json.loads((prefix / "bin/codegen.json").read_text()))
+    digest = hashlib.sha256((prefix / "bin/bench-fastmem").read_bytes()).hexdigest()
+    if evidence.binary_sha256 != digest:
+        raise ValueError(f"Cached codegen evidence disagrees with {prefix}")
+    return evidence.model_dump()
+
+
+def verify_builtin_calls(binary: Path) -> None:
+    """Prove that startup @extern evidence names the actual wrapper callees."""
+    symbols = subprocess.run(
+        ["llvm-nm", str(binary)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    for name in ("memcpy", "memmove", "memset"):
+        if not re.search(rf"^[0-9a-f]+ t {name}$", symbols, re.MULTILINE):
+            raise ValueError(f"{binary}: {name} is not local executable text")
+        assembly = subprocess.run(
+            ["llvm-objdump", "-d", f"--disassemble-symbols=builtin_{name}", str(binary)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+        if f"<{name}>" not in assembly or f"<{name}@plt>" in assembly:
+            raise ValueError(f"{binary}: builtin_{name} does not call the local {name}")
 
 
 def disassemble(build: Build, destination: Path) -> str | None:
     binary = build.prefix / "bin/bench-fastmem"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    expected = {"fastmem_copy", "fastmem_move", "builtin_memcpy", "builtin_memmove"}
+    expected = {
+        "fastmem_copy",
+        "fastmem_move",
+        "builtin_memcpy",
+        "builtin_memmove",
+        "builtin_memset",
+    }
     try:
         symbols = subprocess.run(
             ["llvm-objdump", "--syms", str(binary)],
@@ -166,7 +211,15 @@ def disassemble(build: Build, destination: Path) -> str | None:
             {
                 line.split()[-1]
                 for line in symbols.splitlines()
-                if line.split() and line.split()[-1].startswith(("fastmem_", "builtin_"))
+                if line.split()
+                and line.split()[-1].startswith(
+                    (
+                        "fastmem_",
+                        "builtin_",
+                        "bench_fastmem.runLoop",
+                        "bench_fastmem.runFastmemInline",
+                    )
+                )
             }
         )
         missing = expected - set(names)
@@ -204,7 +257,11 @@ def provenance(sources: list[Source], results: dict[str, Outcome[Build]]) -> dic
             for source in sources
         ],
         "builds": {
-            key: {"cache_key": result.value.cache_key, "prefix": str(result.value.prefix)}
+            key: {
+                "cache_key": result.value.cache_key,
+                "prefix": str(result.value.prefix),
+                "codegen": result.value.codegen,
+            }
             if result.value
             else {"error": str(result.error)}
             for key, result in results.items()

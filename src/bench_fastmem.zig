@@ -1,1218 +1,1041 @@
-//! Measurement binary for the fastmem benchmark fleet.
-//!
-//! stdout is JSONL (schema v1, see docs/bench-design.md). stderr is free
-//! text diagnostics. The binary measures; it does not format for humans.
+//! Measurement binary, schema v2. See docs/bench-design.md.
+//! All timings use independent code. No external memory implementation is copied here.
 
 const std = @import("std");
-const Io = std.Io;
-const mem = std.mem;
-const math = std.math;
-const simd = std.simd;
-const assert = std.debug.assert;
 const builtin = @import("builtin");
-
-const bench_options = @import("bench_options");
 const fastmem = @import("fastmem");
+const options = @import("bench_options");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+const mem = std.mem;
+const fmt = std.fmt;
+const math = std.math;
+const testing = std.testing;
+const linux = std.os.linux;
+const ArrayList = std.ArrayList;
+const posix = std.posix;
+const time = std.time;
+const process = std.process;
+const meta = std.meta;
+const json = std.json;
+const print = std.debug.print;
+const page_size_min = std.heap.page_size_min;
+const DefaultPrng = std.Random.DefaultPrng;
+const c = @cImport({
+    @cDefine("_GNU_SOURCE", "1");
+    @cInclude("dlfcn.h");
+    @cInclude("link.h");
+});
 
-const has_libc: bool = bench_options.link_libc;
-const rev: []const u8 = bench_options.rev;
-
-// Keep in sync with src/common.zig.
-const chunk_bytes = @min(simd.suggestVectorLength(u8) orelse 16, 32);
-
-const seed_target_bytes_per_case = 32 * 1024 * 1024;
-const iterations_seed_min = 256;
-const iterations_seed_max = 4_000_000;
-const iterations_hard_max = 64 * 1024 * 1024;
-
-const dist_seq_len = 4096;
-
-const standard_sizes = [_]usize{
+const chunk_bytes = @min(std.simd.suggestVectorLength(u8) orelse 16, 32);
+const standard_sizes = [_]u32{
     0,       1,    2,    3,    4,    7,     8,     15,
     16,      24,   31,   32,   48,   63,    64,    96,
     127,     128,  192,  255,  256,  384,   511,   512,
     768,     1024, 2048, 4096, 8192, 16384, 65536, 262144,
     1048576,
 };
+const quick_sizes = [_]u32{ 8, 32, 64, 256, 1024, 4096, 16384, 262144 };
+const large_sizes = [_]u32{ 1 << 20, 4 << 20, 16 << 20, 64 << 20 };
+const const_sizes = [_]u32{ 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256 };
+const max_size = 1 << 30;
+const seq_len = 4096;
+const max_iters = 1 << 30;
+const set_value = 0xa5;
+const has_fastmem_set = @hasDecl(fastmem, "set");
+const Op = enum { copy, move, set };
+const Impl = enum { builtin, glibc, fastmem_abi, fastmem_inline, builtin_const };
+const Suite = enum { quick, standard, large, @"const", dist };
+const Mode = enum { indirect, fastmem_inline, builtin_const };
+const CopyFn = *const fn ([*]u8, [*]const u8, usize) callconv(.c) [*]u8;
+const SetFn = *const fn ([*]u8, c_int, usize) callconv(.c) [*]u8;
 
-const quick_sizes = [_]usize{ 8, 32, 64, 256, 1024, 4096, 16384, 262144 };
-
-const move_gaps = [_]usize{ 1, chunk_bytes - 1, chunk_bytes + 1 };
-
-const CopyProfile = struct {
-    name: []const u8,
-    src_off: usize,
-    dst_off: usize,
-};
-
-const copy_profiles = [_]CopyProfile{
-    .{ .name = "aligned", .src_off = 0, .dst_off = 0 },
-    .{ .name = "misaligned", .src_off = 1, .dst_off = 3 },
-    .{
-        .name = "cross-lane",
-        .src_off = chunk_bytes - 1,
-        .dst_off = chunk_bytes / 2,
-    },
-};
-
-const Op = enum { copy, move };
-const Impl = enum { builtin, fastmem, libc };
-const Suite = enum { quick, standard, dist };
-const DistKind = enum { small, mixed };
-const MoveDirection = enum { fwd, bwd };
-
-// The benchmark calls every implementation through one of these exported
-// entry points, invoked with @call(.never_inline) at the loop site (the
-// 0.16 grammar cannot combine export and noinline on one declaration).
-// The symbols are intact in the binary for the harness to disassemble,
-// and the loop really executes them.
-export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
-    fastmem.copy(u8, dst[0..len], src[0..len]);
-}
-
-export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
-    fastmem.move(u8, dst[0..len], src[0..len]);
-}
-
-export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
+noinline fn builtinCopy(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) [*]u8 {
     @memcpy(dst[0..len], src[0..len]);
+    return dst;
 }
-
-export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
+noinline fn builtinMove(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) [*]u8 {
     @memmove(dst[0..len], src[0..len]);
+    return dst;
+}
+noinline fn builtinSet(dst: [*]u8, value: c_int, len: usize) callconv(.c) [*]u8 {
+    @memset(dst[0..len], @truncate(@as(c_uint, @bitCast(value))));
+    return dst;
+}
+noinline fn fastmemCopy(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) [*]u8 {
+    fastmem.copy(u8, dst[0..len], src[0..len]);
+    return dst;
+}
+noinline fn fastmemMove(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) [*]u8 {
+    fastmem.move(u8, dst[0..len], src[0..len]);
+    return dst;
+}
+noinline fn fastmemSet(dst: [*]u8, value: c_int, len: usize) callconv(.c) [*]u8 {
+    if (has_fastmem_set) fastmem.set(u8, dst[0..len], @truncate(@as(c_uint, @bitCast(value))));
+    return dst;
+}
+comptime {
+    @export(&builtinCopy, .{ .name = "builtin_memcpy" });
+    @export(&builtinMove, .{ .name = "builtin_memmove" });
+    @export(&builtinSet, .{ .name = "builtin_memset" });
+    @export(&fastmemCopy, .{ .name = "fastmem_copy" });
+    @export(&fastmemMove, .{ .name = "fastmem_move" });
+    if (has_fastmem_set) @export(&fastmemSet, .{ .name = "fastmem_set" });
 }
 
-extern fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
-extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
+const Evidence = struct {
+    address: u64,
+    dli_fname: []const u8,
+    dli_fbase: u64,
+    offset: u64,
 
-fn libcMemcpy(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) void {
-    _ = memcpy(dst, src, len);
-}
-
-fn libcMemmove(dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) void {
-    _ = memmove(dst, src, len);
-}
-
-const OpFn = fn (dst: [*]u8, src: [*]const u8, len: usize) callconv(.c) void;
-
-// The libc externs are only linked when has_libc. Map the libc slot to a
-// harmless function otherwise so comptime instantiation of every Impl
-// branch stays valid; the CLI never selects libc in a no-libc build.
-fn copyFnFor(comptime impl: Impl) OpFn {
-    return switch (impl) {
-        .builtin => builtin_memcpy,
-        .fastmem => fastmem_copy,
-        .libc => if (has_libc) libcMemcpy else builtin_memcpy,
-    };
-}
-
-fn moveFnFor(comptime impl: Impl) OpFn {
-    return switch (impl) {
-        .builtin => builtin_memmove,
-        .fastmem => fastmem_move,
-        .libc => if (has_libc) libcMemmove else builtin_memmove,
-    };
-}
-
-// ---------------------------------------------------------------------------
-// perf_event_open counter group (Linux only)
-// ---------------------------------------------------------------------------
-
-const linux = std.os.linux;
-
-const perf_format_group: u64 = 0x8;
-const perf_event_ioc_enable: u32 = 0x2400;
-const perf_event_ioc_disable: u32 = 0x2401;
-const perf_event_ioc_reset: u32 = 0x2403;
-
-const perf_event_names = [_][]const u8{ "cycles", "instructions", "ref-cycles" };
-
-const Counters = struct {
-    cycles: u64,
-    instructions: u64,
-    ref_cycles: ?u64,
-};
-
-const Perf = struct {
-    leader_fd: i32,
-    member_fds: [2]i32 = undefined,
-    n_events: usize,
-
-    const want_ref_cycles = builtin.target.cpu.arch == .x86_64 or
-        builtin.target.cpu.arch == .x86;
-
-    fn eventNames(self: *const Perf) []const []const u8 {
-        return perf_event_names[0..self.n_events];
-    }
-
-    fn begin(self: *const Perf) void {
-        _ = linux.ioctl(self.leader_fd, perf_event_ioc_reset, 0);
-        _ = linux.ioctl(self.leader_fd, perf_event_ioc_enable, 0);
-    }
-
-    fn end(self: *const Perf) ?Counters {
-        _ = linux.ioctl(self.leader_fd, perf_event_ioc_disable, 0);
-        var data: [4]u64 = .{ 0, 0, 0, 0 };
-        const bytes = mem.sliceAsBytes(data[0 .. 1 + self.n_events]);
-        const n = std.posix.read(self.leader_fd, bytes) catch return null;
-        if (n != bytes.len or data[0] != self.n_events) return null;
+    fn resolve(ptr: *const anyopaque) !Evidence {
+        var info: c.Dl_info = mem.zeroes(c.Dl_info);
+        if (c.dladdr(ptr, &info) == 0 or info.dli_fname == null or info.dli_fbase == null)
+            return error.DladdrFailed;
+        const address = @intFromPtr(ptr);
+        const base = @intFromPtr(info.dli_fbase);
+        if (address < base) return error.InvalidLibraryBase;
         return .{
-            .cycles = data[1],
-            .instructions = data[2],
-            .ref_cycles = if (want_ref_cycles) data[3] else null,
+            .address = address,
+            .dli_fname = mem.span(info.dli_fname),
+            .dli_fbase = base,
+            .offset = address - base,
         };
     }
+};
+const Resolution = struct {
+    glibc: Evidence,
+    builtin: Evidence,
+};
+const Symbols = struct {
+    handle: *anyopaque,
+    libc_path: []const u8,
+    libc_base: u64,
+    resolution: [3]Resolution,
+    copy: CopyFn,
+    move: CopyFn,
+    set: SetFn,
 
-    fn deinit(self: *Perf) void {
-        for (self.member_fds[0 .. self.n_events - 1]) |fd| _ = linux.close(fd);
-        _ = linux.close(self.leader_fd);
+    fn init() !Symbols {
+        const handle = c.dlopen("libc.so.6", c.RTLD_NOW | c.RTLD_LOCAL) orelse
+            return error.LibcDlopenFailed;
+        errdefer _ = c.dlclose(handle);
+        var map: ?*c.struct_link_map = null;
+        if (c.dlinfo(handle, c.RTLD_DI_LINKMAP, @ptrCast(&map)) != 0 or map == null)
+            return error.LibcLinkMapFailed;
+        const library = map.?;
+        const path = mem.span(library.l_name);
+        const own = try Evidence.resolve(@ptrCast(&builtinCopy));
+        var result: Symbols = undefined;
+        result.handle = handle;
+        result.libc_path = path;
+        result.libc_base = library.l_addr;
+        inline for (.{ "memcpy", "memmove", "memset" }, 0..) |name, index| {
+            const ptr = c.dlsym(handle, name) orelse return error.LibcDlsymFailed;
+            const reference = try Evidence.resolve(ptr);
+            const local = try Evidence.resolve(@ptrCast(@extern(
+                if (index == 2) SetFn else CopyFn,
+                .{ .name = name },
+            )));
+            try validateResolution(reference, local, own, path, library.l_addr);
+            result.resolution[index] = .{ .glibc = reference, .builtin = local };
+            switch (index) {
+                0 => result.copy = @ptrCast(@alignCast(ptr)),
+                1 => result.move = @ptrCast(@alignCast(ptr)),
+                2 => result.set = @ptrCast(@alignCast(ptr)),
+                else => unreachable,
+            }
+        }
+        return result;
+    }
+    fn deinit(self: *Symbols) void {
+        _ = c.dlclose(self.handle);
         self.* = undefined;
     }
 };
 
-const PerfInit = union(enum) {
-    ok: Perf,
-    err: []const u8,
+fn validateResolution(
+    reference: Evidence,
+    local: Evidence,
+    own: Evidence,
+    path: []const u8,
+    base: u64,
+) !void {
+    if (!mem.eql(u8, reference.dli_fname, path) or reference.dli_fbase != base or
+        reference.dli_fbase == own.dli_fbase or !mem.endsWith(u8, path, "/libc.so.6"))
+        return error.GlibcResolvedOutsideLibc;
+    if (local.dli_fbase == base or local.dli_fbase != own.dli_fbase)
+        return error.BuiltinDidNotResolveToExecutable;
+}
+
+test "resolution rejects executable glibc and libc builtins" {
+    var symbols = try Symbols.init();
+    defer symbols.deinit();
+    const pair = symbols.resolution[0];
+    const own = try Evidence.resolve(@ptrCast(&builtinCopy));
+    try testing.expectError(
+        error.GlibcResolvedOutsideLibc,
+        validateResolution(pair.builtin, pair.builtin, own, symbols.libc_path, symbols.libc_base),
+    );
+    try testing.expectError(
+        error.BuiltinDidNotResolveToExecutable,
+        validateResolution(pair.glibc, pair.glibc, own, symbols.libc_path, symbols.libc_base),
+    );
+}
+
+const Counts = struct {
+    cycles: u64,
+    instructions: u64,
+    ref_cycles: ?u64,
+    time_enabled: u64,
+    time_running: u64,
 };
-
-fn perfInit(err_buf: []u8) PerfInit {
-    if (builtin.target.os.tag != .linux) {
-        return .{ .err = "perf_event_open requires linux" };
-    }
-
-    const n_events: usize = if (Perf.want_ref_cycles) 3 else 2;
-    const configs = [3]linux.PERF.COUNT.HW{
-        .CPU_CYCLES,
-        .INSTRUCTIONS,
-        .REF_CPU_CYCLES,
-    };
-
-    var attr: linux.perf_event_attr = .{};
-    attr.type = .HARDWARE;
-    attr.read_format = perf_format_group;
-    attr.flags.disabled = true;
-    attr.flags.exclude_kernel = true;
-    attr.flags.exclude_hv = true;
-
-    var perf: Perf = .{ .leader_fd = -1, .n_events = n_events };
-    for (configs[0..n_events], 0..) |config, i| {
+const PerfError = struct {
+    event: []const u8,
+    action: []const u8,
+    detail: []const u8,
+};
+const PerfSystem = struct {
+    fn open(config: linux.PERF.COUNT.HW, group: i32) usize {
+        var attr: linux.perf_event_attr = .{};
+        attr.type = .HARDWARE;
         attr.config = @intFromEnum(config);
-        const group_fd: i32 = if (i == 0) -1 else perf.leader_fd;
-        const rc = linux.perf_event_open(&attr, 0, -1, group_fd, 0);
-        const err = linux.errno(rc);
-        if (err != .SUCCESS) {
-            if (perf.leader_fd >= 0) {
-                for (perf.member_fds[0 .. i - 1]) |fd| _ = linux.close(fd);
-                _ = linux.close(perf.leader_fd);
+        attr.read_format = 8 | 1 | 2; // GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING.
+        attr.flags.disabled = group == -1;
+        attr.flags.exclude_kernel = true;
+        attr.flags.exclude_hv = true;
+        return linux.perf_event_open(&attr, 0, -1, group, 0);
+    }
+    fn close(fd: i32) void {
+        _ = linux.close(fd);
+    }
+};
+const Perf = struct {
+    fds: [3]i32 = .{ -1, -1, -1 },
+    failure: ?PerfError = null,
+    warning: ?PerfError = null,
+    event_count: u8 = 2,
+    previous_enabled: u64 = 0,
+    previous_running: u64 = 0,
+    const names = [_][]const u8{ "cycles", "instructions", "ref-cycles" };
+    const group_flag = 1;
+
+    fn init() Perf {
+        var self = openEvents(PerfSystem, builtin.cpu.arch == .x86_64);
+        self.begin();
+        _ = self.end();
+        return self;
+    }
+    fn openEvents(comptime system: type, want_ref: bool) Perf {
+        var self: Perf = .{ .event_count = if (want_ref) 3 else 2 };
+        const configs = [_]linux.PERF.COUNT.HW{ .CPU_CYCLES, .INSTRUCTIONS, .REF_CPU_CYCLES };
+        for (0..2) |_| {
+            for (configs[0..self.event_count], 0..) |config, index| {
+                const rc = system.open(config, self.fds[0]);
+                if (linux.errno(rc) != .SUCCESS) {
+                    self.failure = .{
+                        .event = names[index],
+                        .action = "perf_event_open",
+                        .detail = @tagName(linux.errno(rc)),
+                    };
+                    self.closeWith(system);
+                    if (index != 2) return self;
+                    // Unsupported ref-cycles must not hide cycles and instructions.
+                    self.warning = self.failure;
+                    self.failure = null;
+                    self.event_count = 2;
+                    break;
+                }
+                self.fds[index] = @intCast(rc);
             }
-            const msg = std.fmt.bufPrint(err_buf, "perf_event_open({s}): errno {s}", .{
-                perf_event_names[i],
-                @tagName(err),
-            }) catch "perf_event_open failed";
-            return .{ .err = msg };
+            if (self.fds[0] >= 0) return self;
         }
-        const fd: i32 = @intCast(rc);
-        if (i == 0) perf.leader_fd = fd else perf.member_fds[i - 1] = fd;
+        unreachable;
     }
-    return .{ .ok = perf };
-}
-
-// ---------------------------------------------------------------------------
-// Cases
-// ---------------------------------------------------------------------------
-
-const DistEntry = struct {
-    size: u32,
-    src_off: u32,
-    dst_off: u32,
-};
-
-const CopyCase = struct {
-    id: []const u8,
-    profile: []const u8,
-    size: usize,
-    src_off: usize,
-    dst_off: usize,
-};
-
-const MoveCase = struct {
-    id: []const u8,
-    profile: []const u8,
-    size: usize,
-    gap: usize,
-    direction: MoveDirection,
-};
-
-const DistCase = struct {
-    id: []const u8,
-    op: Op,
-    kind: DistKind,
-    mean_x10: u64,
-    seq: *const [dist_seq_len]DistEntry,
-};
-
-const Case = union(enum) {
-    copy: CopyCase,
-    move: MoveCase,
-    dist: DistCase,
-
-    fn id(self: Case) []const u8 {
-        return switch (self) {
-            .copy => |c| c.id,
-            .move => |m| m.id,
-            .dist => |d| d.id,
-        };
+    fn closeWith(self: *Perf, comptime system: type) void {
+        for (&self.fds) |*fd| {
+            if (fd.* >= 0) system.close(fd.*);
+            fd.* = -1;
+        }
     }
-};
-
-const DistSpec = struct {
-    max_size: u32,
-    off_range: u32,
-};
-
-fn distSpec(kind: DistKind) DistSpec {
-    return switch (kind) {
-        .small => .{ .max_size = 256, .off_range = 128 },
-        .mixed => .{ .max_size = 16384, .off_range = 512 },
-    };
-}
-
-fn genDistSeq(
-    kind: DistKind,
-    op: Op,
-    seed: u64,
-    seq: *[dist_seq_len]DistEntry,
-) u64 {
-    const op_salt: u64 = switch (op) {
-        .copy => 0x9E3779B97F4A7C15,
-        .move => 0xD1B54A32D192ED03,
-    };
-    const kind_salt: u64 = switch (kind) {
-        .small => 0x2545F4914F6CDD1D,
-        .mixed => 0xA24BAED4963EE407,
-    };
-    var prng = std.Random.DefaultPrng.init(seed +% op_salt +% kind_salt);
-    const random = prng.random();
-    const spec = distSpec(kind);
-
-    var sum: u64 = 0;
-    for (seq) |*e| {
-        const size: u32 = switch (kind) {
-            // Two-draw minimum biases the distribution toward small sizes.
-            .small => @min(
-                random.intRangeAtMost(u32, 0, spec.max_size),
-                random.intRangeAtMost(u32, 0, spec.max_size),
-            ),
-            // Log-uniform over [0, max_size].
-            .mixed => blk: {
-                const u = random.float(f64);
-                const max_plus_one = @as(f64, @floatFromInt(spec.max_size + 1));
-                const v = @exp(@log(max_plus_one) * u) - 1.0;
-                const as_int: u32 = @trunc(v);
-                break :blk as_int;
+    fn close(self: *Perf) void {
+        self.closeWith(PerfSystem);
+    }
+    fn eventNames(self: Perf) []const []const u8 {
+        return names[0..self.event_count];
+    }
+    fn errorMessage(self: Perf, buffer: []u8) ?[]const u8 {
+        const first = self.warning orelse self.failure orelse return null;
+        const message = fmt.bufPrint(buffer, "{s}({s}): {s}", .{
+            first.action, first.event, first.detail,
+        }) catch unreachable;
+        if (self.warning != null) {
+            if (self.failure) |failure| {
+                const rest = fmt.bufPrint(buffer[message.len..], ". {s}({s}): {s}", .{
+                    failure.action, failure.event, failure.detail,
+                }) catch unreachable;
+                return buffer[0 .. message.len + rest.len];
+            }
+        }
+        return message;
+    }
+    fn ioctl(self: *Perf, request: u32) bool {
+        const err = linux.errno(linux.ioctl(self.fds[0], request, group_flag));
+        if (err == .SUCCESS) return true;
+        self.failure = .{
+            .event = "cycles group",
+            .action = switch (request) {
+                0x2403 => "reset",
+                0x2400 => "enable",
+                else => "disable",
             },
+            .detail = @tagName(err),
         };
-        e.* = .{
-            .size = size,
-            .src_off = random.intRangeAtMost(u32, 0, spec.off_range - 1),
-            .dst_off = random.intRangeAtMost(u32, 0, spec.off_range - 1),
-        };
-        sum += size;
+        self.close();
+        return false;
     }
-    // Mean size in tenths of a byte, rounded.
-    return (sum * 10 + dist_seq_len / 2) / dist_seq_len;
+    fn begin(self: *Perf) void {
+        if (self.failure != null) return;
+        if (!self.ioctl(0x2403)) return; // RESET the entire group, not only the leader.
+        _ = self.ioctl(0x2400);
+    }
+    fn end(self: *Perf) ?Counts {
+        if (self.failure != null or !self.ioctl(0x2401)) return null;
+        var data: [6]u64 = undefined;
+        const bytes = mem.sliceAsBytes(data[0 .. 3 + self.event_count]);
+        const n = posix.read(self.fds[0], bytes) catch |err| {
+            self.failure = .{
+                .event = "cycles group",
+                .action = "read",
+                .detail = @errorName(err),
+            };
+            self.close();
+            return null;
+        };
+        if (n != bytes.len or data[0] != self.event_count or
+            data[1] < self.previous_enabled or data[2] < self.previous_running)
+        {
+            self.failure = .{ .event = "cycles group", .action = "read", .detail = "invalid data" };
+            self.close();
+            return null;
+        }
+        // PERF_EVENT_IOC_RESET does not reset the time fields. Report sample deltas.
+        const enabled = data[1] - self.previous_enabled;
+        const running = data[2] - self.previous_running;
+        self.previous_enabled = data[1];
+        self.previous_running = data[2];
+        return .{
+            .cycles = data[3],
+            .instructions = data[4],
+            .ref_cycles = if (self.event_count == 3) data[5] else null,
+            .time_enabled = enabled,
+            .time_running = running,
+        };
+    }
+};
+
+test "perf retries without ref-cycles and identifies the failed event" {
+    const Fake = struct {
+        var opens: u8 = 0;
+        var closes: u8 = 0;
+        fn open(config: linux.PERF.COUNT.HW, group: i32) usize {
+            opens += 1;
+            if (config == .CPU_CYCLES) std.debug.assert(group == -1);
+            if (config == .REF_CPU_CYCLES)
+                return @bitCast(-@as(isize, @intFromEnum(linux.E.NOENT)));
+            return 100 + @as(usize, opens);
+        }
+        fn close(_: i32) void {
+            closes += 1;
+        }
+    };
+    var perf = Perf.openEvents(Fake, true);
+    defer perf.closeWith(Fake);
+    try testing.expectEqual(@as(u8, 5), Fake.opens);
+    try testing.expectEqual(@as(u8, 2), Fake.closes);
+    try testing.expectEqual(@as(u8, 2), perf.event_count);
+    try testing.expect(perf.failure == null);
+    var buffer: [512]u8 = undefined;
+    try testing.expectEqualStrings(
+        "perf_event_open(ref-cycles): NOENT",
+        perf.errorMessage(&buffer).?,
+    );
+    try testing.expectEqualStrings("instructions", perf.eventNames()[1]);
 }
 
-// ---------------------------------------------------------------------------
-// Config / CLI
-// ---------------------------------------------------------------------------
-
-const max_filters = 8;
+test "perf consecutive samples reset instructions for the whole group" {
+    var perf: Perf = .init();
+    defer perf.close();
+    if (perf.failure != null) {
+        var buffer: [512]u8 = undefined;
+        print("perf test skipped: {s}\n", .{perf.errorMessage(&buffer).?});
+        return error.SkipZigTest;
+    }
+    var counts: [2]Counts = undefined;
+    for (&counts, 0..) |*count, index| {
+        perf.begin();
+        var value: u64 = 1;
+        const iterations: u64 = if (index == 0) 2_000_000 else 100_000;
+        for (0..iterations) |_| {
+            value = value *% 6364136223846793005 +% 1;
+            mem.doNotOptimizeAway(value);
+        }
+        count.* = perf.end() orelse return error.SkipZigTest;
+    }
+    if (counts[0].time_running == 0 or counts[1].time_running == 0) return error.SkipZigTest;
+    try testing.expect(counts[0].instructions > 0 and counts[1].instructions > 0);
+    try testing.expect(counts[1].instructions < counts[0].instructions / 2);
+}
 
 const Config = struct {
     suite: Suite = .standard,
-    filters: [max_filters][]const u8 = undefined,
-    n_filters: usize = 0,
-    impls: [3]Impl = undefined,
-    n_impls: usize = 0,
-    samples: usize = 5,
-    sample_ms: u64 = 20,
-    warmup_ms: u64 = 10,
+    impls: []const Impl = &.{ .builtin, .glibc, .fastmem_abi, .fastmem_inline, .builtin_const },
+    filters: ArrayList([]const u8) = .empty,
+    samples: u32 = 0,
+    sample_ms: u32 = 20,
+    warmup_ms: u32 = 10,
     seed: u64 = 1,
+    dist_file: ?[]const u8 = null,
+    codegen_file: ?[]const u8 = null,
     list: bool = false,
 
-    fn sampleNs(self: *const Config) u64 {
-        return self.sample_ms * std.time.ns_per_ms;
-    }
-
-    fn warmupNs(self: *const Config) u64 {
-        return self.warmup_ms * std.time.ns_per_ms;
-    }
-
-    fn matches(self: *const Config, case_id: []const u8) bool {
-        if (self.n_filters == 0) return true;
-        for (self.filters[0..self.n_filters]) |f| {
-            if (mem.find(u8, case_id, f) != null) return true;
-        }
+    fn matches(self: Config, id: []const u8) bool {
+        if (self.filters.items.len == 0) return true;
+        for (self.filters.items) |filter| if (mem.find(u8, id, filter) != null) return true;
         return false;
     }
 };
-
-const usage_text =
-    \\usage: bench-fastmem [--suite quick|standard|dist] [--filter <substring>]
-    \\                      [--impl builtin,fastmem,libc] [--samples N]
-    \\                      [--sample-ms M] [--warmup-ms W] [--seed S] [--list]
-    \\
-;
-
-fn fail(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("bench-fastmem: " ++ fmt ++ "\n", args);
-    std.debug.print("{s}", .{usage_text});
-    std.process.exit(1);
-}
-
-fn takeValue(args: []const [:0]const u8, i: *usize, flag: []const u8) []const u8 {
-    const arg = args[i.*];
-    if (mem.find(u8, arg, "=")) |eq| return arg[eq + 1 ..];
-    i.* += 1;
-    if (i.* >= args.len) fail("flag {s} needs a value", .{flag});
-    return args[i.*];
-}
-
-fn parseUsize(value: []const u8, flag: []const u8) usize {
-    return std.fmt.parseInt(usize, value, 10) catch
-        fail("flag {s} wants an integer, got '{s}'", .{ flag, value });
-}
-
-fn parseImpls(value: []const u8, cfg: *Config) void {
-    var n: usize = 0;
-    var it = mem.splitScalar(u8, value, ',');
-    while (it.next()) |name| {
-        const impl = std.meta.stringToEnum(Impl, name) orelse
-            fail("unknown impl '{s}'", .{name});
-        if (impl == .libc and !has_libc)
-            fail("impl 'libc' not available: build with -Dlink-libc=true", .{});
-        if (n >= cfg.impls.len) fail("too many impls", .{});
-        cfg.impls[n] = impl;
-        n += 1;
-    }
-    if (n == 0) fail("--impl needs at least one impl", .{});
-    cfg.n_impls = n;
-}
-
-fn parseArgs(args: []const [:0]const u8) Config {
+fn parseArgs(arena: Allocator, args: []const [:0]const u8) !Config {
     var cfg: Config = .{};
-    var impls_set = false;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        const flag = if (mem.find(u8, arg, "=")) |eq| arg[0..eq] else arg;
-
-        if (mem.eql(u8, flag, "--suite")) {
-            const value = takeValue(args, &i, "--suite");
-            cfg.suite = std.meta.stringToEnum(Suite, value) orelse
-                fail("unknown suite '{s}'", .{value});
-        } else if (mem.eql(u8, flag, "--filter")) {
-            if (cfg.n_filters >= max_filters) fail("too many --filter flags", .{});
-            cfg.filters[cfg.n_filters] = takeValue(args, &i, "--filter");
-            cfg.n_filters += 1;
-        } else if (mem.eql(u8, flag, "--impl")) {
-            parseImpls(takeValue(args, &i, "--impl"), &cfg);
-            impls_set = true;
-        } else if (mem.eql(u8, flag, "--samples")) {
-            cfg.samples = parseUsize(takeValue(args, &i, "--samples"), "--samples");
-            if (cfg.samples == 0) fail("--samples must be >= 1", .{});
-        } else if (mem.eql(u8, flag, "--sample-ms")) {
-            cfg.sample_ms = parseUsize(takeValue(args, &i, "--sample-ms"), "--sample-ms");
-            if (cfg.sample_ms == 0) fail("--sample-ms must be >= 1", .{});
-        } else if (mem.eql(u8, flag, "--warmup-ms")) {
-            cfg.warmup_ms = parseUsize(takeValue(args, &i, "--warmup-ms"), "--warmup-ms");
-        } else if (mem.eql(u8, flag, "--seed")) {
-            cfg.seed = parseUsize(takeValue(args, &i, "--seed"), "--seed");
-        } else if (mem.eql(u8, flag, "--list")) {
+    var index: u32 = 1;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (mem.eql(u8, arg, "--list")) {
             cfg.list = true;
-        } else {
-            fail("unknown argument '{s}'", .{arg});
+            continue;
         }
+        var parts = mem.splitScalar(u8, arg, '=');
+        const flag = parts.next().?;
+        const value = parts.next() orelse blk: {
+            index += 1;
+            if (index == args.len) return error.MissingFlagValue;
+            break :blk args[index];
+        };
+        if (mem.eql(u8, flag, "--suite")) {
+            cfg.suite = meta.stringToEnum(Suite, value) orelse return error.InvalidSuite;
+        } else if (mem.eql(u8, flag, "--impl")) {
+            var list: ArrayList(Impl) = .empty;
+            var names = mem.splitScalar(u8, value, ',');
+            while (names.next()) |name| {
+                const impl = meta.stringToEnum(Impl, name) orelse
+                    return error.InvalidImplementation;
+                if (mem.findScalar(Impl, list.items, impl) != null)
+                    return error.DuplicateImplementation;
+                try list.append(arena, impl);
+            }
+            cfg.impls = list.items;
+        } else if (mem.eql(u8, flag, "--filter")) {
+            try cfg.filters.append(arena, value);
+        } else if (mem.eql(u8, flag, "--dist-file")) {
+            cfg.dist_file = value;
+        } else if (mem.eql(u8, flag, "--codegen-file")) {
+            cfg.codegen_file = value;
+        } else if (mem.eql(u8, flag, "--seed")) {
+            cfg.seed = try fmt.parseInt(u64, value, 10);
+        } else if (mem.eql(u8, flag, "--samples")) {
+            cfg.samples = try fmt.parseInt(u32, value, 10);
+            if (cfg.samples == 0) return error.InvalidSampleCount;
+        } else if (mem.eql(u8, flag, "--sample-ms")) {
+            cfg.sample_ms = try fmt.parseInt(u32, value, 10);
+        } else if (mem.eql(u8, flag, "--warmup-ms")) {
+            cfg.warmup_ms = try fmt.parseInt(u32, value, 10);
+        } else return error.UnknownFlag;
     }
-
-    if (!impls_set) {
-        cfg.impls = .{ .builtin, .fastmem, .libc };
-        cfg.n_impls = if (has_libc) 3 else 2;
-    }
+    if (cfg.samples > 10000 or cfg.sample_ms == 0 or
+        cfg.sample_ms > 60000 or cfg.warmup_ms > 60000) return error.InvalidDurationOrSamples;
+    if (cfg.dist_file != null and cfg.suite != .dist) return error.DistFileRequiresDistSuite;
     return cfg;
 }
 
-// ---------------------------------------------------------------------------
-// JSONL output
-// ---------------------------------------------------------------------------
+const Entry = struct { size: u32, src_off: u32, dst_off: u32 };
+const Case = struct {
+    id: []const u8,
+    op: Op,
+    profile: []const u8,
+    size: f64,
+    max_len: u32,
+    src_off: u32 = 0,
+    dst_off: u32 = 0,
+    gap: ?u32 = null,
+    shared: bool = false,
+    seq: ?[]const Entry = null,
 
-fn writeJsonString(w: *Io.Writer, s: []const u8) !void {
-    try w.writeByte('"');
-    for (s) |ch| {
-        switch (ch) {
-            '"' => try w.writeAll("\\\""),
-            '\\' => try w.writeAll("\\\\"),
-            else => {
-                if (ch < 0x20) {
-                    try w.print("\\u{x:0>4}", .{ch});
-                } else {
-                    try w.writeByte(ch);
-                }
-            },
-        }
+    fn accepts(self: Case, impl: Impl) bool {
+        if (mem.eql(u8, self.profile, "const"))
+            return impl == .builtin_const or impl == .fastmem_inline;
+        if (impl == .builtin_const) return false;
+        return self.op != .set or has_fastmem_set or
+            (impl != .fastmem_abi and impl != .fastmem_inline);
     }
-    try w.writeByte('"');
-}
-
-fn writeOptU64(w: *Io.Writer, value: ?u64) !void {
-    if (value) |v| {
-        try w.print("{d}", .{v});
-    } else {
-        try w.writeAll("null");
-    }
-}
-
-fn emitMeta(
-    w: *Io.Writer,
-    cfg: *const Config,
-    perf: ?*const Perf,
-    perf_err: ?[]const u8,
-) !void {
-    try w.writeAll("{\"type\":\"meta\",\"schema\":1,\"rev\":");
-    try writeJsonString(w, rev);
-    try w.print(",\"zig\":\"{s}\",\"target\":\"{s}-{s}-{s}\",\"cpu\":\"{s}\"", .{
-        builtin.zig_version_string,
-        @tagName(builtin.target.cpu.arch),
-        @tagName(builtin.target.os.tag),
-        @tagName(builtin.target.abi),
-        builtin.target.cpu.model.name,
-    });
-    try w.print(",\"optimize\":\"{s}\",\"link_libc\":{},\"chunk_bytes\":{d}", .{
-        @tagName(builtin.mode),
-        has_libc,
-        chunk_bytes,
-    });
-    try w.print(",\"suite\":\"{s}\",\"seed\":{d},\"samples\":{d}", .{
-        @tagName(cfg.suite),
-        cfg.seed,
-        cfg.samples,
-    });
-    try w.print(",\"sample_ms\":{d},\"warmup_ms\":{d},\"impls\":[", .{
-        cfg.sample_ms,
-        cfg.warmup_ms,
-    });
-    for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
-        if (j > 0) try w.writeByte(',');
-        try writeJsonString(w, @tagName(impl));
-    }
-    try w.writeAll("],\"perf\":{\"available\":");
-    if (perf) |p| {
-        try w.writeAll("true,\"events\":[");
-        for (p.eventNames(), 0..) |name, j| {
-            if (j > 0) try w.writeByte(',');
-            try writeJsonString(w, name);
-        }
-        try w.writeAll("],\"error\":null}");
-    } else {
-        try w.writeAll("false,\"events\":[],\"error\":");
-        if (perf_err) |e| {
-            try writeJsonString(w, e);
-        } else {
-            try w.writeAll("null");
-        }
-        try w.writeByte('}');
-    }
-    try w.writeAll("}\n");
-}
-
-fn emitCaseLine(w: *Io.Writer, case: Case) !void {
-    try w.writeAll("{\"type\":\"case\",\"case\":");
-    try writeJsonString(w, case.id());
-    switch (case) {
-        .copy => |c| {
-            try w.writeAll(",\"op\":\"copy\",\"profile\":");
-            try writeJsonString(w, c.profile);
-            try w.print(",\"size\":{d},\"src_off\":{d},\"dst_off\":{d},\"gap\":null", .{
-                c.size,
-                c.src_off,
-                c.dst_off,
-            });
-        },
-        .move => |m| {
-            try w.writeAll(",\"op\":\"move\",\"profile\":");
-            try writeJsonString(w, m.profile);
-            try w.print(",\"size\":{d},\"src_off\":null,\"dst_off\":null,\"gap\":{d}", .{
-                m.size,
-                m.gap,
-            });
-        },
-        .dist => |d| {
-            try w.print(",\"op\":\"{s}\",\"profile\":\"dist\"", .{@tagName(d.op)});
-            try w.print(",\"size\":{d}.{d}", .{ d.mean_x10 / 10, d.mean_x10 % 10 });
-            try w.writeAll(",\"src_off\":null,\"dst_off\":null,\"gap\":null");
-        },
-    }
-    try w.writeAll("}\n");
-}
-
-fn emitSample(
-    w: *Io.Writer,
-    case: Case,
-    size_json: []const u8,
-    src_off: ?usize,
-    dst_off: ?usize,
-    gap: ?usize,
-    impl: Impl,
-    sample: usize,
-    r: RunResult,
-) !void {
-    try w.writeAll("{\"type\":\"sample\",\"case\":");
-    try writeJsonString(w, case.id());
-    switch (case) {
-        .copy => |c| {
-            try w.writeAll(",\"op\":\"copy\",\"profile\":");
-            try writeJsonString(w, c.profile);
-        },
-        .move => |m| {
-            try w.writeAll(",\"op\":\"move\",\"profile\":");
-            try writeJsonString(w, m.profile);
-        },
-        .dist => |d| {
-            try w.print(",\"op\":\"{s}\",\"profile\":\"dist\"", .{@tagName(d.op)});
-        },
-    }
-    try w.print(",\"size\":{s}", .{size_json});
-    try w.writeAll(",\"src_off\":");
-    try writeOptU64(w, src_off);
-    try w.writeAll(",\"dst_off\":");
-    try writeOptU64(w, dst_off);
-    try w.writeAll(",\"gap\":");
-    try writeOptU64(w, gap);
-    try w.print(",\"impl\":\"{s}\",\"sample\":{d},\"iters\":{d},\"ns\":{d}", .{
-        @tagName(impl),
-        sample,
-        r.iters,
-        r.ns,
-    });
-    try w.writeAll(",\"cycles\":");
-    try writeOptU64(w, if (r.counters) |c| c.cycles else null);
-    try w.writeAll(",\"instructions\":");
-    try writeOptU64(w, if (r.counters) |c| c.instructions else null);
-    try w.writeAll(",\"ref_cycles\":");
-    try writeOptU64(w, if (r.counters) |c| c.ref_cycles else null);
-    try w.writeAll("}\n");
-}
-
-// ---------------------------------------------------------------------------
-// Measurement loops
-// ---------------------------------------------------------------------------
-
-const RunResult = struct {
-    ns: u64,
-    iters: usize,
-    counters: ?Counters,
-    checksum: u64,
 };
-
-fn fillPattern(buffer: []u8, seed: u8) void {
-    for (buffer, 0..) |*b, i| {
-        b.* = @truncate(i * 131 + seed);
+fn addCase(arena: Allocator, cases: *ArrayList(Case), cfg: Config, case: Case) !void {
+    if (!cfg.matches(case.id)) return;
+    for (cfg.impls) |impl| {
+        if (case.accepts(impl)) {
+            try cases.append(arena, case);
+            return;
+        }
     }
 }
+fn fixedCase(arena: Allocator, op: Op, profile: []const u8, size: u32) !Case {
+    return .{
+        .id = try fmt.allocPrint(arena, "{s}/{s}/{d}", .{ @tagName(op), profile, size }),
+        .op = op,
+        .profile = profile,
+        .size = @floatFromInt(size),
+        .max_len = size,
+    };
+}
+const Weight = struct { size: u32, cumulative: f64 };
+fn readHistogram(arena: Allocator, io: Io, path: []const u8) ![]const Weight {
+    const bytes = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20));
+    const parsed = try json.parseFromSlice(json.Value, arena, bytes, .{});
+    if (parsed.value != .object) return error.HistogramMustBeObject;
+    var weights: ArrayList(Weight) = .empty;
+    var iterator = parsed.value.object.iterator();
+    var total: f64 = 0;
+    while (iterator.next()) |entry| {
+        const size = try fmt.parseInt(u32, entry.key_ptr.*, 10);
+        if (size > max_size) return error.HistogramSizeTooLarge;
+        const weight: f64 = switch (entry.value_ptr.*) {
+            .integer => |v| @floatFromInt(v),
+            .float => |v| v,
+            else => return error.InvalidHistogramWeight,
+        };
+        if (!math.isFinite(weight) or weight < 0) return error.InvalidHistogramWeight;
+        if (weight == 0) continue;
+        total += weight;
+        if (!math.isFinite(total)) return error.InvalidHistogramWeight;
+        try weights.append(arena, .{ .size = size, .cumulative = total });
+    }
+    if (total == 0) return error.EmptyHistogram;
+    return weights.items;
+}
+fn distribution(
+    arena: Allocator,
+    cfg: Config,
+    op: Op,
+    name: []const u8,
+    weights: ?[]const Weight,
+) !Case {
+    var prng = DefaultPrng.init(cfg.seed +% @as(u64, @intFromEnum(op)));
+    const random = prng.random();
+    const seq = try arena.create([seq_len]Entry);
+    var sum: u64 = 0;
+    var maximum: u32 = 0;
+    const off_max: u32 = if (mem.eql(u8, name, "small")) 127 else 511;
+    for (seq) |*entry| {
+        const size: u32 = if (weights) |hist| blk: {
+            const draw = random.float(f64) * hist[hist.len - 1].cumulative;
+            for (hist) |weight| if (draw < weight.cumulative) break :blk weight.size;
+            break :blk hist[hist.len - 1].size;
+        } else if (mem.eql(u8, name, "small")) @min(
+            random.intRangeAtMost(u32, 0, 256),
+            random.intRangeAtMost(u32, 0, 256),
+        ) else @trunc(@exp(@log(@as(f64, 16385)) * random.float(f64)) - 1);
+        entry.* = .{
+            .size = size,
+            .src_off = random.intRangeAtMost(u32, 0, off_max),
+            .dst_off = random.intRangeAtMost(u32, 0, off_max),
+        };
+        sum += size;
+        maximum = @max(maximum, size);
+    }
+    return .{
+        .id = try fmt.allocPrint(arena, "{s}/dist/{s}", .{ @tagName(op), name }),
+        .op = op,
+        .profile = "dist",
+        .size = @as(f64, @floatFromInt(sum)) / seq_len,
+        .max_len = maximum,
+        .shared = op == .move,
+        .seq = seq,
+    };
+}
+fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
+    var cases: ArrayList(Case) = .empty;
+    if (cfg.suite == .dist) {
+        const weights = if (cfg.dist_file) |path| try readHistogram(arena, io, path) else null;
+        for ([_]Op{ .copy, .move, .set }) |op| {
+            const names: []const []const u8 = if (weights != null)
+                &.{"file"}
+            else
+                &.{ "small", "mixed" };
+            for (names) |name|
+                try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, weights));
+        }
+    } else if (cfg.suite == .@"const") {
+        for (const_sizes) |size|
+            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+    } else {
+        const sizes: []const u32 = switch (cfg.suite) {
+            .quick => &quick_sizes,
+            .large => &large_sizes,
+            else => &standard_sizes,
+        };
+        for (sizes) |size| {
+            for ([_]Op{ .copy, .set }) |op| {
+                const profiles: []const []const u8 = if (op == .copy)
+                    &.{ "aligned", "misaligned", "cross-lane", "page-offset" }
+                else
+                    &.{ "aligned", "misaligned" };
+                for (profiles, 0..) |profile, index| {
+                    var case = try fixedCase(arena, op, profile, size);
+                    case.src_off = switch (index) {
+                        1 => 1,
+                        2 => chunk_bytes - 1,
+                        else => 0,
+                    };
+                    case.dst_off = switch (index) {
+                        1 => 3,
+                        2 => chunk_bytes / 2,
+                        3 => 2048,
+                        else => 0,
+                    };
+                    try addCase(arena, &cases, cfg, case);
+                }
+            }
+            try addCase(arena, &cases, cfg, try fixedCase(arena, .move, "disjoint", size));
+            for ([_]bool{ false, true }) |backward| {
+                for ([_]u32{ 1, chunk_bytes - 1, chunk_bytes + 1 }) |gap| {
+                    const profile = try fmt.allocPrint(arena, "{s}-gap{d}", .{
+                        if (backward) "bwd" else "fwd", gap,
+                    });
+                    var case = try fixedCase(arena, .move, profile, size);
+                    case.gap = gap;
+                    case.shared = true;
+                    case.src_off = if (backward) 0 else gap;
+                    case.dst_off = if (backward) gap else 0;
+                    try addCase(arena, &cases, cfg, case);
+                }
+            }
+        }
+    }
+    if (cfg.suite == .standard) {
+        for (const_sizes) |size|
+            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+        for ([_]Op{ .copy, .move, .set }) |op| {
+            for ([_][]const u8{ "small", "mixed" }) |name|
+                try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, null));
+        }
+    }
+    if (cases.items.len == 0) return error.NoMatchingCases;
+    return cases.items;
+}
 
-fn mapBytes(len: usize) ![]align(std.heap.page_size_min) u8 {
-    return std.posix.mmap(
+const Buffers = struct {
+    src: []align(page_size_min) u8,
+    dst: []align(page_size_min) u8,
+    fn init(case: Case) !Buffers {
+        const padding: u64 = if (case.seq != null)
+            512
+        else
+            @as(u64, @max(case.src_off, case.dst_off)) + 1;
+        const len = @as(u64, case.max_len) + padding;
+        const src = try mapBytes(len);
+        errdefer posix.munmap(src);
+        const dst = try mapBytes(len);
+        for (src, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
+        // These buffers contain synthetic bytes, never secrets.
+        @memset(dst, 0x5a);
+        return .{ .src = src, .dst = dst };
+    }
+    fn deinit(self: Buffers) void {
+        posix.munmap(self.src);
+        posix.munmap(self.dst);
+    }
+};
+fn mapBytes(len: u64) ![]align(page_size_min) u8 {
+    return posix.mmap(
         null,
-        @max(len, 1),
+        len,
         .{ .READ = true, .WRITE = true },
         .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,
     );
 }
+const Functions = struct { copy: CopyFn, set: SetFn };
+const Result = struct { ns: u64, iters: u64, counters: ?Counts };
 
-fn runCopyFixed(
-    comptime op: OpFn,
+// The volatile load stops LLVM from specializing the shared indirect loop for a known wrapper.
+// Every indirect implementation enters the same instantiation, with one pointer load per batch.
+inline fn loopBody(
+    comptime op: Op,
+    comptime mode: Mode,
+    comptime const_len: ?u32,
     io: Io,
-    perf: ?*const Perf,
-    src_buf: []u8,
-    dst_buf: []u8,
-    size: usize,
-    src_off: usize,
-    dst_off: usize,
-    iters: usize,
-) RunResult {
-    const source: []const u8 = src_buf[src_off..][0..size];
-    const dest: []u8 = dst_buf[dst_off..][0..size];
-
-    var checksum: u64 = 0;
-    var index: usize = 0;
-
-    if (perf) |p| p.begin();
-    const start = Io.Timestamp.now(io, .awake);
-    for (0..iters) |i| {
-        @call(.never_inline, op, .{ dest.ptr, source.ptr, size });
-        if (size > 0) {
-            checksum +%= dest[index];
-            src_buf[src_off + index] +%= @truncate(i +% 1);
-            index += 1;
-            if (index == size) index = 0;
-        }
-    }
-    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
-    const counters = if (perf) |p| p.end() else null;
-
-    mem.doNotOptimizeAway(src_buf);
-    mem.doNotOptimizeAway(dst_buf);
-    mem.doNotOptimizeAway(checksum);
-
-    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
-}
-
-fn runMoveFixed(
-    comptime op: OpFn,
-    io: Io,
-    perf: ?*const Perf,
-    buf: []u8,
-    size: usize,
-    gap: usize,
-    direction: MoveDirection,
-    iters: usize,
-) RunResult {
-    var source_mut: []u8 = undefined;
-    var dest: []u8 = undefined;
-    switch (direction) {
-        .fwd => {
-            source_mut = buf[gap..][0..size];
-            dest = buf[0..size];
-        },
-        .bwd => {
-            source_mut = buf[0..size];
-            dest = buf[gap..][0..size];
-        },
-    }
-    const source: []const u8 = source_mut;
-
-    var checksum: u64 = 0;
-    var index: usize = 0;
-
-    if (perf) |p| p.begin();
-    const start = Io.Timestamp.now(io, .awake);
-    for (0..iters) |i| {
-        @call(.never_inline, op, .{ dest.ptr, source.ptr, size });
-        if (size > 0) {
-            checksum +%= dest[index];
-            source_mut[index] +%= @truncate(i +% 3);
-            index += 1;
-            if (index == size) index = 0;
-        }
-    }
-    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
-    const counters = if (perf) |p| p.end() else null;
-
-    mem.doNotOptimizeAway(buf);
-    mem.doNotOptimizeAway(checksum);
-
-    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
-}
-
-fn runCopyDist(
-    comptime op: OpFn,
-    io: Io,
-    perf: ?*const Perf,
-    src_buf: []u8,
-    dst_buf: []u8,
-    seq: *const [dist_seq_len]DistEntry,
-    iters: usize,
-) RunResult {
-    var checksum: u64 = 0;
-
-    if (perf) |p| p.begin();
-    const start = Io.Timestamp.now(io, .awake);
-    for (0..iters) |i| {
-        const e = seq[i & (dist_seq_len - 1)];
-        const source: []const u8 = src_buf[e.src_off..][0..e.size];
-        const dest: []u8 = dst_buf[e.dst_off..][0..e.size];
-        @call(.never_inline, op, .{ dest.ptr, source.ptr, e.size });
-        if (e.size > 0) {
-            checksum +%= dest[0];
-            src_buf[e.src_off] +%= @truncate(i +% 1);
-        }
-    }
-    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
-    const counters = if (perf) |p| p.end() else null;
-
-    mem.doNotOptimizeAway(src_buf);
-    mem.doNotOptimizeAway(dst_buf);
-    mem.doNotOptimizeAway(checksum);
-
-    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
-}
-
-fn runMoveDist(
-    comptime op: OpFn,
-    io: Io,
-    perf: ?*const Perf,
-    buf: []u8,
-    seq: *const [dist_seq_len]DistEntry,
-    iters: usize,
-) RunResult {
-    var checksum: u64 = 0;
-
-    if (perf) |p| p.begin();
-    const start = Io.Timestamp.now(io, .awake);
-    for (0..iters) |i| {
-        const e = seq[i & (dist_seq_len - 1)];
-        const source: []const u8 = buf[e.src_off..][0..e.size];
-        const dest: []u8 = buf[e.dst_off..][0..e.size];
-        @call(.never_inline, op, .{ dest.ptr, source.ptr, e.size });
-        if (e.size > 0) {
-            checksum +%= dest[0];
-            buf[e.src_off] +%= @truncate(i +% 3);
-        }
-    }
-    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
-    const counters = if (perf) |p| p.end() else null;
-
-    mem.doNotOptimizeAway(buf);
-    mem.doNotOptimizeAway(checksum);
-
-    return .{ .ns = ns, .iters = iters, .counters = counters, .checksum = checksum };
-}
-
-// ---------------------------------------------------------------------------
-// Iteration calibration
-// ---------------------------------------------------------------------------
-
-fn seedIterations(size: usize) usize {
-    const safe_size = @max(size, 1);
-    return math.clamp(
-        seed_target_bytes_per_case / safe_size,
-        iterations_seed_min,
-        iterations_seed_max,
-    );
-}
-
-fn scaleIterations(iterations: usize, elapsed_ns: u64, target_ns: u64) usize {
-    assert(iterations > 0);
-    if (iterations >= iterations_hard_max) return iterations_hard_max;
-
-    const doubled = if (iterations > iterations_hard_max / 2)
-        iterations_hard_max
+    perf: ?*Perf,
+    functions: *const Functions,
+    case: Case,
+    buffers: Buffers,
+    iters: u64,
+) Result {
+    const function = if (op == .set)
+        @as(*const volatile SetFn, &functions.set).*
     else
-        iterations * 2;
-    if (elapsed_ns == 0) return doubled;
-
-    // Add headroom so the next attempt typically clears target_ns.
-    const target_with_headroom = target_ns + target_ns / 5;
-    const scaled_u128 =
-        (@as(u128, iterations) * @as(u128, target_with_headroom) +
-            @as(u128, elapsed_ns) - 1) / @as(u128, elapsed_ns);
-    var scaled: usize = if (scaled_u128 > iterations_hard_max)
-        iterations_hard_max
-    else
-        @intCast(scaled_u128);
-
-    if (scaled <= iterations) scaled = doubled;
-    return @min(scaled, iterations_hard_max);
+        @as(*const volatile CopyFn, &functions.copy).*;
+    const dest_buffer = if (case.shared) buffers.src else buffers.dst;
+    if (perf) |p| p.begin();
+    const start = Io.Timestamp.now(io, .awake);
+    for (0..iters) |iteration| {
+        const entry = if (case.seq) |seq| seq[iteration & (seq_len - 1)] else Entry{
+            .size = case.max_len,
+            .src_off = case.src_off,
+            .dst_off = case.dst_off,
+        };
+        const len = const_len orelse entry.size;
+        const src = buffers.src[entry.src_off..].ptr;
+        const dst = dest_buffer[entry.dst_off..].ptr;
+        switch (mode) {
+            .indirect => {
+                _ = if (op == .set) function(dst, set_value, len) else function(dst, src, len);
+            },
+            .fastmem_inline => switch (op) {
+                .copy => fastmem.copy(u8, dst[0..len], src[0..len]),
+                .move => fastmem.move(u8, dst[0..len], src[0..len]),
+                .set => if (has_fastmem_set) fastmem.set(u8, dst[0..len], set_value),
+            },
+            .builtin_const => @memcpy(dst[0..len], src[0..len]),
+        }
+        // A memory clobber preserves the full inline operation, not just the observed byte.
+        asm volatile ("" ::: .{ .memory = true });
+        if (len != 0) _ = @as(*volatile u8, &dst[0]).*;
+    }
+    const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
+    const counters = if (perf) |p| p.end() else null;
+    return .{ .ns = ns, .iters = iters, .counters = counters };
+}
+// Dedicated entry names let the harness inspect inline fastmem separately from builtin_const.
+noinline fn runFastmemInline(
+    comptime op: Op,
+    comptime const_len: ?u32,
+    io: Io,
+    perf: ?*Perf,
+    functions: *const Functions,
+    case: Case,
+    buffers: Buffers,
+    iters: u64,
+) Result {
+    return loopBody(op, .fastmem_inline, const_len, io, perf, functions, case, buffers, iters);
+}
+noinline fn runLoop(
+    comptime op: Op,
+    comptime mode: Mode,
+    comptime const_len: ?u32,
+    io: Io,
+    perf: ?*Perf,
+    functions: *const Functions,
+    case: Case,
+    buffers: Buffers,
+    iters: u64,
+) Result {
+    return loopBody(op, mode, const_len, io, perf, functions, case, buffers, iters);
+}
+fn runBatch(
+    io: Io,
+    perf: ?*Perf,
+    symbols: *const Symbols,
+    case: Case,
+    buffers: Buffers,
+    impl: Impl,
+    iters: u64,
+) Result {
+    const functions: Functions = .{
+        .copy = switch (impl) {
+            .glibc => if (case.op == .move) symbols.move else symbols.copy,
+            .fastmem_abi => if (case.op == .move) &fastmemMove else &fastmemCopy,
+            else => if (case.op == .move)
+                @extern(CopyFn, .{ .name = "memmove" })
+            else
+                @extern(CopyFn, .{ .name = "memcpy" }),
+        },
+        .set = switch (impl) {
+            .glibc => symbols.set,
+            .fastmem_abi => &fastmemSet,
+            else => @extern(SetFn, .{ .name = "memset" }),
+        },
+    };
+    if (mem.eql(u8, case.profile, "const")) {
+        inline for (const_sizes) |len| {
+            if (case.max_len == len) return switch (impl) {
+                .builtin_const => runLoop(
+                    .copy,
+                    .builtin_const,
+                    len,
+                    io,
+                    perf,
+                    &functions,
+                    case,
+                    buffers,
+                    iters,
+                ),
+                .fastmem_inline => runFastmemInline(
+                    .copy,
+                    len,
+                    io,
+                    perf,
+                    &functions,
+                    case,
+                    buffers,
+                    iters,
+                ),
+                else => unreachable,
+            };
+        }
+        unreachable;
+    }
+    return switch (case.op) {
+        inline else => |op| if (impl == .fastmem_inline)
+            runFastmemInline(op, null, io, perf, &functions, case, buffers, iters)
+        else
+            runLoop(op, .indirect, null, io, perf, &functions, case, buffers, iters),
+    };
+}
+fn scaleIterations(iters: u64, ns: u64, target: u64) u64 {
+    const scaled = @as(u128, iters) * target / @max(ns, 1);
+    return @intCast(@min(max_iters, @max(1, scaled)));
+}
+test "calibration shrinks oversized pilots, including the cap" {
+    try testing.expectEqual(@as(u64, 100), scaleIterations(1000, 200, 20));
+    try testing.expectEqual(@as(u64, max_iters / 2), scaleIterations(max_iters, 40, 20));
+    try testing.expectEqual(@as(u64, 10000), scaleIterations(1000, 2, 20));
+}
+fn calibrate(
+    io: Io,
+    symbols: *const Symbols,
+    case: Case,
+    buffers: Buffers,
+    impl: Impl,
+    target: u64,
+) u64 {
+    var iters: u64 = 64;
+    for (0..12) |_| {
+        const result = runBatch(io, null, symbols, case, buffers, impl, iters);
+        if (result.ns >= target * 3 / 4 and result.ns <= target * 5 / 4) return iters;
+        const next = scaleIterations(iters, result.ns, target);
+        if (next == iters) return iters;
+        iters = next;
+    }
+    return iters;
+}
+const Sample = struct { case: Case, impl: Impl, sample: u32, result: Result };
+fn measureCase(
+    arena: Allocator,
+    io: Io,
+    cfg: Config,
+    symbols: *const Symbols,
+    perf: *Perf,
+    case: Case,
+    output: *ArrayList(Sample),
+) !void {
+    const buffers: Buffers = try .init(case);
+    defer buffers.deinit();
+    var impls: ArrayList(Impl) = .empty;
+    for (cfg.impls) |impl| if (case.accepts(impl)) try impls.append(arena, impl);
+    var iterations = [_]u64{0} ** 5;
+    const target = @as(u64, cfg.sample_ms) * time.ns_per_ms;
+    for (impls.items, 0..) |impl, index| {
+        if (cfg.warmup_ms != 0) {
+            const start = Io.Timestamp.now(io, .awake);
+            const warmup_ns = @as(u64, cfg.warmup_ms) * time.ns_per_ms;
+            while (start.durationTo(.now(io, .awake)).nanoseconds < warmup_ns)
+                _ = runBatch(io, null, symbols, case, buffers, impl, 64);
+        }
+        iterations[index] = calibrate(io, symbols, case, buffers, impl, target);
+    }
+    for (0..cfg.samples) |sample| {
+        for (0..impls.items.len) |position| {
+            const index = (position + sample) % impls.items.len;
+            const impl = impls.items[index];
+            const result = runBatch(io, perf, symbols, case, buffers, impl, iterations[index]);
+            try output.append(arena, .{
+                .case = case,
+                .impl = impl,
+                .sample = @intCast(sample),
+                .result = result,
+            });
+            iterations[index] = scaleIterations(result.iters, result.ns, target);
+        }
+    }
+}
+fn balancedSamples(cfg: Config, cases: []const Case) u32 {
+    var samples: u32 = 1;
+    for (cases) |case| {
+        var count: u32 = 0;
+        for (cfg.impls) |impl| if (case.accepts(impl)) {
+            count += 1;
+        };
+        if (count != 0) samples = samples / math.gcd(samples, count) * count;
+    }
+    return samples;
+}
+test "default samples balance every applicable implementation count" {
+    const cases = [_]Case{
+        .{ .id = "copy/aligned/8", .op = .copy, .profile = "aligned", .size = 8, .max_len = 8 },
+        .{ .id = "set/aligned/8", .op = .set, .profile = "aligned", .size = 8, .max_len = 8 },
+    };
+    try testing.expectEqual(@as(u32, 4), balancedSamples(.{}, &cases));
+    const cfg: Config = .{ .impls = &.{ .builtin, .glibc, .fastmem_abi } };
+    try testing.expectEqual(@as(u32, if (has_fastmem_set) 3 else 6), balancedSamples(cfg, &cases));
 }
 
-const Measured = struct {
-    result: RunResult,
-    iters: usize,
+fn jsonLine(w: *Io.Writer, value: anytype) !void {
+    try json.Stringify.value(value, .{}, w);
+    try w.writeByte('\n');
+}
+const Codegen = struct {
+    binary_sha256: []const u8,
+    checked_roots: []const []const u8,
+    delegations: []const struct { caller: []const u8, symbol: []const u8, address: []const u8 },
+
+    fn read(arena: Allocator, io: Io, path: []const u8) !Codegen {
+        const bytes = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20));
+        const parsed = try json.parseFromSlice(Codegen, arena, bytes, .{});
+        const executable = try Io.Dir.cwd().readFileAlloc(
+            io,
+            "/proc/self/exe",
+            arena,
+            .limited(128 << 20),
+        );
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(executable, &digest, .{});
+        const hex = fmt.bytesToHex(digest, .lower);
+        if (!mem.eql(u8, &hex, parsed.value.binary_sha256))
+            return error.CodegenEvidenceDoesNotMatchExecutable;
+        return parsed.value;
+    }
 };
 
-fn measuredSample(
-    comptime run_fn: anytype,
-    args: anytype,
-    iters_start: usize,
-    target_ns: u64,
-) Measured {
-    var iters = @max(iters_start, 1);
-    while (true) {
-        const r = @call(.auto, run_fn, args ++ .{iters});
-        if (r.ns >= target_ns or iters >= iterations_hard_max) {
-            return .{ .result = r, .iters = iters };
-        }
-        iters = scaleIterations(iters, r.ns, target_ns);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Case runner
-// ---------------------------------------------------------------------------
-
-fn runCase(
-    cfg: *const Config,
-    io: Io,
-    perf: ?*const Perf,
+fn emitMeta(
     w: *Io.Writer,
-    case: Case,
-    checksum_out: *u64,
+    cfg: Config,
+    symbols: Symbols,
+    perf: Perf,
+    codegen: ?Codegen,
 ) !void {
-    var iters_state: [3]usize = undefined;
-
-    switch (case) {
-        .copy => |c| {
-            const src = try mapBytes(c.size + c.src_off + 1);
-            defer std.posix.munmap(src);
-            const dst = try mapBytes(c.size + c.dst_off + 1);
-            defer std.posix.munmap(dst);
-            fillPattern(src, 0x5A);
-            @memset(dst, 0xA5);
-
-            for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
-                iters_state[j] = seedIterations(c.size);
-                if (cfg.warmupNs() == 0) continue;
-                iters_state[j] = switch (impl) {
-                    inline else => |cp| blk: {
-                        const m = measuredSample(runCopyFixed, .{
-                            copyFnFor(cp), io, perf, src, dst, c.size, c.src_off, c.dst_off,
-                        }, iters_state[j], cfg.warmupNs());
-                        checksum_out.* +%= m.result.checksum;
-                        break :blk m.iters;
-                    },
-                };
-            }
-            for (0..cfg.samples) |s| {
-                for (0..cfg.n_impls) |k| {
-                    const j = (k + s) % cfg.n_impls;
-                    const impl = cfg.impls[j];
-                    const m = switch (impl) {
-                        inline else => |cp| measuredSample(runCopyFixed, .{
-                            copyFnFor(cp), io, perf, src, dst, c.size, c.src_off, c.dst_off,
-                        }, iters_state[j], cfg.sampleNs()),
-                    };
-                    iters_state[j] = m.iters;
-                    checksum_out.* +%= m.result.checksum;
-                    var size_buf: [24]u8 = undefined;
-                    const size_json = std.fmt.bufPrint(
-                        &size_buf,
-                        "{d}",
-                        .{c.size},
-                    ) catch unreachable;
-                    try emitSample(
-                        w,
-                        case,
-                        size_json,
-                        c.src_off,
-                        c.dst_off,
-                        null,
-                        impl,
-                        s,
-                        m.result,
-                    );
-                }
-            }
+    var perf_error: [512]u8 = undefined;
+    try jsonLine(w, .{
+        .type = "meta",
+        .schema = 2,
+        .rev = options.rev,
+        .zig = builtin.zig_version_string,
+        .target = @tagName(builtin.cpu.arch) ++ "-" ++
+            @tagName(builtin.os.tag) ++ "-" ++ @tagName(builtin.abi),
+        .cpu = builtin.cpu.model.name,
+        .optimize = @tagName(builtin.mode),
+        .link_libc = true,
+        .chunk_bytes = chunk_bytes,
+        .suite = cfg.suite,
+        .seed = cfg.seed,
+        .samples = cfg.samples,
+        .sample_ms = cfg.sample_ms,
+        .warmup_ms = cfg.warmup_ms,
+        .impls = cfg.impls,
+        .dist_file = cfg.dist_file,
+        .set_value = set_value,
+        .fastmem_set = has_fastmem_set,
+        .codegen = codegen,
+        .libc_path = symbols.libc_path,
+        .libc_base = symbols.libc_base,
+        .resolution = .{
+            .memcpy = symbols.resolution[0],
+            .memmove = symbols.resolution[1],
+            .memset = symbols.resolution[2],
         },
-        .move => |mc| {
-            const buf = try mapBytes(mc.size + mc.gap + 1);
-            defer std.posix.munmap(buf);
-            fillPattern(buf, 0xC3);
-
-            for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
-                iters_state[j] = seedIterations(mc.size);
-                if (cfg.warmupNs() == 0) continue;
-                iters_state[j] = switch (impl) {
-                    inline else => |cp| blk: {
-                        const m = measuredSample(runMoveFixed, .{
-                            moveFnFor(cp), io, perf, buf, mc.size, mc.gap, mc.direction,
-                        }, iters_state[j], cfg.warmupNs());
-                        checksum_out.* +%= m.result.checksum;
-                        break :blk m.iters;
-                    },
-                };
-            }
-            for (0..cfg.samples) |s| {
-                for (0..cfg.n_impls) |k| {
-                    const j = (k + s) % cfg.n_impls;
-                    const impl = cfg.impls[j];
-                    const m = switch (impl) {
-                        inline else => |cp| measuredSample(runMoveFixed, .{
-                            moveFnFor(cp), io, perf, buf, mc.size, mc.gap, mc.direction,
-                        }, iters_state[j], cfg.sampleNs()),
-                    };
-                    iters_state[j] = m.iters;
-                    checksum_out.* +%= m.result.checksum;
-                    var size_buf: [24]u8 = undefined;
-                    const size_json = std.fmt.bufPrint(
-                        &size_buf,
-                        "{d}",
-                        .{mc.size},
-                    ) catch unreachable;
-                    try emitSample(
-                        w,
-                        case,
-                        size_json,
-                        null,
-                        null,
-                        mc.gap,
-                        impl,
-                        s,
-                        m.result,
-                    );
-                }
-            }
+        .perf = .{
+            .available = perf.failure == null,
+            .events = perf.eventNames(),
+            .@"error" = perf.errorMessage(&perf_error),
         },
-        .dist => |d| {
-            const spec = distSpec(d.kind);
-            const buf_len = @as(usize, spec.max_size) + spec.off_range + 1;
-            const mean_size = d.mean_x10 / 10;
-            var size_buf: [24]u8 = undefined;
-            const size_json = std.fmt.bufPrint(
-                &size_buf,
-                "{d}.{d}",
-                .{ d.mean_x10 / 10, d.mean_x10 % 10 },
-            ) catch unreachable;
-
-            if (d.op == .copy) {
-                const src = try mapBytes(buf_len);
-                defer std.posix.munmap(src);
-                const dst = try mapBytes(buf_len);
-                defer std.posix.munmap(dst);
-                fillPattern(src, 0x11);
-                @memset(dst, 0xA5);
-
-                for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
-                    iters_state[j] = seedIterations(mean_size);
-                    if (cfg.warmupNs() == 0) continue;
-                    iters_state[j] = switch (impl) {
-                        inline else => |cp| blk: {
-                            const m = measuredSample(runCopyDist, .{
-                                copyFnFor(cp), io, perf, src, dst, d.seq,
-                            }, iters_state[j], cfg.warmupNs());
-                            checksum_out.* +%= m.result.checksum;
-                            break :blk m.iters;
-                        },
-                    };
-                }
-                for (0..cfg.samples) |s| {
-                    for (0..cfg.n_impls) |k| {
-                        const j = (k + s) % cfg.n_impls;
-                        const impl = cfg.impls[j];
-                        const m = switch (impl) {
-                            inline else => |cp| measuredSample(runCopyDist, .{
-                                copyFnFor(cp), io, perf, src, dst, d.seq,
-                            }, iters_state[j], cfg.sampleNs()),
-                        };
-                        iters_state[j] = m.iters;
-                        checksum_out.* +%= m.result.checksum;
-                        try emitSample(
-                            w,
-                            case,
-                            size_json,
-                            null,
-                            null,
-                            null,
-                            impl,
-                            s,
-                            m.result,
-                        );
-                    }
-                }
-            } else {
-                const buf = try mapBytes(buf_len);
-                defer std.posix.munmap(buf);
-                fillPattern(buf, 0x77);
-
-                for (cfg.impls[0..cfg.n_impls], 0..) |impl, j| {
-                    iters_state[j] = seedIterations(mean_size);
-                    if (cfg.warmupNs() == 0) continue;
-                    iters_state[j] = switch (impl) {
-                        inline else => |cp| blk: {
-                            const m = measuredSample(runMoveDist, .{
-                                moveFnFor(cp), io, perf, buf, d.seq,
-                            }, iters_state[j], cfg.warmupNs());
-                            checksum_out.* +%= m.result.checksum;
-                            break :blk m.iters;
-                        },
-                    };
-                }
-                for (0..cfg.samples) |s| {
-                    for (0..cfg.n_impls) |k| {
-                        const j = (k + s) % cfg.n_impls;
-                        const impl = cfg.impls[j];
-                        const m = switch (impl) {
-                            inline else => |cp| measuredSample(runMoveDist, .{
-                                moveFnFor(cp), io, perf, buf, d.seq,
-                            }, iters_state[j], cfg.sampleNs()),
-                        };
-                        iters_state[j] = m.iters;
-                        checksum_out.* +%= m.result.checksum;
-                        try emitSample(
-                            w,
-                            case,
-                            size_json,
-                            null,
-                            null,
-                            null,
-                            impl,
-                            s,
-                            m.result,
-                        );
-                    }
-                }
-            }
-        },
-    }
+    });
 }
-
-// ---------------------------------------------------------------------------
-// Case list construction
-// ---------------------------------------------------------------------------
-
-fn buildCases(arena: mem.Allocator, cfg: *const Config) ![]Case {
-    var list: std.ArrayList(Case) = .empty;
-
-    switch (cfg.suite) {
-        .quick, .standard => {
-            const sizes: []const usize = switch (cfg.suite) {
-                .quick => &quick_sizes,
-                else => &standard_sizes,
-            };
-            for (copy_profiles) |p| {
-                for (sizes) |size| {
-                    const id = try std.fmt.allocPrint(
-                        arena,
-                        "copy/{s}/{d}",
-                        .{ p.name, size },
-                    );
-                    if (!cfg.matches(id)) continue;
-                    try list.append(arena, .{ .copy = .{
-                        .id = id,
-                        .profile = p.name,
-                        .size = size,
-                        .src_off = p.src_off,
-                        .dst_off = p.dst_off,
-                    } });
-                }
-            }
-            for ([_]MoveDirection{ .fwd, .bwd }) |direction| {
-                for (move_gaps) |gap| {
-                    const profile = try std.fmt.allocPrint(arena, "{s}-gap{d}", .{
-                        @tagName(direction),
-                        gap,
-                    });
-                    for (sizes) |size| {
-                        const id = try std.fmt.allocPrint(
-                            arena,
-                            "move/{s}/{d}",
-                            .{ profile, size },
-                        );
-                        if (!cfg.matches(id)) continue;
-                        try list.append(arena, .{ .move = .{
-                            .id = id,
-                            .profile = profile,
-                            .size = size,
-                            .gap = gap,
-                            .direction = direction,
-                        } });
-                    }
-                }
-            }
-        },
-        .dist => {
-            for ([_]Op{ .copy, .move }) |op| {
-                for ([_]DistKind{ .small, .mixed }) |kind| {
-                    const id = try std.fmt.allocPrint(arena, "{s}/dist/{s}", .{
-                        @tagName(op),
-                        @tagName(kind),
-                    });
-                    if (!cfg.matches(id)) continue;
-                    const seq = try arena.create([dist_seq_len]DistEntry);
-                    const mean_x10 = genDistSeq(kind, op, cfg.seed, seq);
-                    try list.append(arena, .{ .dist = .{
-                        .id = id,
-                        .op = op,
-                        .kind = kind,
-                        .mean_x10 = mean_x10,
-                        .seq = seq,
-                    } });
-                }
-            }
-        },
-    }
-    return list.items;
+fn emitSample(w: *Io.Writer, sample: Sample) !void {
+    const case = sample.case;
+    const result = sample.result;
+    const counters = result.counters;
+    try jsonLine(w, .{
+        .type = "sample",
+        .case = case.id,
+        .op = case.op,
+        .profile = case.profile,
+        .size = case.size,
+        .src_off = if (case.seq == null) @as(?u32, case.src_off) else null,
+        .dst_off = if (case.seq == null) @as(?u32, case.dst_off) else null,
+        .gap = case.gap,
+        .impl = sample.impl,
+        .sample = sample.sample,
+        .iters = result.iters,
+        .ns = result.ns,
+        .cycles = if (counters) |v| @as(?u64, v.cycles) else null,
+        .instructions = if (counters) |v| @as(?u64, v.instructions) else null,
+        .ref_cycles = if (counters) |v| v.ref_cycles else null,
+        .time_enabled = if (counters) |v| @as(?u64, v.time_enabled) else null,
+        .time_running = if (counters) |v| @as(?u64, v.time_running) else null,
+    });
 }
-
-// ---------------------------------------------------------------------------
-// main
-// ---------------------------------------------------------------------------
-
-pub fn main(init: std.process.Init) !void {
-    comptime {
-        assert(math.isPowerOfTwo(chunk_bytes));
-        assert(math.isPowerOfTwo(dist_seq_len));
-        assert(iterations_seed_min > 0);
-        assert(iterations_hard_max >= iterations_seed_max);
-    }
-
-    const io = init.io;
+fn run(init: process.Init) !void {
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
-    const cfg = parseArgs(args);
-
-    if (builtin.mode != .ReleaseFast) {
-        std.debug.print(
-            "bench-fastmem: warning: optimize={s}, benchmarks want ReleaseFast\n",
-            .{@tagName(builtin.mode)},
-        );
+    var cfg = try parseArgs(arena, try init.minimal.args.toSlice(arena));
+    var symbols = try Symbols.init();
+    defer symbols.deinit();
+    const codegen = if (cfg.codegen_file) |path| try Codegen.read(arena, init.io, path) else null;
+    var perf: Perf = .init();
+    defer perf.close();
+    const cases = try buildCases(arena, init.io, cfg);
+    var active: ArrayList(Impl) = .empty;
+    for (cfg.impls) |impl| {
+        for (cases) |case| {
+            if (case.accepts(impl)) {
+                try active.append(arena, impl);
+                break;
+            }
+        }
     }
-
-    var stdout_buffer: [8192]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const w = &stdout_file_writer.interface;
-
-    var perf_err_buf: [160]u8 = undefined;
-    var perf: ?Perf = null;
-    var perf_err: ?[]const u8 = null;
-    switch (perfInit(&perf_err_buf)) {
-        .ok => |p| perf = p,
-        .err => |e| {
-            perf_err = e;
-            std.debug.print("bench-fastmem: perf counters unavailable: {s}\n", .{e});
-        },
-    }
-    defer if (perf) |*p| p.deinit();
-
-    const cases = try buildCases(arena, &cfg);
-    std.debug.print("bench-fastmem: suite={s} cases={d} impls={d} samples={d}\n", .{
-        @tagName(cfg.suite),
-        cases.len,
-        cfg.n_impls,
-        cfg.samples,
-    });
-
-    const perf_ptr: ?*const Perf = if (perf) |*p| p else null;
-    try emitMeta(w, &cfg, perf_ptr, perf_err);
-
+    cfg.impls = active.items;
+    if (cfg.samples == 0) cfg.samples = balancedSamples(cfg, cases);
+    var output: ArrayList(Sample) = .empty;
+    const start = Io.Timestamp.now(init.io, .awake);
+    if (!cfg.list) for (cases) |case| {
+        print("bench-fastmem: {s}\n", .{case.id});
+        try measureCase(arena, init.io, cfg, &symbols, &perf, case, &output);
+    };
+    const elapsed: u64 = @intCast(start.durationTo(.now(init.io, .awake)).nanoseconds);
+    // Delay stdout so the meta record includes errors from any perf ioctl or read.
+    var buffer: [8192]u8 = undefined;
+    var writer: Io.File.Writer = .init(.stdout(), init.io, &buffer);
+    const w = &writer.interface;
+    try emitMeta(w, cfg, symbols, perf, codegen);
     if (cfg.list) {
-        for (cases) |case| try emitCaseLine(w, case);
-        try w.print("{{\"type\":\"end\",\"cases\":{d},\"elapsed_ns\":0}}\n", .{cases.len});
-        try w.flush();
-        return;
-    }
-
-    const start = Io.Timestamp.now(io, .awake);
-    var checksum: u64 = 0;
-    for (cases) |case| {
-        std.debug.print("bench-fastmem: case {s}\n", .{case.id()});
-        try runCase(&cfg, io, perf_ptr, w, case, &checksum);
-        try w.flush();
-    }
-    const elapsed_ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
-
-    mem.doNotOptimizeAway(checksum);
-
-    try w.print("{{\"type\":\"end\",\"cases\":{d},\"elapsed_ns\":{d}}}\n", .{
-        cases.len,
-        elapsed_ns,
-    });
+        for (cases) |case| try jsonLine(w, .{
+            .type = "case",
+            .case = case.id,
+            .op = case.op,
+            .profile = case.profile,
+            .size = case.size,
+        });
+    } else for (output.items) |sample| try emitSample(w, sample);
+    try jsonLine(w, .{ .type = "end", .cases = cases.len, .elapsed_ns = elapsed });
     try w.flush();
-    std.debug.print("bench-fastmem: done, {d} cases in {d:.1} s\n", .{
-        cases.len,
-        @as(f64, @floatFromInt(elapsed_ns)) / std.time.ns_per_s,
-    });
+    var perf_error: [512]u8 = undefined;
+    if (perf.errorMessage(&perf_error)) |message|
+        print("bench-fastmem: perf: {s}\n", .{message});
+}
+pub fn main(init: process.Init) void {
+    run(init) catch |err| {
+        print("bench-fastmem: {s}. No complete measurement was produced.\n", .{
+            @errorName(err),
+        });
+        process.exit(1);
+    };
 }

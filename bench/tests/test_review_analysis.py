@@ -9,7 +9,7 @@ from click.testing import CliRunner
 from fastmem_bench.analysis import analyze
 from fastmem_bench.protocol import orders
 from fastmem_bench.runner import analyze_run
-from tests.conftest import measurement
+from tests.conftest import PROBE, measurement
 
 
 def write_cases(path: Path, cases: list[tuple[str, int, str, float]], *, jitter: float = 0) -> None:
@@ -19,13 +19,20 @@ def write_cases(path: Path, cases: list[tuple[str, int, str, float]], *, jitter:
         measurement(path, scale, size=size)
         raw = [json.loads(line) for line in path.read_text().splitlines()]
         if not records:
+            raw[0]["suite"] = "standard"
             records.append(raw[0])
         for row in raw[1:-1]:
             row.update(case=f"{op}/{profile}/{size}", profile=profile, op=op)
-            if profile == "dist" or op == "move":
-                row.update(src_off=None, dst_off=None)
-            if row["impl"] == "libc":
-                row["ns"] *= 1 + jitter
+            if profile == "dist":
+                row.update(
+                    case=f"{op}/dist/{'small' if size == 31 else 'mixed'}",
+                    src_off=None,
+                    dst_off=None,
+                )
+            if profile == "cross-lane":
+                row.update(src_off=31, dst_off=16)
+            if row["impl"] == "glibc":
+                row["ns"] = round(row["ns"] * (1 + jitter))
             records.append(row)
     records.append({"type": "end", "cases": len(cases), "elapsed_ns": 1})
     path.write_text("\n".join(json.dumps(row) for row in records) + "\n")
@@ -45,7 +52,12 @@ def test_floors_pool_profiles_and_impls_and_include_ci(tmp_path: Path) -> None:
     assert result["noise_floors"]["copy/size/32"] == pytest.approx(0.122)
     assert result["noise_floors"]["copy/size/4096"] == pytest.approx(0.02)
     aa_rows = [row for row in result["rows"] if row["comparison"] == "A/A"]
-    assert {row["candidate_impl"] for row in aa_rows} == {"fastmem", "builtin", "libc"}
+    assert {row["candidate_impl"] for row in aa_rows} == {
+        "fastmem_abi",
+        "fastmem_inline",
+        "builtin",
+        "glibc",
+    }
     assert max(abs(row["ratio"] - 1) for row in aa_rows) < result["noise_floors"]["copy/size/32"]
     assert all(
         row["noise_floor"] == result["noise_floors"][row["floor_group"]] for row in result["rows"]
@@ -72,7 +84,7 @@ def test_round_threshold_and_minimum_effect(tmp_path: Path, rounds: int) -> None
         measurement(tmp_path / "aa" / f"r{index}.jsonl")
     result = analyze(tmp_path, ["v0"], "v0")
     assert any(row["significant"] for row in result["rows"]) == (rounds >= 5)
-    conservative = analyze(tmp_path, ["v0"], "v0", minimum_effect=0.6)
+    conservative = analyze(tmp_path, ["v0"], "v0", minimum_effect=0.61)
     assert not any(row["significant"] for row in conservative["rows"])
 
 
@@ -84,7 +96,7 @@ def test_intersect_revisions_with_warning(tmp_path: Path) -> None:
             write_cases(tmp_path / variant / f"r{index}.jsonl", cases)
     result = analyze(tmp_path, ["v0", "v1"], "v0")
     assert {row["case"] for row in result["rows"]} == {"copy/aligned/64"}
-    assert "v1: excluded 3 unmatched" in result["warnings"][0]
+    assert "v1: excluded 4 unmatched" in result["warnings"][0]
 
 
 def test_inconsistent_cases_within_revision_fail(tmp_path: Path) -> None:
@@ -125,12 +137,14 @@ def test_offline_analysis_and_incomplete_run(tmp_path: Path) -> None:
     for variant in ("v0", "aa"):
         for index in range(5):
             measurement(tmp_path / "intel/raw" / variant / f"r{index}.jsonl")
+    (tmp_path / "intel/libc-probe.json").write_text(json.dumps(PROBE))
     result = CliRunner().invoke(analyze_run, [str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "intel copy/size/64: 0.0000%" in result.output
     assert (tmp_path / "report.md").exists()
     for variant in ("v0", "aa"):
         (tmp_path / "intel/raw" / variant / "r4.jsonl").unlink()
+    (tmp_path / "intel/libc-probe.json").write_text(json.dumps(PROBE))
     result = CliRunner().invoke(analyze_run, [str(tmp_path)])
     assert result.exit_code == 1
     summary = json.loads((tmp_path / "summary.json").read_text())

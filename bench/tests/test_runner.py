@@ -10,7 +10,7 @@ from ec2bench.config import Config
 from ec2bench.parallel import Outcome
 from fastmem_bench.build import Build, Source
 from fastmem_bench.runner import run
-from tests.conftest import measurement
+from tests.conftest import CODEGEN, PROBE, measurement
 from tests.test_protocol import FakeBox, setup
 
 
@@ -18,7 +18,7 @@ def test_run_up_partial_success_and_passthrough(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = Source("v0", "WORKTREE", config.root, "hash")
-    build = Build(source, "intel", config.root / "prefix", "key")
+    build = Build(source, "intel", config.root / "prefix", "key", CODEGEN)
     fleet = Mock()
     fleet.one.return_value = {"InstanceId": "i-test"}
     monkeypatch.setattr("fastmem_bench.runner.Fleet", Mock(return_value=fleet))
@@ -46,7 +46,7 @@ def test_run_up_partial_success_and_passthrough(
         for variant in ("v0", "aa"):
             for index in range(5):
                 measurement(path / "intel/raw" / variant / f"r{index}.jsonl")
-        return {"warnings": []}
+        return {"warnings": [], "libc_probe": PROBE, "codegen": {"v0": CODEGEN, "aa": CODEGEN}}
 
     monkeypatch.setattr("fastmem_bench.runner.execute", execute)
     result = CliRunner().invoke(
@@ -58,7 +58,7 @@ def test_run_up_partial_success_and_passthrough(
             "--filter",
             "aligned",
             "--impl",
-            "fastmem,libc",
+            "fastmem_abi,glibc",
             "--samples",
             "2",
             "--sample-ms",
@@ -75,7 +75,7 @@ def test_run_up_partial_success_and_passthrough(
         "--filter",
         "aligned",
         "--impl",
-        "fastmem,libc",
+        "fastmem_abi,glibc",
         "--samples",
         "2",
         "--sample-ms",
@@ -89,6 +89,7 @@ def test_run_up_partial_success_and_passthrough(
     assert manifest["schedule_method"] == "seeded-balanced-latin-square"
     assert manifest["schedule"] == captured["schedule"]
     assert manifest["binary_args"] == captured["binary_args"]
+    assert manifest["codegen"]["intel"] == {"v0": CODEGEN, "aa": CODEGEN}
 
 
 def test_early_parse_failure_stops_remaining_rounds(config: Config) -> None:

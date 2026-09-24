@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const link_libc = b.option(bool, "link-libc", "Link libc to enable libc comparison in benchmarks") orelse false;
+    _ = b.option(bool, "link-libc", "Compatibility option: benchmarks always link libc");
     const rev = b.option([]const u8, "rev", "Revision label reported in bench-fastmem meta records") orelse "unknown";
 
     const mod = b.addModule("fastmem", .{
@@ -35,7 +35,6 @@ pub fn build(b: *std.Build) void {
 
     // Benchmark executable — always built ReleaseFast.
     const bench_opts = b.addOptions();
-    bench_opts.addOption(bool, "link_libc", link_libc);
     bench_opts.addOption([]const u8, "rev", rev);
 
     const bench_exe = b.addExecutable(.{
@@ -44,13 +43,15 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/bench_fastmem.zig"),
             .target = target,
             .optimize = .ReleaseFast,
-            .link_libc = if (link_libc) true else null,
+            .link_libc = true,
             .imports = &.{
                 .{ .name = "fastmem", .module = mod },
                 .{ .name = "bench_options", .module = bench_opts.createModule() },
             },
         }),
     });
+    bench_exe.bundle_compiler_rt = true;
+    bench_exe.root_module.linkSystemLibrary("dl", .{});
     b.installArtifact(bench_exe);
 
     const bench_step = b.step("bench", "Run fastmem benchmarks");
@@ -122,6 +123,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    const bench_tests = b.addTest(.{ .root_module = bench_exe.root_module });
+    bench_tests.bundle_compiler_rt = true;
+    const run_bench_tests = b.addRunArtifact(bench_tests);
+    test_step.dependOn(&run_bench_tests.step);
 }
 
 fn addAsmObject(

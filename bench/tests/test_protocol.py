@@ -9,7 +9,7 @@ from ec2bench.config import Config
 from fastmem_bench.analysis import analyze
 from fastmem_bench.build import Build, Source
 from fastmem_bench.protocol import execute, orders
-from tests.conftest import measurement
+from tests.conftest import CODEGEN, PROBE, measurement
 
 
 class FakeBox:
@@ -24,16 +24,7 @@ class FakeBox:
     def run(self, command: str, **_kwargs: Any) -> str:
         self.commands.append(command)
         if command.endswith("/libc-probe"):
-            return json.dumps(
-                {
-                    "libc_path": "/nix/store/libc/lib/libc.so.6",
-                    "glibc_version": "2.42",
-                    "symbols": {
-                        name: {"address": "0x70001000", "offset": "0x1000", "symbol": None}
-                        for name in ("memcpy", "memmove")
-                    },
-                }
-            )
+            return json.dumps(PROBE)
         if command.startswith("systemd-run") and self.fail:
             raise subprocess.CalledProcessError(1, command)
         if command.startswith("systemctl show"):
@@ -72,7 +63,7 @@ def setup(config: Config) -> tuple[Path, Build]:
     path = config.root / "bench-results/20260923T120000Z-test"
     path.mkdir(parents=True)
     source = Source("v0", "WORKTREE", config.root, "sourcehash")
-    return path, Build(source, "intel", config.root / "prefix", "buildhash")
+    return path, Build(source, "intel", config.root / "prefix", "buildhash", CODEGEN)
 
 
 def test_protocol(config: Config) -> None:
@@ -88,8 +79,11 @@ def test_protocol(config: Config) -> None:
     assert all("taskset -c 3" in command for command in commands)
     assert all("/bin/v0/bench-fastmem" in command for command in commands)
     assert all("--seed 42" in command for command in commands)
+    assert all("--codegen-file" in command for command in commands)
+    assert any(source.name == "codegen.json" for source, _ in box.uploads)
+    assert result["codegen"] == {"v0": CODEGEN, "aa": CODEGEN}
     assert any(
-        "objdump -d --start-address=4096 --stop-address=8192" in command for command in box.commands
+        "objdump -d --start-address=16 --stop-address=4112" in command for command in box.commands
     )
     assert len([command for command in box.commands if "AllowedCPUs=0-3" in command]) == 3
     assert box.downloaded

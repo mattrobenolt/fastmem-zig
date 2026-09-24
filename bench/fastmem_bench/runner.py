@@ -1,5 +1,6 @@
 """Build, execute, and analyze one reproducible experiment."""
 
+import hashlib
 import json
 import secrets
 from pathlib import Path
@@ -14,6 +15,7 @@ from ec2bench.parallel import Outcome, parallel, progress
 from ec2bench.runs import create_run, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze, validate_effect
 from fastmem_bench.build import build_all, disassemble, provenance, resolve
+from fastmem_bench.codegen import verify_recorded
 from fastmem_bench.protocol import execute, orders
 from fastmem_bench.report import write
 
@@ -21,7 +23,11 @@ from fastmem_bench.report import write
 @click.command()
 @click.option("--rev", "revisions", multiple=True, default=("WORKTREE",))
 @click.option("--target", "targets", multiple=True)
-@click.option("--suite", type=click.Choice(["quick", "standard", "dist"]), default="standard")
+@click.option(
+    "--suite",
+    type=click.Choice(["quick", "standard", "large", "const", "dist"]),
+    default="standard",
+)
 @click.option("--rounds", type=click.IntRange(min=1), default=5, show_default=True)
 @click.option(
     "--no-aa", is_flag=True, help="Disable the baseline duplicate and significance marks."
@@ -30,6 +36,7 @@ from fastmem_bench.report import write
 @click.option("--label", default="run", show_default=True)
 @click.option("--filter", "case_filter", default=None, help="Case substring passed to the binary.")
 @click.option("--impl", default=None, help="Comma-separated implementations passed to the binary.")
+@click.option("--dist-file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--samples", type=click.IntRange(min=1), default=None)
 @click.option("--sample-ms", type=click.IntRange(min=1), default=None)
 @click.option(
@@ -54,18 +61,22 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
     samples: int | None,
     sample_ms: int | None,
     minimum_effect: float | None,
+    dist_file: Path | None = None,
 ) -> None:
     """Cross-build revisions and measure interleaved rounds across the fleet."""
     effect = (
         minimum_effect if minimum_effect is not None else config.project.get("minimum_effect", 0.0)
     )
     validate_effect(effect)
+    if dist_file is not None and suite != "dist":
+        raise click.ClickException("--dist-file requires --suite dist")
     binary_args = []
     for option, value in (
         ("--filter", case_filter),
         ("--impl", impl),
         ("--samples", samples),
         ("--sample-ms", sample_ms),
+        ("--dist-file", dist_file.resolve() if dist_file else None),
     ):
         if value is not None:
             binary_args.extend([option, str(value)])
@@ -113,9 +124,30 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             "config": {"project": config.project, "targets": config.targets},
         }
     )
+    if dist_file is not None:
+        data = dist_file.read_bytes()
+        snapshot = path / "distribution.json"
+        snapshot.write_bytes(data)
+        binary_args[binary_args.index("--dist-file") + 1] = str(snapshot.resolve())
+        manifest["distribution"] = {
+            "path": str(dist_file.resolve()),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
     write_manifest(path, manifest)
     builds = build_all(config, sources, names)
     manifest.update(provenance(sources, builds))
+    manifest["codegen"] = {
+        name: {
+            source.variant: build.codegen
+            for source in sources
+            if (build := builds[f"{source.variant}/{name}"].value) is not None
+        }
+        for name in names
+    }
+    if not no_aa:
+        for evidence in manifest["codegen"].values():
+            if variants[0] in evidence:
+                evidence["aa"] = evidence[variants[0]]
     write_manifest(path, manifest)
     outputs = fleet.outputs()
 
@@ -159,7 +191,12 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             aa=None if no_aa else "aa",
             minimum_effect=effect,
             expected_round_count=rounds,
+            probe=protocol["libc_probe"],
         )
+        if result["codegen"] != protocol["codegen"]:
+            raise ValueError("Analysis codegen evidence disagrees with the build")
+        # Keep the independent resolution evidence in both the manifest and target artifacts.
+        manifest.setdefault("libc_probes", {})[name] = protocol["libc_probe"]
         result["protocol"] = protocol
         result["warnings"] += warnings + protocol.get("warnings", [])
         return result
@@ -214,7 +251,11 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
                 aa="aa" if manifest["aa"] else None,
                 minimum_effect=effect,
                 expected_round_count=manifest["rounds"],
+                probe=json.loads((run_dir / target / "libc-probe.json").read_text()),
             )
+            expected = manifest.get("codegen", {}).get(target)
+            if expected is not None:
+                verify_recorded(result["codegen"], expected)
             old = previous.get("targets", {}).get(target, {})
             if "protocol" in old:
                 result["protocol"] = old["protocol"]
