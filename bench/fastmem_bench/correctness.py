@@ -185,7 +185,7 @@ def execute_binary(
         "status=$?; printf '%s\\n' \"$status\" >exit-status.txt)"
     )
     try:
-        box.run(command, timeout=600)
+        box.run(command, timeout=3600 if optimize == "Debug" else 600)
     finally:
         box.download(remote, path)
     status = int((path / "exit-status.txt").read_text().strip())

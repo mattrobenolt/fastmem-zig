@@ -99,6 +99,11 @@ for op in ("move", "set"):
         require(("vzeroupper" not in text) if high_regs else ("vzeroupper" in text),
                 f"kernel {op}/{n} has wrong vector cleanup")
         paths.append(n)
+    if high_regs:
+        for n in (33, 63):
+            text = class_path(name, n)
+            require("%ymm16" in text and "vzeroupper" not in text,
+                    f"kernel {op}/{n} lacks clean high registers")
     kernel_counts[op] = paths
     if wide and op == "set" and not high_regs:
         text = "\n".join(i for _, i in body(name))
@@ -113,6 +118,9 @@ for op in ("move", "set"):
         lines = text.splitlines()
         stores = [i + 1 for i, line in enumerate(lines)
                   if re.search(r", [^%]*\([^)]*\)$", line)]
+        if n in (1, 4, 8, 15):
+            budget = {1: 12, 4: 11, 8: 9, 15: 9}[n] if op == "move" else 11
+            require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
     medium = "\n".join(i for _, i in body(f"x86_64.{op}.mediumKernel"))
@@ -138,5 +146,5 @@ else:
     require("movsb" not in large and "stosb" not in large, "unexpected REP path")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
                   "kernel_classes": kernel_counts, "abi": "direct alias", "variant": "high_regs" if high_regs else "entry", "small_paths": small_counts,
-                  "vector": "zmm" if wide else "ymm", "vzeroupper": "present",
+                  "vector": "zmm" if wide else "ymm", "vzeroupper": "inline/large only" if high_regs else "medium/inline/large",
                   "mem_symbol_references": 0}))

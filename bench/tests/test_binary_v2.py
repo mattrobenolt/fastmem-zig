@@ -33,7 +33,7 @@ def test_native_quick_resolution_and_balance() -> None:
     measurement = parse_text(result.stdout)
     probe = json.loads(subprocess.check_output([str(PROBE)], text=True))
     verify_probe(measurement, probe)
-    assert measurement.end["cases"] == 104
+    assert measurement.end["cases"] == 120
     assert measurement.meta["samples"] == 4
     assert any(
         row["profile"] == "page-offset" and row["src_off"] == 0 and row["dst_off"] == 2048
@@ -75,9 +75,15 @@ def test_native_histogram_and_standard_coverage(tmp_path: Path) -> None:
     assert {row["size"] for row in measurement.samples} == {24}
     result = invoke("--suite", "standard", "--list")
     records: list[dict[str, Any]] = [json.loads(line) for line in result.stdout.splitlines()]
-    assert records[-1]["cases"] == 448
+    assert records[-1]["cases"] == 514
     cases = {row["case"] for row in records[1:-1]}
-    assert {"copy/const/256", "move/dist/small", "set/dist/mixed"} <= cases
+    assert {
+        "copy/const/256",
+        "move/dist/small",
+        "set/dist/mixed",
+        "move/fwd-gap4096/65536",
+        "move/fwd-half/65536",
+    } <= cases
     result = invoke("--suite", "large", "--list")
     records = [json.loads(line) for line in result.stdout.splitlines()]
     assert {row["size"] for row in records[1:-1]} == {1 << 20, 4 << 20, 16 << 20, 64 << 20}
@@ -154,3 +160,22 @@ def test_native_codegen_evidence_is_bound_to_the_executable(tmp_path: Path) -> N
     assert result.returncode != 0
     assert "CodegenEvidenceDoesNotMatchExecutable" in result.stderr
     assert not result.stdout
+
+
+def test_native_large_forward_gap_profiles() -> None:
+    for profile, gap in (("fwd-gap4096", 4096), ("fwd-half", 32768)):
+        result = invoke(
+            "--suite",
+            "standard",
+            "--filter",
+            f"move/{profile}/65536",
+            "--sample-ms",
+            "1",
+            "--warmup-ms",
+            "0",
+        )
+        assert result.returncode == 0, result.stderr
+        measurement = parse_text(result.stdout)
+        assert {(row["src_off"], row["dst_off"], row["gap"]) for row in measurement.samples} == {
+            (gap, 0, gap)
+        }

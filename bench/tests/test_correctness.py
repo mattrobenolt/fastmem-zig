@@ -109,11 +109,13 @@ def test_execute_downloads_on_timeout(tmp_path: Path) -> None:
     box.download.assert_called_once()
 
 
+@pytest.mark.parametrize("optimize", ["Debug", "ReleaseSafe", "ReleaseFast"])
 @pytest.mark.parametrize("returncode", [0, 1])
 def test_build_command_and_log(
     config: Config,
     monkeypatch: pytest.MonkeyPatch,
     returncode: int,
+    optimize: str,
 ) -> None:
     config.targets["intel"]["zig_target"] = "x86_64-linux-gnu"
     path = config.root / "build"
@@ -121,6 +123,7 @@ def test_build_command_and_log(
     def build(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert kwargs["cwd"] == config.root
         assert command[:3] == ["zig", "build", "test-bin"]
+        assert f"-Doptimize={optimize}" in command
         assert "-Dcpu=x86_64_v3" in command
         assert "-Dtarget=x86_64-linux-gnu" in command
         (path / "bin").mkdir(parents=True)
@@ -130,9 +133,12 @@ def test_build_command_and_log(
     monkeypatch.setattr(c.subprocess, "run", build)
     if returncode:
         with pytest.raises(RuntimeError, match=r"build\.log"):
-            c.build_binary(config, "intel", "x86_64_v3", path)
+            c.build_binary(config, "intel", "x86_64_v3", path, optimize=optimize)
     else:
-        assert len(c.build_binary(config, "intel", "x86_64_v3", path)["sha256"]) == 64
+        assert (
+            len(c.build_binary(config, "intel", "x86_64_v3", path, optimize=optimize)["sha256"])
+            == 64
+        )
     assert (path / "build.log").read_text() == "outerr"
 
 
@@ -343,3 +349,18 @@ def test_invalid_optimize(config: Config, monkeypatch: pytest.MonkeyPatch) -> No
     result = CliRunner().invoke(c.test_fleet, ["--optimize", "ReleaseSmall"], obj=config)
     assert result.exit_code == 2
     builder.assert_not_called()
+
+
+def test_debug_execution_timeout(tmp_path: Path) -> None:
+    box = Mock()
+
+    def download(_remote: str, path: Path) -> None:
+        (path / "exit-status.txt").write_text("0")
+        (path / "summary.json").write_text(json.dumps(record(optimize="Debug")))
+
+    box.download.side_effect = download
+    result = c.execute_binary(
+        box, tmp_path / "binary", "/root/test", tmp_path, "sapphirerapids", optimize="Debug"
+    )
+    assert result["status"] == "pass"
+    assert box.run.call_args.kwargs["timeout"] == 3600

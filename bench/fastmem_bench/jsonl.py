@@ -305,12 +305,20 @@ def validate_offsets(meta: Meta, sample: Sample) -> None:
         if (sample.src_off, sample.dst_off) != offsets or sample.gap is not None:
             raise ValueError("Offsets or gap disagree with profile")
         return
+    if sample.op == "move" and sample.profile == "fwd-half":
+        gap = int(sample.size) // 2
+        if sample.gap != gap or (sample.src_off, sample.dst_off) != (gap, 0):
+            raise ValueError("Move half-gap disagrees with size or offsets")
+        return
     directional = re.fullmatch(r"(fwd|bwd)-gap([0-9]+)", sample.profile)
     if sample.op != "move" or directional is None:
         raise ValueError("Unknown operation profile")
     gap = int(directional[2])
     offsets = (gap, 0) if directional[1] == "fwd" else (0, gap)
-    if gap not in {1, meta.chunk_bytes - 1, meta.chunk_bytes + 1} or sample.gap != gap:
+    allowed = {1, meta.chunk_bytes - 1, meta.chunk_bytes + 1}
+    if directional[1] == "fwd":
+        allowed.add(4096)
+    if gap not in allowed or sample.gap != gap:
         raise ValueError("Move gap disagrees with profile")
     if (sample.src_off, sample.dst_off) != offsets:
         raise ValueError("Move offsets disagree with direction and gap")
