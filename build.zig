@@ -4,7 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     _ = b.option(bool, "link-libc", "Compatibility option: benchmarks always link libc");
-    const rev = b.option([]const u8, "rev", "Revision label reported in bench-fastmem meta records") orelse "unknown";
+    const rev = b.option(
+        []const u8,
+        "rev",
+        "Revision label reported in bench-fastmem meta records",
+    ) orelse "unknown";
 
     // no_builtin: LLVM must not idiom-recognize fastmem's own loops into
     // memcpy/memset calls (recursion under the export layer).
@@ -80,7 +84,8 @@ pub fn build(b: *std.Build) void {
     });
     const install_correctness = b.addInstallArtifact(correctness, .{});
     b.getInstallStep().dependOn(&install_correctness.step);
-    b.step("test-bin", "Install the guard-page correctness binary").dependOn(&install_correctness.step);
+    const test_bin = b.step("test-bin", "Install the guard-page correctness binary");
+    test_bin.dependOn(&install_correctness.step);
     const guard_cmd = b.addRunArtifact(correctness);
     if (b.args) |args| guard_cmd.addArgs(args);
     b.step("test-guard", "Run the full guard-page matrix").dependOn(&guard_cmd.step);
@@ -127,8 +132,11 @@ pub fn build(b: *std.Build) void {
 
     mod_tests.root_module.addOptions("fastmem_options", x86_options);
 
-    const unit_install = b.addInstallArtifact(mod_tests, .{ .dest_sub_path = "fastmem-unit-tests" });
-    b.step("test-unit-bin", "Install the unit test binary for cross execution").dependOn(&unit_install.step);
+    const unit_install = b.addInstallArtifact(mod_tests, .{
+        .dest_sub_path = "fastmem-unit-tests",
+    });
+    const unit_bin = b.step("test-unit-bin", "Install the unit test binary for cross execution");
+    unit_bin.dependOn(&unit_install.step);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const test_step = b.step("test", "Run tests");
@@ -221,19 +229,50 @@ fn addAsmStep(
 fn tuningOptions(b: *std.Build) *std.Build.Step.Options {
     const options = b.addOptions();
     inline for (.{ "vec", "inline-max" }) |name| {
-        options.addOption(?u32, comptime "x86_" ++ replaceDash(name), b.option(u32, "x86-" ++ name, "Override the x86 tuning default"));
+        options.addOption(
+            ?u32,
+            comptime "x86_" ++ replaceDash(name),
+            b.option(u32, "x86-" ++ name, "Override the x86 tuning default"),
+        );
     }
-    inline for (.{ "rep-movsb-min", "nt-min", "rep-stosb-min", "memset-nt-min", "alias-mask", "rep-src-align-mask", "rep-fwd-gap-min" }) |name| {
-        options.addOption(?u64, comptime "x86_" ++ replaceDash(name), b.option(u64, "x86-" ++ name, "Override the x86 tuning default"));
+    inline for (.{
+        "rep-movsb-min", "nt-min",             "rep-stosb-min",   "memset-nt-min",
+        "alias-mask",    "rep-src-align-mask", "rep-fwd-gap-min",
+    }) |name| {
+        options.addOption(
+            ?u64,
+            comptime "x86_" ++ replaceDash(name),
+            b.option(u64, "x86-" ++ name, "Override the x86 tuning default"),
+        );
     }
     const Variant = enum { entry, high_regs };
-    options.addOption(Variant, "x86_variant", b.option(Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs);
+    options.addOption(
+        Variant,
+        "x86_variant",
+        b.option(Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs,
+    );
     // aarch64 small-path overrides (src/aarch64/tuning.zig). "auto" keeps
     // the per-CPU-model default; these serve local A/B runs.
     inline for (.{ "copy", "move", "set" }) |op| {
-        options.addOption([]const u8, "small_" ++ op, b.option([]const u8, "small-" ++ op, "aarch64 SVE " ++ op ++ " small path: auto|sve|neon|hybrid") orelse "auto");
+        options.addOption(
+            []const u8,
+            "small_" ++ op,
+            b.option(
+                []const u8,
+                "small-" ++ op,
+                "aarch64 SVE " ++ op ++ " small path: auto|sve|neon|hybrid",
+            ) orelse "auto",
+        );
     }
-    options.addOption(bool, "x86_small_masked_set", b.option(bool, "x86-small-masked-set", "Use masked small memset in LLVM builds") orelse true);
+    options.addOption(
+        bool,
+        "x86_small_masked_set",
+        b.option(
+            bool,
+            "x86-small-masked-set",
+            "Use masked small memset in LLVM builds",
+        ) orelse true,
+    );
     return options;
 }
 
@@ -244,8 +283,14 @@ fn replaceDash(comptime name: []const u8) *const [name.len]u8 {
 }
 
 fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
-    const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
-    for ([_][]const u8{ "sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3" }) |cpu| {
+    const step = b.step(
+        "codegen-x86",
+        "Check x86 vector widths, ABI entries, and symbol independence",
+    );
+    const cpus = [_][]const u8{
+        "sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3",
+    };
+    for (cpus) |cpu| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
             .arch_os_abi = "x86_64-linux-gnu",
             .cpu_features = cpu,
@@ -296,12 +341,16 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
         for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .ReleaseSafe }) |mode| {
             for ([_]bool{ false, true }) |libc| {
                 for ([_]bool{ false, true }) |division| {
-                    const name = b.fmt("export-{s}-{s}-libc{d}-div{d}", .{ arch, @tagName(mode), @intFromBool(libc), @intFromBool(division) });
+                    const name = b.fmt("export-{s}-{s}-libc{d}-div{d}", .{
+                        arch, @tagName(mode), @intFromBool(libc), @intFromBool(division),
+                    });
                     const fixture = exportFixture(b, tuning, target, mode, libc, division, true);
                     const exe = b.addExecutable(.{ .name = name, .root_module = fixture });
                     const check = b.addSystemCommand(&.{"python3"});
                     check.addFileArg(b.path("src/export/check.py"));
-                    check.addArgs(&.{ "--arch", arch, "--division", if (division) "yes" else "no" });
+                    check.addArgs(&.{
+                        "--arch", arch, "--division", if (division) "yes" else "no",
+                    });
                     if (!libc and linux_host) check.addArg("--run");
                     check.addFileArg(exe.getEmittedBin());
                     step.dependOn(&check.step);
@@ -309,9 +358,12 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
             }
         }
         for ([_]bool{ false, true }) |enabled| {
-            const fixture = exportFixture(b, tuning, target, if (enabled) .Debug else .ReleaseFast, false, true, enabled);
+            const mode: std.builtin.OptimizeMode = if (enabled) .Debug else .ReleaseFast;
+            const fixture = exportFixture(b, tuning, target, mode, false, true, enabled);
             const exe = b.addExecutable(.{
-                .name = b.fmt("export-{s}-{s}", .{ arch, if (enabled) "debug-llvm" else "disabled" }),
+                .name = b.fmt("export-{s}-{s}", .{
+                    arch, if (enabled) "debug-llvm" else "disabled",
+                }),
                 .root_module = fixture,
                 .use_llvm = true,
             });
@@ -342,7 +394,9 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
             .use_llvm = false,
             .root_module = exportFixture(b, tuning, target, .Debug, false, false, true),
         });
-        refused.expect_errors = .{ .contains = "fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)" };
+        refused.expect_errors = .{
+            .contains = "fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)",
+        };
         step.dependOn(&refused.step);
         const strong = b.addObject(.{
             .name = b.fmt("export-strong-{s}", .{arch}),
@@ -359,9 +413,16 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
             const division = kind != .shared_no_rt;
             const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, division, true);
             const artifact = if (shared)
-                b.addLibrary(.{ .name = b.fmt("export-{s}-{s}", .{ @tagName(kind), arch }), .root_module = fixture, .linkage = .dynamic })
+                b.addLibrary(.{
+                    .name = b.fmt("export-{s}-{s}", .{ @tagName(kind), arch }),
+                    .root_module = fixture,
+                    .linkage = .dynamic,
+                })
             else
-                b.addExecutable(.{ .name = b.fmt("export-dynamic-{s}", .{arch}), .root_module = fixture });
+                b.addExecutable(.{
+                    .name = b.fmt("export-dynamic-{s}", .{arch}),
+                    .root_module = fixture,
+                });
             const check = b.addSystemCommand(&.{"python3"});
             check.addFileArg(b.path("src/export/check.py"));
             check.addArgs(&.{ "--arch", arch, "--division", if (division) "yes" else "no" });
@@ -418,7 +479,10 @@ fn exportFixture(
         .imports = &.{.{ .name = "fastmem", .module = kernel }},
     });
     fixture.addOptions("export_options", options);
-    fixture.addCSourceFile(.{ .file = b.path("src/export/consumer.c"), .flags = &.{ "-fno-builtin", "-fno-stack-protector" } });
+    fixture.addCSourceFile(.{
+        .file = b.path("src/export/consumer.c"),
+        .flags = &.{ "-fno-builtin", "-fno-stack-protector" },
+    });
     return fixture;
 }
 
@@ -429,7 +493,8 @@ fn addStdExportTests(b: *std.Build, tuning: *std.Build.Step.Options) void {
     run.addArg(b.graph.zig_lib_directory.path.?);
     run.addFileArg(b.path("src/root.zig"));
     run.addFileArg(tuning.getOutput());
-    b.step("test-export-std", "Run upstream std tests with memory exports, native and x86 qemu").dependOn(&run.step);
+    const step = b.step("test-export-std", "Check upstream std tests with memory exports");
+    step.dependOn(&run.step);
 }
 
 fn addExportCollisionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
@@ -449,8 +514,6 @@ fn addExportCollisionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.
         const Kind = enum { strong, weak, default, compiler_rt };
         for ([_]Kind{ .strong, .weak, .default, .compiler_rt }) |kind| {
             for ([_][]const u8{ "memcpy", "memmove", "memset" }) |symbol| {
-                // One bundled compiler-rt build already collides on all three names.
-                if (kind == .compiler_rt and !std.mem.eql(u8, symbol, "memcpy")) continue;
                 const options = b.addOptions();
                 options.addOption(Kind, "kind", kind);
                 options.addOption([]const u8, "symbol", symbol);
@@ -514,7 +577,10 @@ fn addArmByteTests(b: *std.Build) *std.Build.Step {
 }
 
 fn addExportRecursionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
-    const step = b.step("test-export-recursion", "Audit std helpers and local intrinsic suppression");
+    const step = b.step(
+        "test-export-recursion",
+        "Audit std helpers and local intrinsic suppression",
+    );
     const target = b.resolveTargetQuery(std.Target.Query.parse(.{
         .arch_os_abi = "x86_64-linux-gnu",
         .cpu_features = "x86_64",

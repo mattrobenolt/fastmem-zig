@@ -8,12 +8,10 @@
 // aarch64 (non-SVE) kernel, the G6 baseline.
 //
 // Port notes (the only intentional differences from upstream):
-// - The C preprocessor macros of asmdefs.h are expanded: ENTRY /
-//   ENTRY_ALIAS / END become explicit .globl/.type/.p2align/.size
-//   directives, the register aliases (dstin, src, count, ...) become
-//   architectural register names, and L(name) becomes .Lfm_simd_cpy_name.
-//   Local labels are prefixed uniquely per port: module-level asm in
-//   one compilation shares a label namespace across files.
+// - Naked Zig functions and @export replace the ENTRY, ALIAS, and END macros.
+//   The compiler emits symbol types, sizes, and hidden visibility.
+//   Register aliases become architectural names. Local labels retain unique
+//   prefixes because all inline assembly shares one label namespace.
 // - Symbols are renamed __memcpy_aarch64_simd -> fastmem_advsimd_copy
 //   and __memmove_aarch64_simd -> fastmem_advsimd_move and given
 //   .hidden visibility.
@@ -22,13 +20,8 @@
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
 // - Immediate expressions are written #( ...); upstream writes them
 //   bare. Both forms assemble to the same bytes.
-// - One directive is added: .p2align 6 above the alias label, so the
-//   move entry is aligned in the fused module asm. Assembled standalone,
-//   .text is byte-identical to upstream.
-// - The whole block is gated on the absence of the SVE CPU feature and
-//   on the ELF object format at comptime (the directives below are
-//   ELF-only), so non-ELF or SVE builds never see these
-//   instructions.
+// - The shared entry retains 64-byte alignment and its original instruction bytes.
+// - Exports require non-SVE aarch64 ELF at comptime. Other builds omit these instructions.
 
 const builtin = @import("builtin");
 
@@ -203,5 +196,9 @@ pub fn copyEntry() align(64) callconv(.naked) void {
         ::: .{ .memory = true });
 }
 
-pub const fastmem_advsimd_copy: *const fn ([*]u8, [*]const u8, usize) callconv(.c) void = @ptrCast(&copyEntry);
+pub const fastmem_advsimd_copy: *const fn (
+    [*]u8,
+    [*]const u8,
+    usize,
+) callconv(.c) void = @ptrCast(&copyEntry);
 pub const fastmem_advsimd_move = fastmem_advsimd_copy;

@@ -8,14 +8,10 @@
 // aarch64 (non-SVE) kernel, the G6 baseline.
 //
 // Port notes (the only intentional differences from upstream):
-// - The C preprocessor macros of asmdefs.h are expanded: ENTRY / END
-//   become explicit .globl/.type/.p2align/.size directives, the
-//   register aliases (dstin, valw, count, ...) become architectural
-//   register names, L(name) becomes .Lfm_simd_set_name.
-//   Local labels are prefixed uniquely per port: module-level asm in
-//   one compilation shares a label namespace across files. The numeric
-//   local labels (2:, 3:) need no prefix; they bind to the nearest
-//   definition.
+// - Naked Zig functions and @export replace the ENTRY, ALIAS, and END macros.
+//   The compiler emits symbol types, sizes, and hidden visibility.
+//   Register aliases become architectural names. Local labels retain unique
+//   prefixes because all inline assembly shares one label namespace.
 // - The symbol is renamed __memset_aarch64 -> fastmem_advsimd_set and
 //   given .hidden visibility.
 // - SKIP_ZVA_CHECK is not defined, so the runtime DCZID_EL0 check on
@@ -25,10 +21,7 @@
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
 // - Immediate expressions are written #( ...); upstream writes them
 //   bare. Both forms assemble to the same bytes.
-// - The whole block is gated on the absence of the SVE CPU feature and
-//   on the ELF object format at comptime (the directives below are
-//   ELF-only), so non-ELF or SVE builds never see these
-//   instructions.
+// - Exports require non-SVE aarch64 ELF at comptime. Other builds omit these instructions.
 
 const builtin = @import("builtin");
 

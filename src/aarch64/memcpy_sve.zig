@@ -11,12 +11,10 @@
 // ported in memcpy_advsimd.zig).
 //
 // Port notes (the only intentional differences from upstream):
-// - The C preprocessor macros of asmdefs.h are expanded: ENTRY /
-//   ENTRY_ALIAS / END become explicit .globl/.type/.p2align/.size
-//   directives, the register aliases (dstin, src, count, ...) become
-//   architectural register names, and L(name) becomes .Lfm_sve_cpy_name.
-//   Local labels are prefixed uniquely per port: module-level asm in
-//   one compilation shares a label namespace across files.
+// - Naked Zig functions and @export replace the ENTRY, ALIAS, and END macros.
+//   The compiler emits symbol types, sizes, and hidden visibility.
+//   Register aliases become architectural names. Local labels retain unique
+//   prefixes because all inline assembly shares one label namespace.
 // - Symbols are renamed __memcpy_aarch64_sve -> fastmem_sve_copy and
 //   __memmove_aarch64_sve -> fastmem_sve_move and given .hidden
 //   visibility.
@@ -25,12 +23,9 @@
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
 // - Immediate expressions are written #( ...); upstream writes them
 //   bare. Both forms assemble to the same bytes.
-// - One directive is added: .p2align 6 above the alias label, so the
-//   move entry is aligned in the fused module asm. Assembled standalone,
-//   .text is byte-identical to upstream.
-// - The whole block is gated on the SVE CPU feature and the ELF object
-//   format at comptime (the directives below are ELF-only), so non-SVE
-//   or non-ELF builds never see these instructions.
+// - Each entry retains 64-byte alignment. The instruction bytes match the
+//   earlier assembly kernels, including padding after a separate move head.
+// - Exports require SVE and ELF at comptime. Other builds do not emit these instructions.
 // - The small-size paths (count <= 64) are selected at comptime per CPU
 //   model (src/aarch64/tuning.zig), separately for the copy and move
 //   entries. .sve is the upstream predicated pair for 0..2*VL and the
@@ -344,15 +339,16 @@ const long_path =
 // the split move head adjacent to copy, including its original padding.
 comptime {
     if (enabled) {
-        @export(&moveEntry, .{ .name = "fastmem_sve_move", .visibility = .hidden });
+        @export(&move_entry, .{ .name = "fastmem_sve_move", .visibility = .hidden });
         @export(&copyEntry, .{ .name = "fastmem_sve_copy", .visibility = .hidden });
     }
 }
 
-pub const moveEntry = if (aliased) copyEntry else splitMoveEntry;
+pub const move_entry = if (aliased) copyEntry else splitMoveEntry;
 
 fn splitMoveEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.naked) void {
-    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ head(move_v, "mov") ++ ".p2align 6\n" ::: .{ .memory = true });
+    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++
+            head(move_v, "mov") ++ ".p2align 6\n" ::: .{ .memory = true });
 }
 
 pub fn copyEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.naked) void {
@@ -361,5 +357,13 @@ pub fn copyEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.nak
             (if (need_neon_mid) mid_neon else "") ++ long_path ::: .{ .memory = true });
 }
 
-pub const fastmem_sve_copy: *const fn ([*]u8, [*]const u8, usize) callconv(.c) void = @ptrCast(&copyEntry);
-pub const fastmem_sve_move: *const fn ([*]u8, [*]const u8, usize) callconv(.c) void = @ptrCast(&moveEntry);
+pub const fastmem_sve_copy: *const fn (
+    [*]u8,
+    [*]const u8,
+    usize,
+) callconv(.c) void = @ptrCast(&copyEntry);
+pub const fastmem_sve_move: *const fn (
+    [*]u8,
+    [*]const u8,
+    usize,
+) callconv(.c) void = @ptrCast(&move_entry);

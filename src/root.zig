@@ -19,7 +19,7 @@ pub const MoveFlags = memmove_impl.Flags;
 // aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
 // The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
 // generic-aarch64 path. The gates are complementary, so exactly one pair
-// emits its global asm per build.
+// emits its kernel definitions per build.
 const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
 const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
 const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
@@ -28,8 +28,8 @@ const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 // all at <= 64 bytes; the C-ABI kernels handle the rest).
 const aarch64_small = @import("aarch64/small.zig");
 
-// The kernel ports carry ELF-only directives (.type/.hidden/.size), so
-// non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
+// The kernel ports retain the ELF-only support boundary.
+// Non-ELF aarch64 targets, such as macOS, keep the generic Zig kernels.
 const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
 const x86_tuning = @import("x86_64/tuning.zig");
 const x86_move = @import("x86_64/move.zig");
@@ -218,7 +218,7 @@ else
     undefined;
 
 const libc_move_fn: LibcCopyFn = if (on_aarch64_sve)
-    @ptrCast(&aarch64_memcpy_sve.moveEntry)
+    @ptrCast(&aarch64_memcpy_sve.move_entry)
 else if (on_aarch64)
     @ptrCast(&aarch64_memcpy_advsimd.copyEntry)
 else
@@ -246,13 +246,13 @@ pub fn exportSymbols() void {
 }
 
 /// C-ABI entry points with the libc signatures, each returning dest.
-/// Not exported unless exportSymbols is called. The bench measures these as
-/// fastmem_abi. On aarch64 the entries are the kernel symbols (see
-/// above); elsewhere they are generic Zig wrappers.
+/// The entries receive libc names only after exportSymbols. The benchmark
+/// measures these as fastmem_abi. Dedicated kernels handle aarch64 and AVX2.
+/// Other targets use generic Zig wrappers.
 pub const abi = struct {
     comptime {
         // A consumer can use only ABI pointers, without copy/move/set.
-        // Analyze the assembly containers even in that case.
+        // Analyze the kernel containers even in that case.
         if (on_aarch64_sve) {
             _ = aarch64_memcpy_sve;
             _ = aarch64_memset_sve;
