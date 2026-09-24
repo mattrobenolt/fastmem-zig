@@ -100,17 +100,6 @@ pub noinline fn kernel(
         pair(@Vector(16, u8), d, s, n);
         return dst;
     }
-    return @call(tail_call, mediumKernel, .{ dst, src, n });
-}
-
-noinline fn mediumKernel(
-    dst: ?*anyopaque,
-    src: ?*const anyopaque,
-    n: usize,
-) callconv(.c) ?*anyopaque {
-    @disableIntrinsics();
-    const d: [*]u8 = @ptrCast(dst.?);
-    const s: [*]const u8 = @ptrCast(src.?);
     if (comptime ops.high_available) {
         if (n > 512) return @call(.always_tail, largeKernel, .{ dst, src, n });
         if (n < 64) {
@@ -122,10 +111,21 @@ noinline fn mediumKernel(
         } else {
             ops.highMove(64, 8, d, s, n);
         }
-    } else {
-        if (!small(8 * w, d, s, n))
-            return @call(tail_call, largeKernel, .{ dst, src, n });
+        return dst;
     }
+    return @call(tail_call, mediumKernel, .{ dst, src, n });
+}
+
+noinline fn mediumKernel(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (!small(8 * w, d, s, n))
+        return @call(tail_call, largeKernel, .{ dst, src, n });
     return dst;
 }
 

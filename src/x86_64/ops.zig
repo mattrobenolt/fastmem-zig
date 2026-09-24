@@ -149,14 +149,14 @@ pub inline fn highSet(
     comptime bytes: u32,
     comptime count: u32,
     dst: [*]u8,
-    value: u8,
+    value: c_int,
     n: usize,
 ) void {
     if (comptime !high_available) @compileError("highSet requires LLVM and AVX-512BW");
     asm volatile (highSetText(bytes, count)
         :
         : [dst] "r" (dst),
-          [value] "r" (@as(u32, value)),
+          [value] "r" (value),
           [n] "r" (n),
         : .{ .zmm16 = true, .memory = true });
 }

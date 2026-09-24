@@ -85,10 +85,10 @@ for name in ("probeRuntimeCopy", "probeRuntimeMove", "probeRuntimeSet"):
     require(re.search(r"\b(?:call\w*|j\w+)\b.*<x86_64\.", text), f"{name} lacks a large-path transfer")
 require(any("copyLarge" in name for name in syms), "runtime copy specialization missing")
 
-high_regs = "%zmm16" in "\n".join(i for _, i in body("x86_64.move.mediumKernel"))
+high_regs = "%zmm16" in "\n".join(i for _, i in body("x86_64.move.kernel"))
 kernel_counts = {}
 for op in ("move", "set"):
-    name = f"x86_64.{op}.mediumKernel"
+    name = f"x86_64.{op}.kernel" if high_regs else f"x86_64.{op}.mediumKernel"
     paths = []
     for n in ((64, 65, 128, 129, 256, 257, 511, 512) if wide else (33, 64, 65, 128, 129, 256)):
         text = class_path(name, n)
@@ -123,7 +123,7 @@ for op in ("move", "set"):
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
-    medium = "\n".join(i for _, i in body(f"x86_64.{op}.mediumKernel"))
+    medium = "" if high_regs else "\n".join(i for _, i in body(f"x86_64.{op}.mediumKernel"))
     require(not re.search(r"\b(?:call\w*|push\w*|pop\w*)\b", entry + medium), f"{op} entry is not a leaf")
 
 for op, kernel in (("copy", "move"), ("move", "move"), ("set", "set")):
