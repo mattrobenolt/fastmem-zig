@@ -19,8 +19,14 @@ SIMD-optimized `memcpy`/`memmove` in Zig. Goal: match or beat platform libc.
   `asm` / `asm-all` (5 cross targets).
 - `docs/benchmark-hosts.md` — per-target benchmark evidence and learnings.
   Read it before making or repeating performance claims.
-- `infra/` — OpenTofu stack (AWS `c7i`/`c7a`/`c8g` + OrbStack `orb-arm64`,
-  NixOS images) and `bench.nu`, the nushell driver for sync/run/compare.
+- `docs/bench-design.md` — the benchmark system contract (infra, harness,
+  JSONL schema, statistics). `infra/README.md` is the fleet runbook.
+- `infra/` — OpenTofu: `modules/bench-iam` + `modules/bench-base`
+  (copyable pattern), root stacks `iam/` (human applies) and `base/`
+  (agent applies), NixOS boxes with a TTL guard and a reaper Lambda.
+- `bench/` — Python (uv) harness: `ec2bench/` (generic fleet library,
+  copyable) and `fastmem_bench/` (build, run protocol, analysis).
+  `bench.toml` configures both.
 
 ## Toolchain
 
@@ -39,16 +45,25 @@ SIMD-optimized `memcpy`/`memmove` in Zig. Goal: match or beat platform libc.
 - `just fuzz` — fuzzer (iteration budget with K/M/G suffix).
 - `just bench` / `just bench-libc` — local benchmark runs.
 - `just asm` / `just asm-all` / `just show-fn <fn>` — codegen inspection.
-- `just bench-up` / `bench-run` / `bench-run-tagged <tag>` /
-  `bench-compare <baseline> <candidate>` — the remote benchmark fleet.
+- `just bench-up [targets]` / `bench-ls` / `bench-down` — the fleet
+  (profile `fastmem-bench`; boxes self-destruct, the reaper backstops).
+- `just bench-run --rev A --rev B --suite quick` — build locally, measure
+  on every running box in parallel, write `bench-results/<run-id>/`.
+- `just b analyze <run-dir>` — re-analyze saved raw rounds offline.
+- `just b <cmd>` — any harness command; `just bench-check` — harness tests.
 
 ## Benchmark targets
 
-- `orb-arm64` — OrbStack NixOS VM on Apple Silicon; Linux/aarch64 sanity.
-- `c7i` — AWS `c7i.large`, Intel Sapphire Rapids.
-- `c7a` — AWS `c7a.large`, AMD Genoa. Materially noisier than the others;
-  treat small deltas there with suspicion.
-- `c8g` — AWS `c8g.large`, Graviton4 / Neoverse-V2.
+`bench.toml` is the source of truth (instance type, Zig target, `-Dcpu`).
+All `.xlarge`, us-west-2, account 396684171460 ("playground").
+
+- `c7i` — Intel Sapphire Rapids (SMT 2/core).
+- `c8i` — Intel Granite Rapids (SMT 2/core).
+- `c7a` — AMD Genoa (1 thread/core). Materially noisier in 0.15-era runs.
+- `c8a` — AMD Turin (1 thread/core).
+- `c7g` — Graviton3 / Neoverse-V1 (256-bit SVE).
+- `c8g` — Graviton4 / Neoverse-V2 (128-bit SVE).
+- `c9g` — Graviton5 (`-Dcpu=neoverse_v3` unverified).
 
 ## Performance state
 
