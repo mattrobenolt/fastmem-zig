@@ -19,12 +19,26 @@ from fastmem_bench.jsonl import parse
 
 def orders(variants: list[str], rounds: int, seed: int) -> list[list[str]]:
     rng = random.Random(seed)  # noqa: S311 — recorded experimental randomization
+    labels = variants.copy()
+    rng.shuffle(labels)
+    count = len(labels)
+    if not count:
+        raise ValueError("The schedule requires at least one variant")
+    # Williams balanced Latin square: every position and predecessor balance per block.
+    first = [0]
+    first.extend((index + 1) // 2 if index % 2 else count - index // 2 for index in range(1, count))
+    rows = [[labels[(value + offset) % count] for value in first] for offset in range(count)]
+    if count % 2 and count > 1:
+        rows += [list(reversed(row)) for row in rows]
     result = []
-    for _ in range(rounds):
-        order = variants.copy()
-        rng.shuffle(order)
-        result.append(order)
-    return result
+    while len(result) < rounds:
+        # Shuffle Latin-square blocks separately to balance positions within count rounds.
+        blocks = [rows[index : index + count] for index in range(0, len(rows), count)]
+        rng.shuffle(blocks)
+        for block in blocks:
+            rng.shuffle(block)
+            result.extend(block)
+    return result[:rounds]
 
 
 def glibc_disassembly(box: Box, probe: dict[str, Any], remote: str) -> None:

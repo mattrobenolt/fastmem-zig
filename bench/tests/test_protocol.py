@@ -93,7 +93,7 @@ def test_protocol(config: Config) -> None:
     )
     assert len([command for command in box.commands if "AllowedCPUs=0-3" in command]) == 3
     assert box.downloaded
-    assert analyze(path / "intel/raw", ["v0"], "v0")["noise_floor"] == 0
+    assert analyze(path / "intel/raw", ["v0"], "v0")["noise_floors"]["copy/size/64"] == 0
 
 
 def test_protocol_restores_and_downloads_after_failure(config: Config) -> None:
