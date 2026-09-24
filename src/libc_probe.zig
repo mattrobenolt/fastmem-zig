@@ -45,12 +45,11 @@ fn probeSymbol(handle: *anyopaque, name: [*:0]const u8) !Probe {
 
     const address = @intFromPtr(func);
     const base: usize = if (info.dli_fbase != null) @intFromPtr(info.dli_fbase) else 0;
-    const symbol_addr: ?usize = if (info.dli_saddr != null) @intFromPtr(info.dli_saddr) else null;
 
     return .{
         .address = address,
         .symbol = if (info.dli_sname != null) mem.span(info.dli_sname) else null,
-        .offset = (symbol_addr orelse address) - base,
+        .offset = address - base,
         .library_path = if (info.dli_fname != null) mem.span(info.dli_fname) else "",
     };
 }
