@@ -13,6 +13,7 @@ const process = std.process;
 const Op = enum { copy, move, set };
 const Case = struct {
     op: Op = .copy,
+    source_order: enum { below, above, shared } = .below,
     len: u32 = 0,
     src: u32 = 0,
     dst: u32 = 0,
@@ -120,7 +121,7 @@ fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !
     count += 1;
 }
 
-fn disjoint(src: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: u32) !void {
+fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: u32) !void {
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (0..offsets) |s| {
             for (0..offsets) |d| {
@@ -133,6 +134,8 @@ fn disjoint(src: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: u32) 
                 try check(.copy, src, dst, expected, c);
                 c.op = .move;
                 try check(.move, src, dst, expected, c);
+                c.source_order = .above;
+                try check(.move, above, dst, expected, c);
             }
         }
         if (comptime @hasDecl(fastmem, "set")) {
@@ -167,6 +170,7 @@ fn overlapOne(
     const dest = base + if (backward) gap else @as(u32, 0);
     const c: Case = .{
         .op = .move,
+        .source_order = .shared,
         .len = len,
         .src = source,
         .dst = dest,
@@ -208,21 +212,35 @@ fn sizeClass(
     var maximum: u32 = 0;
     for (sizes) |len| maximum = @max(maximum, len);
     const capacity = maximum + @max(256, if (maximum > 1024) @max(8192, maximum - 1) + 64 else 0);
-    const src = try Guarded.init(capacity);
-    defer src.deinit();
-    const dst = try Guarded.init(capacity);
-    defer dst.deinit();
+    var windows: [3]Guarded = undefined;
+    var initialized: u32 = 0;
+    defer for (windows[0..initialized]) |window| window.deinit();
+    for (&windows) |*window| {
+        window.* = try Guarded.init(capacity);
+        initialized += 1;
+    }
+    // mmap placement is not an API guarantee. Sort addresses before choosing the destination.
+    mem.sort(Guarded, &windows, {}, struct {
+        fn less(_: void, a: Guarded, b: Guarded) bool {
+            return @intFromPtr(a.bytes.ptr) < @intFromPtr(b.bytes.ptr);
+        }
+    }.less);
+    const src = windows[0];
+    const dst = windows[1];
+    const above = windows[2];
     const expected = try allocator.alloc(u8, dst.bytes.len);
     defer allocator.free(expected);
     const original = try allocator.alloc(u8, src.bytes.len);
     defer allocator.free(original);
     pattern(original);
-    reference(src.bytes, original);
-    // A read-only source detects writes even when the final bytes look correct.
-    if (linux.errno(linux.mprotect(src.bytes.ptr, src.bytes.len, .{ .READ = true })) != .SUCCESS)
-        return error.ProtectFailed;
+    for ([_]Guarded{ src, above }) |source| {
+        reference(source.bytes, original);
+        // A read-only source detects writes even when the final bytes look correct.
+        const rc = linux.mprotect(source.bytes.ptr, source.bytes.len, .{ .READ = true });
+        if (linux.errno(rc) != .SUCCESS) return error.ProtectFailed;
+    }
     for (sizes) |len| {
-        try disjoint(src, dst, expected, len, offsets);
+        try disjoint(src, above, dst, expected, len, offsets);
         try overlap(dst, expected, original, len, overlap_offsets);
     }
 }
