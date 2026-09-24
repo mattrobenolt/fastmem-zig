@@ -152,30 +152,47 @@ fn disjoint(src: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: u32) 
     }
 }
 
+fn overlapOne(
+    comptime side: Guarded.Side,
+    comptime backward: bool,
+    buf: Guarded,
+    expected: []u8,
+    original: []const u8,
+    len: u32,
+    gap: u32,
+    inset: u32,
+) !void {
+    const base = buf.offset(side, len + gap, inset);
+    const source = base + if (backward) @as(u32, 0) else gap;
+    const dest = base + if (backward) gap else @as(u32, 0);
+    const c: Case = .{
+        .op = .move,
+        .len = len,
+        .src = source,
+        .dst = dest,
+        .gap = gap,
+        .side = side,
+    };
+    @as(*volatile Case, &current).* = c;
+    reference(buf.bytes, original);
+    reference(expected, original);
+    reference(expected[dest..][0..len], original[source..][0..len]);
+    call(.move, buf.bytes[dest..][0..len], buf.bytes[source..][0..len], 0);
+    if (!mem.eql(u8, expected, buf.bytes)) return error.OverlapOrCanaryMismatch;
+    count += 1;
+}
+
 fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: u32) !void {
+    var gaps: [139]u32 = undefined;
+    for (gaps[0..129], 0..) |*gap, i| gap.* = @intCast(i);
+    const extra = [_]u32{ 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len / 2, len -| 1 };
+    @memcpy(gaps[129..], &extra);
+    const selected = gaps[0..@as(u32, if (len > 1024) 139 else 129)];
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
-        for (0..129) |gap_index| {
-            const gap: u32 = @intCast(gap_index);
+        for (selected) |gap| {
             for (0..offsets) |inset| {
                 inline for (.{ false, true }) |backward| {
-                    const base = buf.offset(side, len + gap, @intCast(inset));
-                    const s = base + if (backward) @as(u32, 0) else gap;
-                    const d = base + if (backward) gap else @as(u32, 0);
-                    const c: Case = .{
-                        .op = .move,
-                        .len = len,
-                        .src = s,
-                        .dst = d,
-                        .gap = gap,
-                        .side = side,
-                    };
-                    @as(*volatile Case, &current).* = c;
-                    reference(buf.bytes, original);
-                    reference(expected, original);
-                    reference(expected[d..][0..len], original[s..][0..len]);
-                    call(.move, buf.bytes[d..][0..len], buf.bytes[s..][0..len], 0);
-                    if (!mem.eql(u8, expected, buf.bytes)) return error.OverlapOrCanaryMismatch;
-                    count += 1;
+                    try overlapOne(side, backward, buf, expected, original, len, gap, @intCast(inset));
                 }
             }
         }
@@ -190,9 +207,10 @@ fn sizeClass(
 ) !void {
     var maximum: u32 = 0;
     for (sizes) |len| maximum = @max(maximum, len);
-    const src = try Guarded.init(maximum + 256);
+    const capacity = maximum + @max(256, if (maximum > 1024) @max(8192, maximum - 1) + 64 else 0);
+    const src = try Guarded.init(capacity);
     defer src.deinit();
-    const dst = try Guarded.init(maximum + 256);
+    const dst = try Guarded.init(capacity);
     defer dst.deinit();
     const expected = try allocator.alloc(u8, dst.bytes.len);
     defer allocator.free(expected);
