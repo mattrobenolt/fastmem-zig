@@ -1098,3 +1098,14 @@ Fault injection now detects all three reviewed blind spots:
 
 All seven configured CPU builds and both baseline builds compile with only glibc dependencies.
 Target-hardware execution remains the fleet acceptance gate.
+
+### Correctness optimization modes
+
+`bench test` defaults to `ReleaseFast`. The repeatable `--optimize` option also accepts `Debug` and `ReleaseSafe`.
+Each mode runs both CPU variants. The manifest records the modes, and each variant retains separate build and execution files.
+Non-default variant names include the mode, for example `target-Debug`.
+The summary parser rejects a binary whose optimization mode differs from the requested mode.
+
+```sh
+just b test --target c7i --target c8i --target c7a --target c8a --optimize ReleaseFast --optimize Debug --optimize ReleaseSafe
+```

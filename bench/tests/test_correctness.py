@@ -158,7 +158,9 @@ def setup(config: Config, monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock]:
     monkeypatch.setattr(
         c,
         "execute_binary",
-        lambda *args, **kwargs: record(cpu=args[-1], max_size=kwargs["max_size"]),
+        lambda *args, **kwargs: record(
+            cpu=args[-1], max_size=kwargs["max_size"], optimize=kwargs["optimize"]
+        ),
     )
     return fleet, builder
 
@@ -291,3 +293,53 @@ def test_baseline_uses_host_ceiling(config: Config, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(c, "execute_binary", execute)
     c.run_variant(config, Mock(), "intel", "baseline", "x86_64_v3", path=config.root)
     assert execute.call_args.kwargs["max_size"] == 67 * c.MIB
+
+
+@pytest.mark.parametrize("optimize", ["Debug", "ReleaseSafe", "ReleaseFast"])
+def test_requested_optimize_summary(optimize: str) -> None:
+    assert (
+        c.parse_summary(json.dumps(record(optimize=optimize)), "sapphirerapids", optimize=optimize)[
+            "optimize"
+        ]
+        == optimize
+    )
+
+
+def test_multiple_optimizes(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, builder = setup(config, monkeypatch)
+    args = [
+        "--target",
+        "intel",
+        "--optimize",
+        "Debug",
+        "--optimize",
+        "ReleaseSafe",
+        "--optimize",
+        "ReleaseFast",
+        "--optimize",
+        "Debug",
+    ]
+    result = CliRunner().invoke(c.test_fleet, args, obj=config)
+    assert result.exit_code == 0, result.output
+    assert builder.call_count == 6
+    assert {call.kwargs["optimize"] for call in builder.call_args_list} == {
+        "Debug",
+        "ReleaseSafe",
+        "ReleaseFast",
+    }
+    summary = json.loads(next(config.results_dir.glob("*/summary.json")).read_text())
+    assert set(summary["intel"]["variants"]) == {
+        "target",
+        "baseline",
+        "target-Debug",
+        "baseline-Debug",
+        "target-ReleaseSafe",
+        "baseline-ReleaseSafe",
+    }
+
+
+def test_invalid_optimize(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, builder = setup(config, monkeypatch)
+    result = CliRunner().invoke(c.test_fleet, ["--optimize", "ReleaseSmall"], obj=config)
+    assert result.exit_code == 2
+    builder.assert_not_called()

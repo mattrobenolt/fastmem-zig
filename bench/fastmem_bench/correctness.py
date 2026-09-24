@@ -28,7 +28,9 @@ def cpus(settings: dict[str, Any]) -> dict[str, str]:
     return {"target": cpu, "baseline": baseline}
 
 
-def build_binary(config: Config, target: str, cpu: str, path: Path) -> dict[str, Any]:
+def build_binary(
+    config: Config, target: str, cpu: str, path: Path, *, optimize: str = "ReleaseFast"
+) -> dict[str, Any]:
     path.mkdir(parents=True, exist_ok=True)
     command = [
         "zig",
@@ -36,7 +38,7 @@ def build_binary(config: Config, target: str, cpu: str, path: Path) -> dict[str,
         "test-bin",
         f"-Dtarget={config.targets[target]['zig_target']}",
         f"-Dcpu={cpu}",
-        "-Doptimize=ReleaseFast",
+        f"-Doptimize={optimize}",
         "--prefix",
         str(path.resolve()),
     ]
@@ -109,7 +111,9 @@ def expected_counts(max_size: int, *, has_set: bool) -> dict[str, int]:
     return counts
 
 
-def parse_summary(text: str, cpu: str, max_size: int | None = None) -> dict[str, Any]:
+def parse_summary(
+    text: str, cpu: str, max_size: int | None = None, *, optimize: str = "ReleaseFast"
+) -> dict[str, Any]:
     lines = text.splitlines()
     if len(lines) != 1:
         raise ValueError("Expected one correctness JSON summary")
@@ -118,7 +122,7 @@ def parse_summary(text: str, cpu: str, max_size: int | None = None) -> dict[str,
         raise ValueError("Invalid correctness summary schema")
     if result.get("status") not in {"pass", "fail"}:
         raise ValueError("Invalid correctness status")
-    if result.get("cpu") != cpu or result.get("optimize") != "ReleaseFast":
+    if result.get("cpu") != cpu or result.get("optimize") != optimize:
         raise ValueError("Correctness binary CPU or optimization mismatch")
     if type(result.get("cases")) is not int or result["cases"] < 0:
         raise ValueError("Invalid correctness case count")
@@ -168,6 +172,7 @@ def execute_binary(
     cpu: str,
     *,
     max_size: int | None = None,
+    optimize: str = "ReleaseFast",
 ) -> dict[str, Any]:
     path.mkdir(parents=True, exist_ok=True)
     box.upload(binary, remote)
@@ -185,7 +190,9 @@ def execute_binary(
         box.download(remote, path)
     status = int((path / "exit-status.txt").read_text().strip())
     try:
-        summary = parse_summary((path / "summary.json").read_text(), cpu, ceiling)
+        summary = parse_summary(
+            (path / "summary.json").read_text(), cpu, ceiling, optimize=optimize
+        )
     except (ValueError, OSError) as error:
         raise ValueError(f"Suite exit={status}: {error}") from error
     summary["exit_status"] = status
@@ -202,11 +209,12 @@ def run_variant(
     cpu: str,
     *,
     path: Path,
+    optimize: str = "ReleaseFast",
 ) -> dict[str, Any]:
-    result: dict[str, Any] = {"cpu": cpu}
+    result: dict[str, Any] = {"cpu": cpu, "optimize": optimize}
     local = path / target / variant
     try:
-        result["build"] = build_binary(config, target, cpu, local / "build")
+        result["build"] = build_binary(config, target, cpu, local / "build", optimize=optimize)
         remote = f"{config.project['remote_dir']}/{path.name}/{target}/{variant}"
         result.update(
             execute_binary(
@@ -216,6 +224,7 @@ def run_variant(
                 local / "raw",
                 cpu,
                 max_size=default_max_size(config.targets[target]["zig_cpu"]),
+                optimize=optimize,
             )
         )
     except Exception as error:  # noqa: BLE001 — preserve the other variant's evidence
@@ -223,12 +232,28 @@ def run_variant(
     return result
 
 
+def variant_key(variant: str, optimize: str) -> str:
+    return variant if optimize == "ReleaseFast" else f"{variant}-{optimize}"
+
+
 @click.command(name="test")
 @click.option("--target", "targets", multiple=True)
 @click.option("--up", "launch", is_flag=True, help="Launch missing targets first.")
+@click.option(
+    "--optimize",
+    "optimizes",
+    multiple=True,
+    default=("ReleaseFast",),
+    type=click.Choice(["ReleaseFast", "Debug", "ReleaseSafe"]),
+    show_default=True,
+    help="Repeat to test multiple optimization modes.",
+)
 @click.pass_obj
-def test_fleet(config: Config, targets: tuple[str, ...], launch: bool) -> None:
+def test_fleet(
+    config: Config, targets: tuple[str, ...], launch: bool, optimizes: tuple[str, ...]
+) -> None:
     """Run target-CPU and baseline-CPU correctness binaries on each box."""
+    optimizes = tuple(dict.fromkeys(optimizes))
     fleet = Fleet(config)
     names = config.select(targets)
     startup = {}
@@ -255,6 +280,7 @@ def test_fleet(config: Config, targets: tuple[str, ...], launch: bool) -> None:
     manifest.update(
         {
             "kind": "correctness",
+            "optimizes": optimizes,
             "source_hash": source_hash(config.root),
             "config": {"project": config.project, "targets": config.targets},
             "zig_version": subprocess.run(
@@ -274,7 +300,16 @@ def test_fleet(config: Config, targets: tuple[str, ...], launch: bool) -> None:
         box = box_for(fleet, instance, outputs)
         box.ready(config.project["image_version"])
         variants = {
-            variant: run_variant(config, box, name, variant, cpu, path=path)
+            variant_key(variant, optimize): run_variant(
+                config,
+                box,
+                name,
+                variant_key(variant, optimize),
+                cpu,
+                path=path,
+                optimize=optimize,
+            )
+            for optimize in optimizes
             for variant, cpu in cpus(config.targets[name]).items()
         }
         return {"instance": instance["InstanceId"], "variants": variants}
@@ -292,24 +327,29 @@ def test_fleet(config: Config, targets: tuple[str, ...], launch: bool) -> None:
         }
     )
     (path / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    table = Table("Target", "Target CPU", "Baseline CPU", "Set")
+    table = Table("Target", "Optimize", "Target CPU", "Baseline CPU", "Set")
     for name, result in summary.items():
         variants = result.get("variants", {})
-        statuses = [
-            "PASS"
-            if variants.get(v, {}).get("status") == "pass" and "error" not in variants[v]
-            else "FAIL"
-            for v in ("target", "baseline")
-        ]
-        table.add_row(
-            name,
-            *statuses,
-            "tested"
-            if all(variants.get(v, {}).get("set_available") for v in ("target", "baseline"))
-            else "unavailable",
-        )
+        failed = False
+        for optimize in optimizes:
+            keys = [variant_key(v, optimize) for v in ("target", "baseline")]
+            statuses = [
+                "PASS"
+                if variants.get(v, {}).get("status") == "pass" and "error" not in variants[v]
+                else "FAIL"
+                for v in keys
+            ]
+            table.add_row(
+                name,
+                optimize,
+                *statuses,
+                "tested"
+                if all(variants.get(v, {}).get("set_available") for v in keys)
+                else "unavailable",
+            )
+            failed |= "FAIL" in statuses
         manifest.setdefault("instances", {})[name] = result.get("instance")
-        manifest.setdefault("status", {})[name] = "failed" if "FAIL" in statuses else "complete"
+        manifest.setdefault("status", {})[name] = "failed" if failed else "complete"
     Console().print(table)
     write_manifest(path, manifest)
     click.echo(str(path))
