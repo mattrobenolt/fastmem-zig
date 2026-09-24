@@ -6,7 +6,7 @@ import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cpu")
-parser.add_argument("variant", choices=("entry", "high_regs"))
+parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact"))
 parser.add_argument("artifact")
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
@@ -90,10 +90,21 @@ for name in ("probeRuntimeCopy", "probeRuntimeMove", "probeRuntimeSet"):
     require(re.search(r"\b(?:call\w*|j\w+)\b.*<x86_64\.", text), f"{name} lacks a large-path transfer")
 require(any("copyLarge" in name for name in syms), "runtime copy specialization missing")
 
-high_regs = wide and variant == "high_regs"
+high_regs = wide and variant != "entry"
 for op in ("move", "set"):
     actual_high = "%zmm16" in "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
     require(actual_high == high_regs, f"{op} does not implement requested variant {variant}")
+# Required branch fingerprints distinguish every requested implementation.
+if wide and variant != "entry":
+    fingerprints = {
+        "high_regs": {0: 2, 4: 4, 8: 3, 17: 2, 65: 5, 129: 6},
+        "tiered": {0: 4, 4: 3, 8: 2, 17: 3, 65: 3, 129: 4},
+        "compact": {0: 3, 4: 2, 8: 2, 17: 2, 65: 3, 129: 4},
+    }
+    for n, count in fingerprints[variant].items():
+        text = class_path("x86_64.move.kernel", n)
+        actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
+        require(actual == count, f"move/{n} does not implement requested variant {variant}: {actual} branches")
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.kernel" if high_regs else f"x86_64.{op}.mediumKernel"
@@ -106,11 +117,18 @@ for op in ("move", "set"):
             require("%ymm" not in text, f"kernel {op}/{n} splits a vector")
         require(("vzeroupper" not in text) if high_regs else ("vzeroupper" in text),
                 f"kernel {op}/{n} has wrong vector cleanup")
+        if high_regs:
+            require(not re.search(r"%[yz]mm(?:[0-9]|1[0-5])\b", text),
+                    f"kernel {op}/{n} dirties the low vector bank")
+        if wide and variant in ("tiered", "compact") and n in (65, 128, 129, 256):
+            branches = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
+            require(branches == (3 if n <= 128 else 4), f"kernel {op}/{n} has excess dispatch")
         paths.append(n)
     if high_regs:
         for n in (33, 63):
             text = class_path(name, n)
-            require("%ymm16" in text and "vzeroupper" not in text,
+            register = "%xmm" if variant == "compact" and op == "move" else "%ymm16"
+            require(register in text and "vzeroupper" not in text,
                     f"kernel {op}/{n} lacks clean high registers")
     kernel_counts[op] = paths
     if wide and op == "set" and not high_regs:
@@ -131,6 +149,13 @@ for op in ("move", "set"):
             # Zen schedules the return-register move before the single-byte store.
             if op == "set" and n == 1 and high_regs and cpu in ("znver4", "znver5"):
                 budget = 12
+            if wide and op == "move" and variant in ("tiered", "compact"):
+                budget = ({1: 15, 4: 10, 8: 8, 15: 8} if variant == "tiered" else
+                          {1: 13, 4: 15, 8: 15, 15: 15})[n]
+            if high_regs and op == "set" and variant in ("tiered", "compact"):
+                # The return-register move precedes the stores. Total work stays unchanged.
+                budget = 12
+                require(len(lines) <= 14, f"small set/{n} exceeds total instruction budget")
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))

@@ -43,10 +43,11 @@ def mutate(old, new):
 
 check(dis, [variant])
 check(dis, [], "2")
-wrong = "high_regs" if variant == "entry" else "entry"
-check(dis, [wrong], "does not implement requested variant")
+for wrong in ("entry", "high_regs", "tiered", "compact"):
+    if wrong != variant:
+        check(dis, [wrong], "does not implement requested variant")
 check(mutate("movsb", "nop"), [variant], "copy large path has wrong REP policy")
 check(mutate("vmovntdq", "vmovdqa64"), [variant], "copy large path has wrong NT policy")
 check(mutate("sfence", "nop"), [variant], "copy large path has wrong NT fence policy")
 check(mutate("%zmm", "%ymm"), [variant], "copy large path lacks %zmm")
-print("x86 gate mutation tests: 7 passed")
+print("x86 gate mutation tests: 9 passed")

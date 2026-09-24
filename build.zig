@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const X86Variant = enum { entry, high_regs };
+const X86Variant = enum { entry, high_regs, tiered, compact };
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});

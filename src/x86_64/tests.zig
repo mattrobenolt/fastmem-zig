@@ -1,6 +1,10 @@
 //! Focused class, overlap, and dispatch regressions supplement the guard matrix.
 const std = @import("std");
 const testing = std.testing;
+const builtin = @import("builtin");
+const linux = std.os.linux;
+const compact = @import("compact.zig");
+const Guarded = @import("../tests/Guarded.zig");
 const move = @import("move.zig");
 const set = @import("set.zig");
 
@@ -91,6 +95,62 @@ test "x86: every ABI short length and overlapping vector fragment" {
                 for (0..n) |i| expected[dest + i] = original[source + i];
                 _ = move.kernel(got[dest..].ptr, got[source..].ptr, n);
                 try testing.expectEqualSlices(u8, &expected, &got);
+            }
+        }
+    }
+}
+
+test "x86: compiler-rt compact fragments cover every short overlap and offset" {
+    var original: [128]u8 = undefined;
+    pattern(&original);
+    for (1..64) |n| {
+        for (0..64) |source| {
+            for (0..64) |dest| {
+                var got = original;
+                var expected = original;
+                for (0..n) |i| expected[dest + i] = original[source + i];
+                if (n < 4) {
+                    compact.bytes(got[dest..].ptr, got[source..].ptr, n);
+                } else if (n < 16) {
+                    compact.quad(u32, got[dest..].ptr, got[source..].ptr, n);
+                } else {
+                    compact.quad(@Vector(16, u8), got[dest..].ptr, got[source..].ptr, n);
+                }
+                try testing.expectEqualSlices(u8, &expected, &got);
+            }
+        }
+    }
+}
+
+test "x86: compact fragments respect read-only source and page edges" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const source = try Guarded.init(64);
+    defer source.deinit();
+    const dest = try Guarded.init(64);
+    defer dest.deinit();
+    pattern(source.bytes);
+    const rc = linux.mprotect(source.bytes.ptr, source.bytes.len, .{ .READ = true });
+    try testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
+    for (1..64) |n| {
+        for ([_]Guarded.Side{ .start, .end }) |source_side| {
+            for ([_]Guarded.Side{ .start, .end }) |dest_side| {
+                const s = source.offset(source_side, @intCast(n), 0);
+                const d = dest.offset(dest_side, @intCast(n), 0);
+                @memset(dest.bytes, 0xa5); // Synthetic canaries contain no secrets.
+                if (n < 4) {
+                    compact.bytes(dest.bytes[d..].ptr, source.bytes[s..].ptr, n);
+                } else if (n < 16) {
+                    compact.quad(u32, dest.bytes[d..].ptr, source.bytes[s..].ptr, n);
+                } else {
+                    compact.quad(@Vector(16, u8), dest.bytes[d..].ptr, source.bytes[s..].ptr, n);
+                }
+                for (dest.bytes, 0..) |byte, i| {
+                    const expected: u8 = if (i >= d and i < d + n)
+                        source.bytes[s + i - d]
+                    else
+                        0xa5;
+                    try testing.expectEqual(expected, byte);
+                }
             }
         }
     }
