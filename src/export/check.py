@@ -5,6 +5,7 @@ import re
 import struct
 import subprocess
 
+from audit import audit_recursion, split_disassembly, targets
 from runtime import linux_runner
 
 
@@ -70,26 +71,7 @@ def main():
             "division fixture did not control compiler-rt"
         )
     disasm = output("llvm-objdump", "-d", "--no-show-raw-insn", binary)
-    functions = {}
-    current = None
-    for line in disasm.splitlines():
-        match = re.match(r"([0-9a-f]+) <(.+)>:", line)
-        if match:
-            current = int(match[1], 16)
-            functions.setdefault(current, [])
-        elif current is not None:
-            functions[current].append(line)
-
-    def targets(lines):
-        result = []
-        for line in lines:
-            m = re.search(
-                r"\b(?:callq?|jmpq?|j\w+|bl|b(?:\.\w+)?|cbn?z|tbn?z)\s+.*?(?:0x)?([0-9a-f]+)\s+<",
-                line,
-            )
-            if m:
-                result.append(int(m[1], 16))
-        return result
+    functions = split_disassembly(disasm)
 
     for op in () if args.ecosystem else ("copy", "move", "set"):
         target = symbols["mem" + ("cpy" if op == "copy" else op)][0]
@@ -103,24 +85,8 @@ def main():
                 if re.fullmatch(r"__(memcpy|memmove|memset)_chk", k)
             }
             assert not fortified.intersection(branches), (prefix + op, "unexpected fortified call")
-    # Follow kernel helpers, but not std panic/reporting code for invalid input.
-    helpers = {
-        v[0]
-        for k, v in symbols.items()
-        if k.startswith(("x86_64.", "root.", "forward.", "memcpy.", "memmove."))
-    }
-    seen = set()
-    pending = [] if args.disabled else list(entries)
-    while pending:
-        addr = pending.pop()
-        if addr in seen:
-            continue
-        seen.add(addr)
-        assert functions.get(addr), (hex(addr), "missing kernel disassembly")
-        for target in targets(functions[addr]):
-            assert target not in entries, (hex(addr), "branch to memory entry", hex(target))
-            if target in helpers:
-                pending.append(target)
+    if not args.disabled:
+        audit_recursion(functions, symbols, entries)
     ran = False
     if args.run:
         runner = linux_runner(args.arch)

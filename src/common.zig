@@ -47,6 +47,7 @@ pub inline fn callLibcMemmove(dest: [*]u8, src: [*]const u8, len: usize) void {
 /// larger widths. All loads complete before any stores, making this
 /// safe for overlapping regions in either direction.
 pub fn copySmall(dest: [*]u8, src: [*]const u8, len: usize) void {
+    @disableIntrinsics();
     if (len >= chunk_bytes * 2) {
         // 2*chunk..stride-1: four overlapping vectors.
         const h0 = loadV(src);
@@ -95,6 +96,7 @@ pub fn copySmall(dest: [*]u8, src: [*]const u8, len: usize) void {
 
 /// Load `count` contiguous vectors starting at `ptr + off`.
 pub inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize) [count]Chunk {
+    @disableIntrinsics();
     var vecs: [count]Chunk = undefined;
     inline for (0..count) |i| {
         vecs[i] = loadV(ptr + off + chunk_bytes * i);
@@ -104,25 +106,30 @@ pub inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize)
 
 /// Store `count` contiguous vectors starting at `ptr + off`.
 pub inline fn storeVN(comptime count: comptime_int, ptr: [*]u8, off: usize, vecs: [count]Chunk) void {
+    @disableIntrinsics();
     inline for (0..count) |i| {
         storeV(ptr + off + chunk_bytes * i, vecs[i]);
     }
 }
 
 pub inline fn loadV(ptr: [*]const u8) Chunk {
+    @disableIntrinsics();
     const arr: *align(1) const [chunk_bytes]u8 = @ptrCast(ptr);
     return arr.*;
 }
 
 pub inline fn storeV(ptr: [*]u8, v: Chunk) void {
+    @disableIntrinsics();
     const arr: *align(1) [chunk_bytes]u8 = @ptrCast(ptr);
     arr.* = v;
 }
 
 pub inline fn loadU(comptime T: type, ptr: [*]const u8) T {
+    @disableIntrinsics();
     return @as(*align(1) const T, @ptrCast(ptr)).*;
 }
 
 pub inline fn storeU(comptime T: type, ptr: [*]u8, val: T) void {
+    @disableIntrinsics();
     @as(*align(1) T, @ptrCast(ptr)).* = val;
 }

@@ -281,9 +281,12 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
     const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
     step.dependOn(addExportCollisionTests(b, tuning));
     step.dependOn(addArmByteTests(b));
-    const runtime_check = b.addSystemCommand(&.{"python3"});
-    runtime_check.addFileArg(b.path("src/export/test_runtime.py"));
-    step.dependOn(&runtime_check.step);
+    inline for (.{ "test_runtime.py", "test_audit.py" }) |script| {
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/export/" ++ script));
+        step.dependOn(&check.step);
+    }
+    step.dependOn(addExportRecursionTests(b, tuning));
     const linux_host = b.graph.host.result.os.tag == .linux;
     for ([_][]const u8{ "aarch64", "x86_64" }) |arch| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
@@ -505,6 +508,44 @@ fn addArmByteTests(b: *std.Build) *std.Build.Step {
         check.addFileArg(b.path("src/export/check_kernel_bytes.py"));
         check.addArg(cpu);
         check.addFileArg(obj.getEmittedBin());
+        step.dependOn(&check.step);
+    }
+    return step;
+}
+
+fn addExportRecursionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
+    const step = b.step("test-export-recursion", "Audit std helpers and local intrinsic suppression");
+    const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+        .arch_os_abi = "x86_64-linux-gnu",
+        .cpu_features = "x86_64",
+    }) catch unreachable);
+    const bad = b.addExecutable(.{
+        .name = "export-recursive-std",
+        .use_llvm = true,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/export/recursion.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
+    });
+    const reject = b.addSystemCommand(&.{"python3"});
+    reject.addFileArg(b.path("src/export/check_recursion_fixture.py"));
+    reject.addFileArg(bad.getEmittedBin());
+    step.dependOn(&reject.step);
+    for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .ReleaseSafe, .Debug }) |mode| {
+        const fixture = exportFixture(b, tuning, target, mode, false, true, true);
+        // Prove that each fallback also resists intrinsic formation locally.
+        fixture.import_table.get("fastmem").?.no_builtin = false;
+        const exe = b.addExecutable(.{
+            .name = b.fmt("export-local-suppression-{s}", .{@tagName(mode)}),
+            .root_module = fixture,
+            .use_llvm = true,
+        });
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/export/check.py"));
+        check.addArgs(&.{ "--arch", "x86_64", "--division", "yes" });
+        if (b.graph.host.result.os.tag == .linux) check.addArg("--run");
+        check.addFileArg(exe.getEmittedBin());
         step.dependOn(&check.step);
     }
     return step;

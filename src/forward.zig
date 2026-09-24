@@ -22,6 +22,7 @@ pub inline fn run(
     src: [*]const u8,
     len: usize,
 ) void {
+    @disableIntrinsics();
     var d = dest;
     var s = src;
     var remaining = len;
@@ -86,6 +87,7 @@ inline fn copyLargeForward(
     src: [*]const u8,
     len: usize,
 ) void {
+    @disableIntrinsics();
     assert(len >= common.stride);
 
     // Delegate to the platform's optimized implementation for large
@@ -134,6 +136,7 @@ inline fn copyLargeForward(
 }
 
 noinline fn copyLargeForwardPipelined(dest: [*]u8, src: [*]const u8, len: usize) void {
+    @disableIntrinsics();
     assert(common.chunk_bytes == 16);
     assert(len >= common.stride);
 

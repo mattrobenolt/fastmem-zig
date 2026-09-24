@@ -75,6 +75,7 @@ comptime {
 
 /// Overlapping-safe move. Prefer over @memmove for runtime-sized moves.
 pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
+    @disableIntrinsics();
     assert(dest.len >= source.len);
 
     const byte_len = common.byteLen(T, source.len);
@@ -135,6 +136,7 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
 /// Backward loop for >= stride bytes with overlapping dest > src.
 /// Finishes with copySmall for the remaining prefix.
 inline fn copyLargeBackward(dest: [*]u8, src: [*]const u8, len: usize) void {
+    @disableIntrinsics();
     assert(len >= common.stride);
 
     if (flags.tight_loop) {

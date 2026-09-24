@@ -88,6 +88,7 @@ comptime {
 /// Non-overlapping copy. Prefer over @memcpy for runtime-sized copies
 /// that may exceed ~32 bytes.
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
+    @disableIntrinsics();
     assert(dest.len >= source.len);
 
     const byte_len = common.byteLen(T, source.len);

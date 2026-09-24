@@ -282,6 +282,7 @@ pub const abi = struct {
         &memsetGeneric;
 
     fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -294,6 +295,7 @@ pub const abi = struct {
         src: ?*const anyopaque,
         n: usize,
     ) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -302,6 +304,7 @@ pub const abi = struct {
     }
 
     fn memsetGeneric(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
@@ -310,10 +313,10 @@ pub const abi = struct {
 };
 
 // Portable fallback for targets without a dedicated kernel and for
-// non-uniform fill values. The loops live in a non-inline function of
-// this no_builtin module so LLVM cannot idiom-recognize them into a
-// memset call (which would recurse under exportSymbols).
+// non-uniform fill values. Local intrinsic suppression prevents LLVM
+// from replacing these loops with recursive memset calls.
 fn setFallback(comptime T: type, dest: []T, value: T) void {
+    @disableIntrinsics();
     if (comptime (T == u8)) {
         const chunk: @Vector(32, u8) = @splat(value);
         var i: usize = 0;
