@@ -12,3 +12,9 @@ zig-pkg/
 zig-out/
 .bench-cache/
 infra/modules/*/.terraform.lock.hcl
+
+# Core dumps (qemu-user writes qemu_<prog>_<time>_<pid>.core) carry the full
+# process environment, secrets included. Never commit them.
+*.core
+core
+core.[0-9]*
