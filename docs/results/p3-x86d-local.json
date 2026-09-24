@@ -729,5 +729,83 @@
     "local_guard_runs": 0,
     "avx512_execution": false,
     "arm_golden_repin": false
+  },
+  {
+    "label": "fleet/p3-x86d-medium-first",
+    "revision": "56c267a5a1fb99de69f5ec0f3279a1f3911eb711",
+    "command": "zig build test codegen-x86 -j6 --summary all",
+    "exit_code": 0,
+    "summary": "230/230 steps succeeded; 27/27 tests passed",
+    "log": "/tmp/x86d-branch-medium-first-test.log",
+    "install_targets": [
+      "c7i",
+      "c8i",
+      "c7a",
+      "c8a",
+      "c7g",
+      "c8g",
+      "c9g"
+    ],
+    "install_exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "label": "fleet/p3-x86d-ymm-medium",
+    "revision": "e311ed65316f2c3900d9bc53811bf0887166cd54",
+    "command": "zig build test codegen-x86 -j6 --summary all",
+    "exit_code": 0,
+    "summary": "230/230 steps succeeded; 27/27 tests passed",
+    "log": "/tmp/x86d-branch-ymm-medium-test.log",
+    "install_targets": [
+      "c7i",
+      "c8i",
+      "c7a",
+      "c8a",
+      "c7g",
+      "c8g",
+      "c9g"
+    ],
+    "install_exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "label": "fleet/p3-x86d-straight-1k",
+    "revision": "2bae565262eb7b5fc9b7cb35e83ce3d2119296ce",
+    "command": "zig build test codegen-x86 -j6 --summary all",
+    "exit_code": 0,
+    "summary": "230/230 steps succeeded; 27/27 tests passed",
+    "log": "/tmp/x86d-branch-straight-1k-test.log",
+    "install_targets": [
+      "c7i",
+      "c8i",
+      "c7a",
+      "c8a",
+      "c7g",
+      "c8g",
+      "c9g"
+    ],
+    "install_exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
   }
 ]

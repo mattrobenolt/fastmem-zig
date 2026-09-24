@@ -12,6 +12,12 @@ The parent and a cross-family reviewer decide acceptance.
 | `fleet/p3-x86d-ymm-medium` | `ymm_medium` | Granite Rapids | Does 32-byte memory width help despite twice as many instructions? |
 | `fleet/p3-x86d-straight-1k` | `straight_1k` | Both Intel models | Does a straight-line 513–1024 B class beat the loop and its setup? |
 
+The fleet revisions are:
+
+- `56c267a`: `fleet/p3-x86d-medium-first`.
+- `e311ed6`: `fleet/p3-x86d-ymm-medium`.
+- `2bae565`: `fleet/p3-x86d-straight-1k`.
+
 Each branch changes only the build default relative to the common implementation.
 Explicit experiment selections retain the measured defaults on other models.
 The tuning table is `src/x86_64/tuning.zig:8–85`.
@@ -169,6 +175,8 @@ All overlapping moves remain safe because every source load precedes every desti
 | Check | Result |
 |---|---|
 | `zig build test -j6 --summary all` | 212/212 steps, 27/27 tests |
+| Each fleet revision: `zig build test codegen-x86` | 230/230 steps, 27/27 tests |
+| Each fleet revision: default-selection install | All seven targets: 21 additional builds |
 | `zig build install` | All seven targets, default and three candidates: 28 builds |
 | `codegen-x86` | All eight selections, five CPUs each |
 | Gate mutation tests | Both Intel objects reject wrong selections and damaged large paths |
