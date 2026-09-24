@@ -620,7 +620,6 @@ noinline fn runLoop(
         if (len != 0) {
             if (index >= len) index = 0;
             checksum +%= @as(*volatile u8, &dst[index]).*;
-            if (op != .set) src[index] +%= @truncate(iteration +% 1);
             index += 1;
         }
     }
