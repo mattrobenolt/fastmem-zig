@@ -47,6 +47,27 @@ strong kernel, and parity is the goal.
   visibility.
 - glibc selections and thresholds for each target:
   `docs/research/hosts/README.md`.
+- `@disableIntrinsics()` is a per-function `no_builtin`. Inside an
+  `inline fn` it applies to the whole caller. An `inline fn` body takes
+  the builtin setting of its caller, so a loop in an inline function of a
+  `no_builtin` module can still become a `memset`/`memcpy` call after
+  inlining. The inline layer must contain no loops. Loops live in
+  non-inline functions of the `no_builtin` module.
+- On Intel `-mcpu` models, LLVM prefers 256-bit vectors. A `@Vector(64,u8)`
+  load or store through a vector pointer (`*align(1) const @Vector(64,u8)`)
+  stays one zmm move. The array form (`s[0..64].*`) splits into two ymm
+  moves. Zig 0.16 has no per-function target features. A codegen test must
+  check the zmm moves in each kernel.
+- On aarch64, LLVM pairs q-register loads and stores into `ldp`/`stp` only
+  when a block does all its loads before any store. Array chunk copies
+  (`[32]u8`) can spill to the stack; `@Vector` chunk copies do not.
+- `std.simd.suggestVectorLength(u8)` is 32 on SVE aarch64 CPUs and 16 on
+  generic aarch64. compiler-rt uses it, so its copy element is 32 bytes on
+  the Graviton targets.
+- ReleaseFast keeps frame-pointer prologues on exported functions. The
+  fastmem module sets `omit_frame_pointer`.
+- The Graviton targets report `dczid_el0=0x4` (64-byte DC ZVA blocks).
+  fastmem still checks DCZID_EL0 on the ZVA path, as AOR does.
 
 ## Licensing and the clean-room rule
 
@@ -68,8 +89,13 @@ fastmem is MIT (`LICENSE`).
 
 fastmem is done when all of these are true on all seven targets (c7i,
 c8i, c7a, c8a, c7g, c8g, c9g), built with the `-Dcpu` of `bench.toml`.
-Every number comes from the harness, with at least 5 rounds and the A/A
-noise floor.
+Every number comes from the harness, with at least 5 rounds. A threshold
+in a goal (for example 1.10) is violated when the 95% CI lower bound of
+the ratio is above it. The A/A noise floor decides only the significance
+marks against 1.0. The standard suite includes the fixed profiles, the
+`dist/small` and `dist/mixed` distributions, and the comptime-size cases.
+A build in which fastmem calls `memcpy`, `memmove`, or `memset` through a
+symbol is INVALID for G2 and G3.
 
 G1. Correctness.
 - Guard-page tests pass for every operation: all sizes 0 to 1024, every
@@ -90,8 +116,12 @@ significantly above 1.00.
 G4. The inline advantage.
 - On the small-size distribution (`dist/small`), `fastmem_inline / glibc`
   is 0.90 or less on every target.
-- For comptime-known sizes up to 256 bytes, `fastmem.copy` generates no
-  call and is not slower than `@memcpy` with the same comptime size.
+- For every comptime-known size from 1 to 256 bytes, `fastmem.copy`,
+  `move`, and `set` generate no call (binary test) and are not slower than
+  the builtin with the same comptime size.
+- The 0.90 value is a target that no measurement supports yet. The
+  baseline (P1d) and the first inline prototype decide if it is
+  realistic. A change to it needs a new plan entry with the evidence.
 
 G5. The export layer.
 - With `fastmem.exportSymbols()`, ReleaseFast `@memcpy`, `@memmove`, and
@@ -147,7 +177,7 @@ in `docs/bench-design.md`.
 | P1d | Baseline: compiler-rt vs glibc on 7 targets | parent | `docs/results/baseline-0.16.md` |
 | P1e | Size distributions of real Zig programs (uprobe on compiler-rt memcpy) | parent | `dist/zig-*` suites |
 | P2 | Correctness framework: guard-page tests, fuzz, `bench test` runs test binaries on every box | Astra | G1 harness |
-| P3 | memmove/memcpy kernels: aarch64 (K3 writes, Opus reviews), x86_64 (Astra writes, Opus reviews). Iterate with the harness against G2/G3 | lanes, parent gates | G1-G3 for copy and move |
+| P3 | memmove/memcpy kernels. aarch64: first a port of AOR `memcpy-sve.S` as global asm (the G2 baseline), then pure-Zig challengers (K3 writes, Opus reviews). x86_64: Zig vector kernels with asm fragments per the memo (Astra writes, Opus reviews). Iterate with the harness against G2/G3 | lanes, parent gates | G1-G3 for copy and move |
 | P4 | Inline layer | Opus design, K3 or Astra writes | G4 |
 | P5 | memset, same method | lanes | G1-G4 for set |
 | P6 | Export layer and ecosystem validation | Astra writes, Opus reviews | G5 |
