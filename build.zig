@@ -6,9 +6,15 @@ pub fn build(b: *std.Build) void {
     _ = b.option(bool, "link-libc", "Compatibility option: benchmarks always link libc");
     const rev = b.option([]const u8, "rev", "Revision label reported in bench-fastmem meta records") orelse "unknown";
 
+    // no_builtin: LLVM must not idiom-recognize fastmem's own loops into
+    // memcpy/memset calls (recursion under the export layer).
+    // omit_frame_pointer: the C-ABI kernels must not pay x29/x30 prologues
+    // where a frame exists (docs/fastmem-plan.md Facts).
     const mod = b.addModule("fastmem", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .no_builtin = true,
+        .omit_frame_pointer = true,
     });
 
     const exe = b.addExecutable(.{
@@ -109,6 +115,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            // Match the production module so tests build the same code.
+            .no_builtin = true,
+            .omit_frame_pointer = true,
         }),
     });
 
@@ -140,6 +149,8 @@ fn addAsmObject(
     const target_mod = b.addModule("fastmem", .{
         .root_source_file = b.path("src/root.zig"),
         .target = resolved_target,
+        .no_builtin = true,
+        .omit_frame_pointer = true,
     });
 
     const obj = b.addObject(.{

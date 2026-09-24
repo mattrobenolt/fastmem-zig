@@ -16,10 +16,18 @@ export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void {
     fastmem.move(u8, dst[0..len], src[0..len]);
 }
 
+export fn fastmem_set(dst: [*]u8, value: u8, len: usize) void {
+    fastmem.set(u8, dst[0..len], value);
+}
+
 export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void {
     @memcpy(dst[0..len], src[0..len]);
 }
 
 export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void {
     @memmove(dst[0..len], src[0..len]);
+}
+
+export fn builtin_memset(dst: [*]u8, value: u8, len: usize) void {
+    @memset(dst[0..len], value);
 }

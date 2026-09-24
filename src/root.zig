@@ -4,6 +4,7 @@
 //! decisions can diverge cleanly, while still sharing the low-level
 //! load/store primitives and the overlap-safe forward kernel.
 
+const builtin = @import("builtin");
 const std = @import("std");
 const testing = std.testing;
 
@@ -14,6 +15,39 @@ const memcpy_impl = @import("memcpy.zig");
 pub const CopyFlags = memcpy_impl.Flags;
 const memmove_impl = @import("memmove.zig");
 pub const MoveFlags = memmove_impl.Flags;
+
+// aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
+// The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
+// generic-aarch64 path. The gates are complementary, so exactly one pair
+// emits its global asm per build.
+const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
+const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
+const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
+const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
+
+// The kernel ports carry ELF-only directives (.type/.hidden/.size), so
+// non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
+const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
+const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
+
+const copy_impl_name: []const u8 = if (on_aarch64_sve)
+    "aor-sve-5e20a93"
+else if (on_aarch64)
+    "aor-advsimd-5e20a93"
+else
+    "zig-simd";
+
+const set_impl_name: []const u8 = if (on_aarch64)
+    copy_impl_name
+else
+    "zig-vector";
+
+/// Names of the kernel implementations in this build, one per operation.
+pub const impl = .{
+    .copy = copy_impl_name,
+    .move = copy_impl_name,
+    .set = set_impl_name,
+};
 
 /// Public snapshot of the current memcpy and memmove tuning knobs.
 pub const Flags = struct {
@@ -27,11 +61,149 @@ pub const flags: Flags = .{
 };
 
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
+    if (comptime on_aarch64) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        // Same non-overlap contract as memcpy_impl.copy.
+        const d_addr = @intFromPtr(d);
+        const s_addr = @intFromPtr(s);
+        std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
+        std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        if (comptime on_aarch64_sve) {
+            aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
+        } else {
+            aarch64_memcpy_advsimd.fastmem_advsimd_copy(d, s, bytes);
+        }
+        return;
+    }
     memcpy_impl.copy(T, dest, source);
 }
 
 pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
+    if (comptime on_aarch64) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        if (comptime on_aarch64_sve) {
+            aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
+        } else {
+            aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
+        }
+        return;
+    }
     memmove_impl.move(T, dest, source);
+}
+
+/// Fill `dest` with `value`. Prefer over @memset for runtime-sized fills.
+///
+/// The byte kernels are bit-pattern fills: they apply to T == u8, or to
+/// any T with a unique in-memory representation whose value bytes are
+/// all equal (checked at runtime; comptime-known for u8). Every other
+/// type takes the element-wise fallback loop.
+pub inline fn set(comptime T: type, dest: []T, value: T) void {
+    if (comptime @sizeOf(T) == 0) return;
+    if (comptime on_aarch64 and (T == u8 or std.meta.hasUniqueRepresentation(T))) {
+        const bytes = std.mem.asBytes(&value);
+        if (T == u8 or allBytesEqual(bytes)) {
+            const len = dest.len * @sizeOf(T);
+            const d: [*]u8 = @ptrCast(dest.ptr);
+            if (comptime on_aarch64_sve) {
+                aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
+            } else {
+                aarch64_memset_advsimd.fastmem_advsimd_set(d, bytes[0], len);
+            }
+            return;
+        }
+    }
+    setFallback(T, dest, value);
+}
+
+fn allBytesEqual(bytes: []const u8) bool {
+    for (bytes[1..]) |b| if (b != bytes[0]) return false;
+    return true;
+}
+
+const LibcCopyFn = *const fn (
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque;
+const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque;
+
+// The AOR kernel symbols already carry the libc signatures and, like
+// the libc originals, return dest in x0 (the kernels never write x0).
+// The abi wrappers below therefore compile to a single direct branch.
+const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
+    @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
+else if (on_aarch64)
+    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_copy" })
+else
+    undefined;
+
+const libc_move_fn: LibcCopyFn = if (on_aarch64_sve)
+    @extern(LibcCopyFn, .{ .name = "fastmem_sve_move" })
+else if (on_aarch64)
+    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_move" })
+else
+    undefined;
+
+const libc_set_fn: LibcSetFn = if (on_aarch64_sve)
+    @extern(LibcSetFn, .{ .name = "fastmem_sve_set" })
+else if (on_aarch64)
+    @extern(LibcSetFn, .{ .name = "fastmem_advsimd_set" })
+else
+    undefined;
+
+/// C-ABI entry points with the libc signatures, each returning dest.
+/// Not exported (P6 owns the export layer); the bench measures these as
+/// fastmem_abi.
+pub const abi = struct {
+    pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        const s: [*]const u8 = @ptrCast(src.?);
+        copy(u8, d[0..n], s[0..n]);
+        return dest;
+    }
+
+    pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_move_fn(dest, src, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        const s: [*]const u8 = @ptrCast(src.?);
+        move(u8, d[0..n], s[0..n]);
+        return dest;
+    }
+
+    pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_set_fn(dest, c, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
+        return dest;
+    }
+};
+
+// Portable fallback for targets without a dedicated kernel and for
+// non-uniform fill values. The loops live in a non-inline function of
+// this no_builtin module so LLVM cannot idiom-recognize them into a
+// memset call (which would recurse under exportSymbols).
+fn setFallback(comptime T: type, dest: []T, value: T) void {
+    if (comptime (T == u8)) {
+        const chunk: @Vector(32, u8) = @splat(value);
+        var i: usize = 0;
+        while (i + 32 <= dest.len) : (i += 32) {
+            const p: *align(1) @Vector(32, u8) = @ptrCast(dest.ptr + i);
+            p.* = chunk;
+        }
+        while (i < dest.len) : (i += 1) dest[i] = value;
+        return;
+    }
+    for (dest) |*d| d.* = value;
 }
 
 test "copy: all size classes" {
@@ -176,6 +348,83 @@ test "move: backward overlapping (dest > src)" {
             expected[gap..][0..len],
             buf[gap..][0..len],
         );
+    }
+}
+
+// Covers every type shape set() must accept: scalars with uniform and
+// non-uniform byte patterns, aggregates, optionals, and zero-size types.
+// want[] is built with a plain element loop; both buffers start from
+// zeroes so writes outside the requested range show up in the compare.
+test "abi: libc-signature entry points return dest and do the work" {
+    var src: [600]u8 = undefined;
+    for (&src, 0..) |*b, i| b.* = @truncate(i *% 31 +% 7);
+
+    for ([_]usize{ 0, 1, 7, 32, 65, 128, 200, 511 }) |len| {
+        var dest: [600]u8 = .{0} ** 600;
+        const r = abi.memcpy(@ptrCast(&dest), @ptrCast(&src), len);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&dest)), r);
+        try testing.expectEqualSlices(u8, src[0..len], dest[0..len]);
+
+        @memset(&dest, 0);
+        const r3 = abi.memset(@ptrCast(&dest), 0xAB, len);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&dest)), r3);
+        var want: [600]u8 = @splat(0xAB);
+        try testing.expectEqualSlices(u8, want[0..len], dest[0..len]);
+        if (len < 600) try testing.expectEqual(@as(u8, 0), dest[len]);
+    }
+
+    // memmove both overlap directions, and the dest return value.
+    for ([_]usize{ 1, 31, 100 }) |gap| {
+        var fwd = src;
+        const r1 = abi.memmove(@ptrCast(&fwd), @ptrCast(&fwd[gap]), 400);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&fwd)), r1);
+        try testing.expectEqualSlices(u8, src[gap..][0..400], fwd[0..400]);
+
+        var bwd = src;
+        const r2 = abi.memmove(@ptrCast(&bwd[gap]), @ptrCast(&bwd), 400);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&bwd[gap])), r2);
+        try testing.expectEqualSlices(u8, src[0..400], bwd[gap..][0..400]);
+    }
+}
+
+const SetTestEnum = enum(u8) { a, b, c };
+const SetTestStruct = struct { a: u8, b: u32 }; // padding, no unique repr
+
+test "set: typed elements, uniform and non-uniform byte patterns" {
+
+    try expectSet(u8, 0x00);
+    try expectSet(u8, 0x5A);
+    try expectSet(u16, 0xAAAA);
+    try expectSet(u16, 0x1234);
+    try expectSet(u32, 0xABABABAB);
+    try expectSet(u32, 0x01020304);
+    try expectSet(u64, 0);
+    try expectSet(u64, 0x0102030405060708);
+    try expectSet(f32, 0.0);
+    try expectSet(f32, 1.5);
+    try expectSet(i8, -1);
+    try expectSet(i8, 42);
+    try expectSet([4]u8, .{ 9, 9, 9, 9 });
+    try expectSet([4]u8, .{ 1, 2, 3, 4 });
+    try expectSet(@Vector(4, u8), @as(@Vector(4, u8), @splat(0x55)));
+    try expectSet(@Vector(4, u8), .{ 5, 6, 7, 8 });
+    try expectSet(bool, true);
+    try expectSet(bool, false);
+    try expectSet(SetTestEnum, .b);
+    try expectSet(?u8, 7);
+    try expectSet(?u8, null);
+    try expectSet(SetTestStruct, .{ .a = 3, .b = 0x11223344 });
+    try expectSet(u0, 0);
+}
+
+fn expectSet(comptime T: type, value: T) !void {
+    const lens = [_]usize{ 0, 1, 2, 3, 7, 15, 16, 31, 64, 65, 255, 300 };
+    for (lens) |len| {
+        var got: [320]T = std.mem.zeroes([320]T);
+        var want: [320]T = std.mem.zeroes([320]T);
+        for (want[2 .. 2 + len]) |*p| p.* = value;
+        set(T, got[2 .. 2 + len], value);
+        try testing.expectEqual(want, got);
     }
 }
 
