@@ -73,8 +73,8 @@ fn writeJsonString(w: *Io.Writer, s: []const u8) !void {
     try w.writeByte('"');
 }
 
-fn writeSymbol(w: *Io.Writer, name: []const u8, probe: Probe, comma: bool) !void {
-    if (!comma) try w.writeByte(',');
+fn writeSymbol(w: *Io.Writer, name: []const u8, probe: Probe, first: bool) !void {
+    if (!first) try w.writeByte(',');
     try w.print("\"{s}\":{{\"address\":\"0x{x}\",\"symbol\":", .{ name, probe.address });
     if (probe.symbol) |s| {
         try writeJsonString(w, s);
@@ -101,6 +101,11 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
+    const memset_probe = probeSymbol(handle, "memset") catch |err| {
+        std.debug.print("libc-probe: probing memset failed: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+
     const glibc_version: ?[]const u8 = if (comptime builtin.target.abi.isGnu())
         mem.span(gnu_get_libc_version())
     else
@@ -121,6 +126,7 @@ pub fn main(init: std.process.Init) !void {
     try w.writeAll(",\"symbols\":{");
     try writeSymbol(w, "memcpy", memcpy_probe, true);
     try writeSymbol(w, "memmove", memmove_probe, false);
+    try writeSymbol(w, "memset", memset_probe, false);
     try w.writeAll("}}\n");
     try w.flush();
 }
