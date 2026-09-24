@@ -181,7 +181,7 @@ def test_g2_includes_distributions() -> None:
     assert evaluate(partial, ["v0"])[0]["G2"]["status"] == "NA"
 
 
-def test_goal_ci_threshold_does_not_add_aa_floor() -> None:
+def test_g2_threshold_does_not_add_aa_floor_but_g3_does() -> None:
     rows = complete_rows()
     for item in rows:
         item.update(noise_floor=0.25, minimum_effect=0.25, significant=False)
@@ -189,5 +189,70 @@ def test_goal_ci_threshold_does_not_add_aa_floor() -> None:
             item.update(ratio=1.12, ci95=[1.11, 1.13])
     goals = evaluate(rows, ["v0"])[0]
     assert goals["G2"]["status"] == "FAIL"
-    assert goals["G3"]["status"] == "FAIL"
     assert len(goals["G2"]["significant_above_1_10"]) == 1
+    # G3 needs the whole interval above 1 + max(floor, 0.01) = 1.25.
+    assert goals["G3"]["status"] == "PASS"
+    assert goals["G3"]["rule"] == "lower > 1 + max(floor, 0.01)"
+
+
+@pytest.mark.parametrize(
+    ("floor", "lower", "status"),
+    [
+        (0.005, 1.009, "PASS"),
+        (0.005, 1.011, "FAIL"),
+        (0.02, 1.015, "PASS"),
+        (0.02, 1.021, "FAIL"),
+    ],
+)
+def test_g3_margin_is_the_larger_of_floor_and_one_percent(
+    floor: float, lower: float, status: str
+) -> None:
+    rows = complete_rows()
+    for item in rows:
+        item["noise_floor"] = floor
+        if item["case"] == "copy/aligned/64" and item["comparison"] == "fastmem_abi/builtin":
+            item.update(ratio=lower + 0.01, ci95=[lower, lower + 0.02])
+    goal = evaluate(rows, ["v0"])[0]["G3"]
+    assert goal["status"] == status
+    assert len(goal["violations"]) == (status == "FAIL")
+
+
+def test_insufficient_evidence_gives_no_goal_verdict() -> None:
+    rows = complete_rows()
+    for item in rows:
+        item["rounds"] = 3
+    goal = evaluate(rows, ["v0"])[0]
+    for name in ("G2", "G3"):
+        assert goal[name]["status"] == "NA"
+        assert goal[name]["insufficient_evidence"] == goal[name]["cases"]
+        assert goal[name]["reason"].startswith("Insufficient evidence: fewer than 5 rounds.")
+
+
+def test_goals_report_the_aa_null_reference() -> None:
+    rows = complete_rows()
+    null = []
+    for case in sorted(required_cases("copy", 16)):
+        item = row(case, "A/A")
+        item.update(variant="aa", candidate_impl="fastmem_abi")
+        null.append(item)
+    null[0].update(ratio=1.2, ci95=[1.15, 1.25])
+    null[1].update(ratio=1.03, ci95=[1.01, 1.05])
+    for size in CONST_SIZES:
+        item = row(f"copy/const/{size}", "A/A")
+        item.update(variant="aa", candidate_impl="fastmem_inline", ci95=[1.001, 1.002])
+        null.append(item)
+    for item in rows:
+        item.setdefault("candidate_impl", item["comparison"].split("/")[0])
+    goal = evaluate(rows + null, ["v0"])[0]
+    assert goal["G2"]["aa_reference"] == {
+        "impl": "fastmem_abi",
+        "rule": "lower > 1.10",
+        "cases": len(required_cases("copy", 16)),
+        "violations": 1,
+    }
+    # G3 applies its own rule: 1.01 is not above 1 + max(0.01, 0.01).
+    assert goal["G3"]["aa_reference"]["violations"] == 1
+    assert goal["G4"]["const"]["aa_reference"]["violations"] == len(CONST_SIZES)
+    # The null reference is evidence only. It does not change a verdict.
+    assert goal["G2"]["status"] == "PASS"
+    assert goal["G3"]["status"] == "PASS"

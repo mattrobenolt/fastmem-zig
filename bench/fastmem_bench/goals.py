@@ -3,6 +3,7 @@
 Incomplete suites never pass. G4 code generation belongs to the P4 binary test.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 STANDARD_SIZES = (
@@ -41,6 +42,11 @@ STANDARD_SIZES = (
     1048576,
 )
 CONST_SIZES = (1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256)
+MIN_ROUNDS = 5
+# G3 tests hundreds of cases against 1.00. A case violates G3 only when its whole
+# interval lies above 1 + max(A/A floor, G3_MARGIN).
+G3_MARGIN = 0.01
+G3_RULE = f"lower > 1 + max(floor, {G3_MARGIN:g})"
 
 
 def required_cases(op: str, chunk: int) -> set[str]:
@@ -63,14 +69,17 @@ def required_cases(op: str, chunk: int) -> set[str]:
 def evidence_status(rows: list[dict[str, Any]], required: set[str]) -> dict[str, Any]:
     observed = {row["case"] for row in rows}
     missing = sorted(required - observed)
-    eligible = bool(rows) and all(
-        row["rounds"] >= 5 and row["noise_floor"] is not None for row in rows
+    insufficient = sum(row["rounds"] < MIN_ROUNDS for row in rows)
+    eligible = (
+        bool(rows) and not insufficient and all(row["noise_floor"] is not None for row in rows)
     )
     return {
         "cases": len(rows),
         "required_cases": len(required),
         "missing_cases": missing,
         "rounds": min((row["rounds"] for row in rows), default=0),
+        "insufficient_evidence": insufficient,
+        "ci_levels": sorted({row["ci_level"] for row in rows if "ci_level" in row}),
         "aa_available": bool(rows) and all(row["noise_floor"] is not None for row in rows),
         "eligible": eligible and not missing,
     }
@@ -82,6 +91,42 @@ def verdict(evidence: dict[str, Any], passed: bool) -> str:
 
 def slowdown(row: dict[str, Any], threshold: float) -> bool:
     return row["ci95"][0] > threshold
+
+
+def compiler_slowdown(row: dict[str, Any]) -> bool:
+    """G3: the whole interval lies above 1 + max(floor, G3_MARGIN)."""
+    floor = row["noise_floor"]
+    return floor is not None and slowdown(row, 1 + max(floor, G3_MARGIN))
+
+
+def null_reference(
+    rows: list[dict[str, Any]],
+    op: str,
+    impl: str,
+    cases: set[str],
+    *,
+    rule: str,
+    violates: Callable[[dict[str, Any]], bool],
+) -> dict[str, Any]:
+    """Apply a goal rule to the A/A rows of the same cases: the violations of a null.
+
+    A/A rows compare separate processes. They use the two-sample interval, not the
+    paired interval of the goal rows, so the count is a reference, not a verdict.
+    """
+    null = [
+        row
+        for row in rows
+        if row["comparison"] == "A/A"
+        and row["op"] == op
+        and row["candidate_impl"] == impl
+        and row["case"] in cases
+    ]
+    return {
+        "impl": impl,
+        "rule": rule,
+        "cases": len(null),
+        "violations": sum(violates(row) for row in null),
+    }
 
 
 def evaluate(
@@ -115,6 +160,14 @@ def evaluate(
                 geomean=overall,
                 tier_geomeans=tiers,
                 significant_above_1_10=[detail(row) for row in regressions],
+                aa_reference=null_reference(
+                    rows,
+                    op,
+                    "fastmem_abi",
+                    standard,
+                    rule="lower > 1.10",
+                    violates=lambda row: slowdown(row, 1.10),
+                ),
                 status=verdict(
                     g2,
                     overall is not None
@@ -125,10 +178,14 @@ def evaluate(
             )
             compiler = [row for row in selected if row["comparison"] == "fastmem_abi/builtin"]
             g3 = evidence_status(compiler, standard)
-            regressions = [row for row in compiler if slowdown(row, 1)]
+            regressions = [row for row in compiler if compiler_slowdown(row)]
             g3.update(
                 worst_ratio=max((row["ratio"] for row in compiler), default=None),
-                significant_above_1=[detail(row) for row in regressions],
+                rule=G3_RULE,
+                violations=[detail(row) for row in regressions],
+                aa_reference=null_reference(
+                    rows, op, "fastmem_abi", standard, rule=G3_RULE, violates=compiler_slowdown
+                ),
                 status=verdict(g3, not regressions),
             )
             small = [
@@ -146,13 +203,20 @@ def evaluate(
             constant = [
                 row for row in selected if row["comparison"] == "fastmem_inline/builtin_const"
             ]
-            const_evidence = evidence_status(
-                constant, {f"copy/const/{size}" for size in CONST_SIZES}
-            )
+            const_cases = {f"copy/const/{size}" for size in CONST_SIZES}
+            const_evidence = evidence_status(constant, const_cases)
             const_regressions = [row for row in constant if slowdown(row, 1)]
             const_evidence.update(
                 measurements=[detail(row) for row in constant],
                 significant_above_1=[detail(row) for row in const_regressions],
+                aa_reference=null_reference(
+                    rows,
+                    op,
+                    "fastmem_inline",
+                    const_cases,
+                    rule="lower > 1.00",
+                    violates=lambda row: slowdown(row, 1),
+                ),
                 status=verdict(const_evidence, not const_regressions),
             )
             if op != "copy":
@@ -173,20 +237,21 @@ def evaluate(
             }
             for goal in (g2, g3):
                 if goal["status"] == "NA":
-                    goal["reason"] = (
-                        "The complete case set, five rounds, and A/A evidence are required."
-                    )
+                    goal["reason"] = na_reason(goal, "The complete case set")
             if small_evidence["status"] == "NA":
-                small_evidence["reason"] = (
-                    "The small distribution, five rounds, and A/A evidence are required."
-                )
+                small_evidence["reason"] = na_reason(small_evidence, "The small distribution")
             if op == "copy" and const_evidence["status"] == "NA":
-                const_evidence["reason"] = (
-                    "All const sizes, five rounds, and A/A evidence are required."
-                )
+                const_evidence["reason"] = na_reason(const_evidence, "All const sizes")
             apply_codegen(g2, g3, (codegen or {}).get(variant))
             goals.append({"variant": variant, "op": op, "G2": g2, "G3": g3, "G4": g4})
     return goals
+
+
+def na_reason(evidence: dict[str, Any], cases: str) -> str:
+    reason = f"{cases}, {MIN_ROUNDS} rounds, and A/A evidence are required."
+    if evidence["insufficient_evidence"]:
+        reason = f"Insufficient evidence: fewer than {MIN_ROUNDS} rounds. {reason}"
+    return reason
 
 
 def detail(row: dict[str, Any]) -> dict[str, Any]:
@@ -196,12 +261,17 @@ def detail(row: dict[str, Any]) -> dict[str, Any]:
             "case",
             "ratio",
             "ci95",
+            "ci_level",
+            "ci_method",
             "rounds",
+            "evidence",
             "noise_floor",
             "candidate_ns",
             "baseline_ns",
             "significant",
+            "outlier_rounds",
         )
+        if key in row
     }
 
 

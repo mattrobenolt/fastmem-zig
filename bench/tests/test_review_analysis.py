@@ -1,4 +1,5 @@
 import json
+import math
 from collections import Counter
 from itertools import pairwise
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from fastmem_bench.analysis import analyze
+from fastmem_bench.analysis import analyze, rank_interval, signed_rank_interval
 from fastmem_bench.protocol import orders
 from fastmem_bench.runner import analyze_run
 from tests.conftest import PROBE, measurement
@@ -38,7 +39,7 @@ def write_cases(path: Path, cases: list[tuple[str, int, str, float]], *, jitter:
     path.write_text("\n".join(json.dumps(row) for row in records) + "\n")
 
 
-def test_floors_pool_profiles_and_impls_and_include_ci(tmp_path: Path) -> None:
+def test_floors_pool_profiles_and_impls_and_resist_one_spiky_round(tmp_path: Path) -> None:
     cases = [
         ("aligned", 32, "copy", 1.0),
         ("cross-lane", 32, "copy", 1.0),
@@ -46,11 +47,15 @@ def test_floors_pool_profiles_and_impls_and_include_ci(tmp_path: Path) -> None:
     ]
     for index in range(5):
         write_cases(tmp_path / "v0" / f"r{index}.jsonl", cases)
-        aa_cases = [cases[0], ("cross-lane", 32, "copy", 1.1 if index == 0 else 1.0), cases[2]]
+        # One round of one case is 4.7 times slower for every implementation (c8a copy/const/64).
+        aa_cases = [cases[0], ("cross-lane", 32, "copy", 4.7 if index == 0 else 1.0), cases[2]]
         write_cases(tmp_path / "aa" / f"r{index}.jsonl", aa_cases, jitter=0.02)
     result = analyze(tmp_path, ["v0"], "v0")
-    assert result["noise_floors"]["copy/size/32"] == pytest.approx(0.122)
-    assert result["noise_floors"]["copy/size/4096"] == pytest.approx(0.02)
+    assert result["noise_floors"]["copy/size/32"] == pytest.approx(0.02)
+    # Four rows: the interpolated 95th percentile lies 85% of the way to the largest.
+    assert result["noise_floors"]["copy/size/4096"] == pytest.approx(
+        math.expm1(0.85 * math.log(1.02))
+    )
     aa_rows = [row for row in result["rows"] if row["comparison"] == "A/A"]
     assert {row["candidate_impl"] for row in aa_rows} == {
         "fastmem_abi",
@@ -58,10 +63,19 @@ def test_floors_pool_profiles_and_impls_and_include_ci(tmp_path: Path) -> None:
         "builtin",
         "glibc",
     }
-    assert max(abs(row["ratio"] - 1) for row in aa_rows) < result["noise_floors"]["copy/size/32"]
+    assert max(abs(math.log(row["ratio"])) for row in aa_rows) == pytest.approx(math.log(1.02))
     assert all(
         row["noise_floor"] == result["noise_floors"][row["floor_group"]] for row in result["rows"]
     )
+    spiky = [row for row in aa_rows if row["case"] == "copy/cross-lane/32"]
+    assert all(row["outlier_rounds"] == {"candidate": [0], "baseline": []} for row in spiky)
+    # The flag is a report: the spike moves the upper bound, not the ratio or the floor.
+    assert all(row["ci95"][1] > 4 for row in spiky)
+    assert all(abs(math.log(row["ratio"])) <= math.log(1.02) + 1e-9 for row in spiky)
+    assert {(item["variant"], item["case"], item["round"]) for item in result["outliers"]} == {
+        ("aa", "copy/cross-lane/32", 0)
+    }
+    assert len(result["outliers"]) == 4
 
 
 def test_dist_floor_uses_op_tier(tmp_path: Path) -> None:
@@ -84,7 +98,13 @@ def test_round_threshold_and_minimum_effect(tmp_path: Path, rounds: int) -> None
         measurement(tmp_path / "aa" / f"r{index}.jsonl")
     result = analyze(tmp_path, ["v0"], "v0")
     assert any(row["significant"] for row in result["rows"]) == (rounds >= 5)
-    conservative = analyze(tmp_path, ["v0"], "v0", minimum_effect=0.61)
+    expected = "sufficient" if rounds >= 5 else "insufficient"
+    assert {row["evidence"] for row in result["rows"]} == {expected}
+    levels = {row["ci_method"]: row["ci_level"] for row in result["rows"]}
+    assert levels["signed-rank"] == pytest.approx(signed_rank_interval(rounds)[1])
+    assert levels["mann-whitney"] == pytest.approx(rank_interval(rounds, rounds)[1])
+    # The largest fixture effect is fastmem_abi/builtin = 0.5: |log 0.5| < log(2.1).
+    conservative = analyze(tmp_path, ["v0"], "v0", minimum_effect=1.1)
     assert not any(row["significant"] for row in conservative["rows"])
 
 
