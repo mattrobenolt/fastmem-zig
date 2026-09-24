@@ -244,10 +244,7 @@ pub fn exportSymbols() void {
         // @export rejects extern functions. ELF aliases preserve the exact
         // ABI entry address without a trampoline or another memory loop.
         const prefix = if (on_aarch64_sve) "fastmem_sve_" else "fastmem_advsimd_";
-        _ = aarch64_memcpy_sve;
-        _ = aarch64_memcpy_advsimd;
-        _ = aarch64_memset_sve;
-        _ = aarch64_memset_advsimd;
+        _ = abi;
         _ = struct {
             comptime {
                 asm (".globl memcpy\n.hidden memcpy\n.set memcpy, " ++ prefix ++ "copy\n" ++
@@ -267,9 +264,36 @@ pub fn exportSymbols() void {
 /// fastmem_abi. On aarch64 the entries are the kernel symbols (see
 /// above); elsewhere they are generic Zig wrappers.
 pub const abi = struct {
-    pub const memcpy: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_copy_fn else &memcpyGeneric;
-    pub const memmove: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_move_fn else &memmoveGeneric;
-    pub const memset: LibcSetFn = if (on_x86) &x86_set.kernel else if (on_aarch64) libc_set_fn else &memsetGeneric;
+    comptime {
+        // A consumer can use only ABI pointers, without copy/move/set.
+        // Analyze the assembly containers even in that case.
+        if (on_aarch64_sve) {
+            _ = aarch64_memcpy_sve;
+            _ = aarch64_memset_sve;
+        } else if (on_aarch64) {
+            _ = aarch64_memcpy_advsimd;
+            _ = aarch64_memset_advsimd;
+        }
+    }
+
+    pub const memcpy: LibcCopyFn = if (on_x86)
+        &x86_move.kernel
+    else if (on_aarch64)
+        libc_copy_fn
+    else
+        &memcpyGeneric;
+    pub const memmove: LibcCopyFn = if (on_x86)
+        &x86_move.kernel
+    else if (on_aarch64)
+        libc_move_fn
+    else
+        &memmoveGeneric;
+    pub const memset: LibcSetFn = if (on_x86)
+        &x86_set.kernel
+    else if (on_aarch64)
+        libc_set_fn
+    else
+        &memsetGeneric;
 
     fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
@@ -279,7 +303,11 @@ pub const abi = struct {
         return dest;
     }
 
-    fn memmoveGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    fn memmoveGeneric(
+        dest: ?*anyopaque,
+        src: ?*const anyopaque,
+        n: usize,
+    ) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);

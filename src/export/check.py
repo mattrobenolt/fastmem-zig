@@ -13,9 +13,11 @@ def output(*args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--arch", required=True)
-    parser.add_argument("--division", choices=("yes", "no"), required=True)
+    parser.add_argument("--division", choices=("yes", "no"))
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--shared", action="store_true")
+    parser.add_argument("--disabled", action="store_true")
+    parser.add_argument("--ecosystem", action="store_true")
     parser.add_argument("binary")
     args = parser.parse_args()
     binary = args.binary
@@ -41,7 +43,9 @@ def main():
     entries = set()
     for op in ("memcpy", "memmove", "memset"):
         value, size, info, other, index = symbols[op]
-        assert index != 0 and info >> 4 != 2, (op, "undefined or weak")
+        assert index != 0, (op, "undefined")
+        if not args.disabled:
+            assert info >> 4 != 2, (op, "weak")
         # LLD localizes hidden symbols in the final link.
         assert other & 3 == 2 or info >> 4 == 0, (op, "not hidden/local")
         assert op not in dynamic, (op, "leaks into .dynsym")
@@ -56,10 +60,10 @@ def main():
                         place, _, addend = struct.unpack_from("<QQq", raw, off)
                         if place == ptr:
                             address = addend
-        assert address == value, (op, "not fastmem.abi", hex(address), hex(value))
+        assert (address == value) != args.disabled, (op, "wrong provider", hex(address), hex(value))
         entries.add(value)
-    assert ("__udivti3" in symbols) == (args.division == "yes"), "division fixture did not control compiler-rt"
-    assert not any(re.fullmatch(r"__(memcpy|memmove|memset)_chk", n) for n in symbols), "unexpected fortified call"
+    if args.division is not None:
+        assert ("__udivti3" in symbols) == (args.division == "yes"), "division fixture did not control compiler-rt"
     disasm = output("llvm-objdump", "-d", "--no-show-raw-insn", binary)
     functions = {}
     current = None
@@ -77,15 +81,18 @@ def main():
             if m:
                 result.append(int(m[1], 16))
         return result
-    for op in ("copy", "move", "set"):
+    for op in (() if args.ecosystem else ("copy", "move", "set")):
         target = symbols["mem" + ("cpy" if op == "copy" else op)][0]
         for prefix in ("p6_", "p6_c_"):
             body = functions[symbols[prefix + op][0]]
-            assert target in targets(body), (prefix + op, "does not call fastmem", body)
+            branches = targets(body)
+            assert target in branches, (prefix + op, "wrong memory call", body)
+            fortified = {v[0] for k, v in symbols.items() if re.fullmatch(r"__(memcpy|memmove|memset)_chk", k)}
+            assert not fortified.intersection(branches), (prefix + op, "unexpected fortified call")
     # Follow kernel helpers, but not std panic/reporting code for invalid input.
     helpers = {v[0] for k, v in symbols.items() if k.startswith(("x86_64.", "root.", "forward.", "memcpy.", "memmove."))}
     seen = set()
-    pending = list(entries)
+    pending = [] if args.disabled else list(entries)
     while pending:
         addr = pending.pop()
         if addr in seen:
@@ -99,7 +106,7 @@ def main():
         host = {"arm64": "aarch64", "AMD64": "x86_64"}.get(platform.machine(), platform.machine())
         command = [binary] if host == args.arch else ["qemu-" + args.arch, binary]
         subprocess.run(command, check=True, timeout=120)
-    print(f"PASS {binary}: ABI identity, strong/hidden, calls, no recursion, no dynsym" + (", runtime Zig/C" if args.run else ""))
+    print(f"PASS {binary}: " + ("opt-out keeps compiler-rt" if args.disabled else "ABI identity, strong/hidden, no kernel recursion, no dynsym" + (", Zig/C call binding" if not args.ecosystem else "")) + (", runtime Zig/C" if args.run else ""))
 
 
 if __name__ == "__main__":

@@ -104,7 +104,10 @@ pub fn build(b: *std.Build) void {
         asm_all_step.dependOn(obj);
     }
 
+    // Private cross probes must not replace the public dependency module.
+    std.debug.assert(b.modules.get("fastmem").? == mod);
     addX86Codegen(b, x86_options);
+    addStdExportTests(b, x86_options);
 
     // Tests. The fastmem test module takes an explicit optimize so a
     // release-mode test build can dodge the 0.16.0 self-hosted-backend
@@ -151,7 +154,7 @@ fn addAsmObject(
 ) *std.Build.Step {
     // Create a target-specific fastmem module so comptime builtins
     // (cpu.model, cpu.arch, etc.) reflect the cross-compilation target.
-    const target_mod = b.addModule("fastmem", .{
+    const target_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = resolved_target,
         .no_builtin = true,
@@ -296,6 +299,41 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
                 }
             }
         }
+        for ([_]bool{ false, true }) |enabled| {
+            const fixture = exportFixture(b, tuning, target, if (enabled) .Debug else .ReleaseFast, false, true, enabled);
+            const exe = b.addExecutable(.{
+                .name = b.fmt("export-{s}-{s}", .{ arch, if (enabled) "debug-llvm" else "disabled" }),
+                .root_module = fixture,
+                .use_llvm = true,
+            });
+            const check = b.addSystemCommand(&.{"python3"});
+            check.addFileArg(b.path("src/export/check.py"));
+            check.addArgs(&.{ "--arch", arch, "--division", "yes", "--run" });
+            if (!enabled) check.addArg("--disabled");
+            check.addFileArg(exe.getEmittedBin());
+            step.dependOn(&check.step);
+        }
+        const debug = b.addObject(.{
+            .name = b.fmt("export-debug-lowering-{s}", .{arch}),
+            .use_llvm = false,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/export/debug.zig"),
+                .target = target,
+                .optimize = .Debug,
+            }),
+        });
+        const debug_check = b.addSystemCommand(&.{"python3"});
+        debug_check.addFileArg(b.path("src/export/check_debug.py"));
+        debug_check.addArg(arch);
+        debug_check.addFileArg(debug.getEmittedBin());
+        step.dependOn(&debug_check.step);
+        const refused = b.addObject(.{
+            .name = b.fmt("export-refused-{s}", .{arch}),
+            .use_llvm = false,
+            .root_module = exportFixture(b, tuning, target, .Debug, false, false, true),
+        });
+        refused.expect_errors = .{ .contains = "fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)" };
+        step.dependOn(&refused.step);
         // Dynamic executable and DSO: hidden definitions must stay local in both.
         for ([_]bool{ false, true }) |shared| {
             const fixture = exportFixture(b, tuning, target, .ReleaseFast, true, true, true);
@@ -310,6 +348,23 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
             check.addFileArg(artifact.getEmittedBin());
             step.dependOn(&check.step);
         }
+    }
+    for ([_][]const u8{ "neoverse_v1", "neoverse_v2", "neoverse_v3", "x86_64" }) |cpu| {
+        const arch = if (std.mem.eql(u8, cpu, "x86_64")) "x86_64" else "aarch64";
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
+            .cpu_features = cpu,
+        }) catch unreachable);
+        const exe = b.addExecutable(.{
+            .name = b.fmt("export-{s}", .{cpu}),
+            .root_module = exportFixture(b, tuning, target, .ReleaseFast, false, true, true),
+        });
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/export/check.py"));
+        check.addArgs(&.{ "--arch", arch, "--division", "yes" });
+        if (std.mem.eql(u8, cpu, "x86_64")) check.addArg("--run");
+        check.addFileArg(exe.getEmittedBin());
+        step.dependOn(&check.step);
     }
     return step;
 }
@@ -343,4 +398,14 @@ fn exportFixture(
     fixture.addOptions("export_options", options);
     fixture.addCSourceFile(.{ .file = b.path("src/export/consumer.c"), .flags = &.{ "-fno-builtin", "-fno-stack-protector" } });
     return fixture;
+}
+
+fn addStdExportTests(b: *std.Build, tuning: *std.Build.Step.Options) void {
+    const run = b.addSystemCommand(&.{"python3"});
+    run.addFileArg(b.path("src/export/std_tests.py"));
+    run.addArg(b.graph.zig_exe);
+    run.addArg(b.graph.zig_lib_directory.path.?);
+    run.addFileArg(b.path("src/root.zig"));
+    run.addFileArg(tuning.getOutput());
+    b.step("test-export-std", "Run upstream std tests with memory exports, native and x86 qemu").dependOn(&run.step);
 }
