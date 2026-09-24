@@ -129,6 +129,11 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const test_step = b.step("test", "Run tests");
+    // Compile the shipped binaries too: a module-graph error (for example
+    // one file imported by two modules) only shows up when they build.
+    test_step.dependOn(&bench_exe.step);
+    test_step.dependOn(&correctness.step);
+    test_step.dependOn(&libc_probe.step);
     test_step.dependOn(&run_mod_tests.step);
 
     const bench_tests = b.addTest(.{ .root_module = bench_exe.root_module });
