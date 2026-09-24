@@ -4,9 +4,9 @@ const fastmem = @import("fastmem");
 
 comptime {
     @setEvalBranchQuota(10_000_000);
-    @export(&fastmem.abi.memcpy, .{ .name = "probe_abi_copy" });
-    @export(&fastmem.abi.memmove, .{ .name = "probe_abi_move" });
-    @export(&fastmem.abi.memset, .{ .name = "probe_abi_set" });
+    @export(fastmem.abi.memcpy, .{ .name = "probe_abi_copy" });
+    @export(fastmem.abi.memmove, .{ .name = "probe_abi_move" });
+    @export(fastmem.abi.memset, .{ .name = "probe_abi_set" });
     for (1..257) |n| {
         @export(&Fixed(n).copy, .{ .name = std.fmt.comptimePrint("probe_copy_{d}", .{n}) });
         @export(&Fixed(n).move, .{ .name = std.fmt.comptimePrint("probe_move_{d}", .{n}) });

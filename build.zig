@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_options = x86Options(b);
+    const x86_options = tuningOptions(b);
     mod.addOptions("fastmem_options", x86_options);
 
     // Benchmark executable — always built ReleaseFast.
@@ -209,7 +209,7 @@ fn addAsmStep(
     step.dependOn(obj_step);
 }
 
-fn x86Options(b: *std.Build) *std.Build.Step.Options {
+fn tuningOptions(b: *std.Build) *std.Build.Step.Options {
     const options = b.addOptions();
     inline for (.{ "vec", "inline-max" }) |name| {
         options.addOption(?u32, comptime "x86_" ++ replaceDash(name), b.option(u32, "x86-" ++ name, "Override the x86 tuning default"));
@@ -219,6 +219,11 @@ fn x86Options(b: *std.Build) *std.Build.Step.Options {
     }
     const Variant = enum { entry, high_regs };
     options.addOption(Variant, "x86_variant", b.option(Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs);
+    // aarch64 small-path overrides (src/aarch64/tuning.zig). "auto" keeps
+    // the per-CPU-model default; these serve local A/B runs.
+    inline for (.{ "copy", "move", "set" }) |op| {
+        options.addOption([]const u8, "small_" ++ op, b.option([]const u8, "small-" ++ op, "aarch64 SVE " ++ op ++ " small path: auto|sve|neon|hybrid") orelse "auto");
+    }
     options.addOption(bool, "x86_small_masked_set", b.option(bool, "x86-small-masked-set", "Use masked small memset in LLVM builds") orelse true);
     return options;
 }

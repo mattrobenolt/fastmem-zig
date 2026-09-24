@@ -24,6 +24,9 @@ const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
 const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
 const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
 const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
+// Loop-free small-size classes inlined at the call site (no call at
+// all at <= 64 bytes; the C-ABI kernels handle the rest).
+const aarch64_small = @import("aarch64/small.zig");
 
 // The kernel ports carry ELF-only directives (.type/.hidden/.size), so
 // non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
@@ -35,8 +38,14 @@ const on_x86 = x86_tuning.available;
 
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
+const arm_tuning = @import("aarch64/tuning.zig");
+
+fn armName(comptime small: []const u8) []const u8 {
+    return "aor-sve-5e20a93+small-" ++ small;
+}
+
 const copy_impl_name: []const u8 = if (on_aarch64_sve)
-    "aor-sve-5e20a93"
+    armName(@tagName(arm_tuning.copy_small))
 else if (on_aarch64)
     "aor-advsimd-5e20a93"
 else if (on_x86)
@@ -44,7 +53,14 @@ else if (on_x86)
 else
     "zig-simd";
 
-const set_impl_name: []const u8 = if (on_aarch64 or on_x86)
+const move_impl_name: []const u8 = if (on_aarch64_sve)
+    armName(@tagName(arm_tuning.move_small))
+else
+    copy_impl_name;
+
+const set_impl_name: []const u8 = if (on_aarch64_sve)
+    armName(@tagName(arm_tuning.set_small))
+else if (on_aarch64 or on_x86)
     copy_impl_name
 else
     "zig-vector";
@@ -52,7 +68,7 @@ else
 /// Names of the kernel implementations in this build, one per operation.
 pub const impl = .{
     .copy = copy_impl_name,
-    .move = copy_impl_name,
+    .move = move_impl_name,
     .set = set_impl_name,
 };
 
@@ -83,6 +99,10 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         const s_addr = @intFromPtr(s);
         std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
         std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        if (bytes <= aarch64_small.max_inline) {
+            aarch64_small.copyMove(d, s, bytes);
+            return;
+        }
         if (comptime on_aarch64_sve) {
             aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
         } else {
@@ -109,6 +129,12 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         const bytes = source.len * @sizeOf(T);
         const d: [*]u8 = @ptrCast(dest.ptr);
         const s: [*]const u8 = @ptrCast(source.ptr);
+        if (bytes <= aarch64_small.max_inline) {
+            // The small classes are overlap-safe (all loads precede all
+            // stores), so copy and move share them.
+            aarch64_small.copyMove(d, s, bytes);
+            return;
+        }
         if (comptime on_aarch64_sve) {
             aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
         } else {
@@ -142,6 +168,10 @@ pub inline fn set(comptime T: type, dest: []T, value: T) void {
         if (T == u8 or allBytesEqual(bytes)) {
             const len = dest.len * @sizeOf(T);
             const d: [*]u8 = @ptrCast(dest.ptr);
+            if (len <= aarch64_small.max_inline) {
+                aarch64_small.set(d, bytes[0], len);
+                return;
+            }
             if (comptime on_aarch64_sve) {
                 aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
             } else {
@@ -174,7 +204,12 @@ const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c)
 
 // The AOR kernel symbols already carry the libc signatures and, like
 // the libc originals, return dest in x0 (the kernels never write x0).
-// The abi wrappers below therefore compile to a single direct branch.
+// The abi entries below are therefore the kernel symbol addresses
+// themselves: a call through them lands directly in the kernel, exactly
+// like the harness's dlsym pointer into glibc. A Zig wrapper compiles
+// to a `b` trampoline, and that extra taken branch is measurable at
+// small sizes (fleet run 20260924T064442Z-aor-g2: set 0-16 was
+// 1.28-1.33x glibc on c7g/c8g with an instruction-identical body).
 const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
     @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
 else if (on_aarch64)
@@ -198,16 +233,14 @@ else
 
 /// C-ABI entry points with the libc signatures, each returning dest.
 /// Not exported (P6 owns the export layer); the bench measures these as
-/// fastmem_abi.
+/// fastmem_abi. On aarch64 the entries are the kernel symbols (see
+/// above); elsewhere they are generic Zig wrappers.
 pub const abi = struct {
-    pub const memcpy = if (on_x86) x86_move.kernel else memcpyFallback;
+    pub const memcpy: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_copy_fn else &memcpyGeneric;
+    pub const memmove: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_move_fn else &memmoveGeneric;
+    pub const memset: LibcSetFn = if (on_x86) &x86_set.kernel else if (on_aarch64) libc_set_fn else &memsetGeneric;
 
-    fn memcpyFallback(
-        dest: ?*anyopaque,
-        src: ?*const anyopaque,
-        n: usize,
-    ) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
+    fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -215,14 +248,7 @@ pub const abi = struct {
         return dest;
     }
 
-    pub const memmove = if (on_x86) x86_move.kernel else memmoveFallback;
-
-    fn memmoveFallback(
-        dest: ?*anyopaque,
-        src: ?*const anyopaque,
-        n: usize,
-    ) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_move_fn(dest, src, n);
+    fn memmoveGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -230,10 +256,7 @@ pub const abi = struct {
         return dest;
     }
 
-    pub const memset = if (on_x86) x86_set.kernel else memsetFallback;
-
-    fn memsetFallback(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
-        if (comptime on_aarch64) return libc_set_fn(dest, c, n);
+    fn memsetGeneric(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
