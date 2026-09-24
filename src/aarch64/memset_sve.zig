@@ -9,12 +9,10 @@
 // the same pinned commit (already ported in memset_advsimd.zig).
 //
 // Port notes (the only intentional differences from upstream):
-// - The C preprocessor macros of asmdefs.h are expanded: ENTRY / END
-//   become explicit .globl/.type/.p2align/.size directives, the
-//   register aliases (dstin, valw, count, ...) become architectural
-//   register names, and L(name) becomes .Lfm_sve_set_name.
-//   Local labels are prefixed uniquely per port: module-level asm in
-//   one compilation shares a label namespace across files.
+// - Naked Zig functions and @export replace the ENTRY, ALIAS, and END macros.
+//   The compiler emits symbol types, sizes, and hidden visibility.
+//   Register aliases become architectural names. Local labels retain unique
+//   prefixes because all inline assembly shares one label namespace.
 // - The symbol is renamed __memset_aarch64_sve -> fastmem_sve_set and
 //   given .hidden visibility.
 // - SKIP_ZVA_CHECK is not defined, so the runtime DCZID_EL0 check on
@@ -24,9 +22,7 @@
 // - The GNU_PROPERTY note (BTI/PAC marking of the linked binary) is
 //   omitted: it is link-level metadata, and no other object in a Zig
 //   link carries it. The BTI landing pad (`hint 34`) is kept.
-// - The whole block is gated on the SVE CPU feature and the ELF object
-//   format at comptime (the directives below are ELF-only), so non-SVE
-//   or non-ELF builds never see these instructions.
+// - Exports require SVE and ELF at comptime. Other builds do not emit these instructions.
 // - The below-16 path is selected at comptime per CPU model
 //   (src/aarch64/tuning.zig): the upstream predicated SVE store (.sve),
 //   or the advsimd store tree (.neon) inverted so that 1..3 bytes fall
@@ -194,26 +190,11 @@ const body = switch (tuning.set_small) {
 } ++ tail_common;
 
 comptime {
-    if (enabled) {
-        asm (
-            \\.text
-            \\.arch armv8-a+sve
-            \\
-            \\// ENTRY (__memset_aarch64_sve)
-            \\.p2align 6
-            \\.globl fastmem_sve_set
-            \\.hidden fastmem_sve_set
-            \\.type fastmem_sve_set, %function
-            \\fastmem_sve_set:
-            \\.cfi_startproc
-            \\hint 34
-            \\
-            ++ body ++
-            \\// END (__memset_aarch64_sve)
-            \\.cfi_endproc
-            \\.size fastmem_sve_set, .-fastmem_sve_set
-        );
-    }
+    if (enabled) @export(&setEntry, .{ .name = "fastmem_sve_set", .visibility = .hidden });
 }
 
-pub extern fn fastmem_sve_set(dst: [*]u8, val: u8, len: usize) void;
+pub fn setEntry() align(64) callconv(.naked) void {
+    asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ body ::: .{ .memory = true });
+}
+
+pub const fastmem_sve_set: *const fn ([*]u8, u8, usize) callconv(.c) void = @ptrCast(&setEntry);

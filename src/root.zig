@@ -19,7 +19,7 @@ pub const MoveFlags = memmove_impl.Flags;
 // aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
 // The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
 // generic-aarch64 path. The gates are complementary, so exactly one pair
-// emits its global asm per build.
+// emits its kernel definitions per build.
 const aarch64_memcpy_sve = @import("aarch64/memcpy_sve.zig");
 const aarch64_memset_sve = @import("aarch64/memset_sve.zig");
 const aarch64_memcpy_advsimd = @import("aarch64/memcpy_advsimd.zig");
@@ -28,8 +28,8 @@ const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 // all at <= 64 bytes; the C-ABI kernels handle the rest).
 const aarch64_small = @import("aarch64/small.zig");
 
-// The kernel ports carry ELF-only directives (.type/.hidden/.size), so
-// non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
+// The kernel ports retain the ELF-only support boundary.
+// Non-ELF aarch64 targets, such as macOS, keep the generic Zig kernels.
 const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
 const x86_tuning = @import("x86_64/tuning.zig");
 const x86_move = @import("x86_64/move.zig");
@@ -211,36 +211,78 @@ const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c)
 // small sizes (fleet run 20260924T064442Z-aor-g2: set 0-16 was
 // 1.28-1.33x glibc on c7g/c8g with an instruction-identical body).
 const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
-    @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
+    @ptrCast(&aarch64_memcpy_sve.copyEntry)
 else if (on_aarch64)
-    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_copy" })
+    @ptrCast(&aarch64_memcpy_advsimd.copyEntry)
 else
     undefined;
 
 const libc_move_fn: LibcCopyFn = if (on_aarch64_sve)
-    @extern(LibcCopyFn, .{ .name = "fastmem_sve_move" })
+    @ptrCast(&aarch64_memcpy_sve.move_entry)
 else if (on_aarch64)
-    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_move" })
+    @ptrCast(&aarch64_memcpy_advsimd.copyEntry)
 else
     undefined;
 
 const libc_set_fn: LibcSetFn = if (on_aarch64_sve)
-    @extern(LibcSetFn, .{ .name = "fastmem_sve_set" })
+    @ptrCast(&aarch64_memset_sve.setEntry)
 else if (on_aarch64)
-    @extern(LibcSetFn, .{ .name = "fastmem_advsimd_set" })
+    @ptrCast(&aarch64_memset_advsimd.setEntry)
 else
     undefined;
 
+/// Replace the memory symbols in this link with strong, hidden kernel aliases.
+/// Call once from the root comptime block. See docs/export-layer.md.
+pub fn exportSymbols() void {
+    if (builtin.target.ofmt != .elf or
+        (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64))
+        @compileError("fastmem.exportSymbols requires aarch64 or x86_64 ELF");
+    if (builtin.zig_backend != .stage2_llvm)
+        @compileError("fastmem.exportSymbols requires the LLVM backend (use -fllvm in Debug)");
+
+    @export(abi.memcpy, .{ .name = "memcpy", .linkage = .strong, .visibility = .hidden });
+    @export(abi.memmove, .{ .name = "memmove", .linkage = .strong, .visibility = .hidden });
+    @export(abi.memset, .{ .name = "memset", .linkage = .strong, .visibility = .hidden });
+}
+
 /// C-ABI entry points with the libc signatures, each returning dest.
-/// Not exported (P6 owns the export layer); the bench measures these as
-/// fastmem_abi. On aarch64 the entries are the kernel symbols (see
-/// above); elsewhere they are generic Zig wrappers.
+/// The entries receive libc names only after exportSymbols. The benchmark
+/// measures these as fastmem_abi. Dedicated kernels handle aarch64 and AVX2.
+/// Other targets use generic Zig wrappers.
 pub const abi = struct {
-    pub const memcpy: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_copy_fn else &memcpyGeneric;
-    pub const memmove: LibcCopyFn = if (on_x86) &x86_move.kernel else if (on_aarch64) libc_move_fn else &memmoveGeneric;
-    pub const memset: LibcSetFn = if (on_x86) &x86_set.kernel else if (on_aarch64) libc_set_fn else &memsetGeneric;
+    comptime {
+        // A consumer can use only ABI pointers, without copy/move/set.
+        // Analyze the kernel containers even in that case.
+        if (on_aarch64_sve) {
+            _ = aarch64_memcpy_sve;
+            _ = aarch64_memset_sve;
+        } else if (on_aarch64) {
+            _ = aarch64_memcpy_advsimd;
+            _ = aarch64_memset_advsimd;
+        }
+    }
+
+    pub const memcpy: LibcCopyFn = if (on_x86)
+        &x86_move.kernel
+    else if (on_aarch64)
+        libc_copy_fn
+    else
+        &memcpyGeneric;
+    pub const memmove: LibcCopyFn = if (on_x86)
+        &x86_move.kernel
+    else if (on_aarch64)
+        libc_move_fn
+    else
+        &memmoveGeneric;
+    pub const memset: LibcSetFn = if (on_x86)
+        &x86_set.kernel
+    else if (on_aarch64)
+        libc_set_fn
+    else
+        &memsetGeneric;
 
     fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -248,7 +290,12 @@ pub const abi = struct {
         return dest;
     }
 
-    fn memmoveGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    fn memmoveGeneric(
+        dest: ?*anyopaque,
+        src: ?*const anyopaque,
+        n: usize,
+    ) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const s: [*]const u8 = @ptrCast(src.?);
@@ -257,6 +304,7 @@ pub const abi = struct {
     }
 
     fn memsetGeneric(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+        @disableIntrinsics();
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
@@ -265,10 +313,10 @@ pub const abi = struct {
 };
 
 // Portable fallback for targets without a dedicated kernel and for
-// non-uniform fill values. The loops live in a non-inline function of
-// this no_builtin module so LLVM cannot idiom-recognize them into a
-// memset call (which would recurse under exportSymbols).
+// non-uniform fill values. Local intrinsic suppression prevents LLVM
+// from replacing these loops with recursive memset calls.
 fn setFallback(comptime T: type, dest: []T, value: T) void {
+    @disableIntrinsics();
     if (comptime (T == u8)) {
         const chunk: @Vector(32, u8) = @splat(value);
         var i: usize = 0;
