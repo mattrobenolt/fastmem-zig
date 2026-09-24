@@ -1,6 +1,13 @@
 const std = @import("std");
 
-const X86Variant = enum { entry, high_regs, tiered, compact };
+const X86Variant = enum { auto, entry, high_regs, tiered, compact };
+
+// The per-model default of the "auto" variant, from the p3-x86c fleet A/B
+// (docs/results/p3-x86c.md). Keep in sync with src/x86_64/tuning.zig.
+fn resolveX86Variant(cpu: []const u8, variant: X86Variant) X86Variant {
+    if (variant != .auto) return variant;
+    return if (std.mem.eql(u8, cpu, "znver4")) .tiered else .compact;
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -19,7 +26,7 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_variant = b.option(X86Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs;
+    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
     const x86_options = tuningOptions(b, x86_variant);
     mod.addOptions("fastmem_options", x86_options);
 
@@ -263,13 +270,13 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Va
         const check = b.addSystemCommand(&.{"python3"});
         check.addFileArg(b.path("src/x86_64/check_codegen.py"));
         check.addArg(cpu);
-        check.addArg(@tagName(variant));
+        check.addArg(@tagName(resolveX86Variant(cpu, variant)));
         check.addFileArg(obj.getEmittedBin());
         step.dependOn(&check.step);
         if (std.mem.eql(u8, cpu, "sapphirerapids")) {
             const mutations = b.addSystemCommand(&.{"python3"});
             mutations.addFileArg(b.path("src/x86_64/test_check_codegen.py"));
-            mutations.addArg(@tagName(variant));
+            mutations.addArg(@tagName(resolveX86Variant(cpu, variant)));
             mutations.addFileArg(obj.getEmittedBin());
             step.dependOn(&mutations.step);
         }

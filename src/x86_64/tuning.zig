@@ -52,7 +52,12 @@ pub const selected: Tuning = .{
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
 // The ABI experiment does not alter inline classes or large-loop policy.
-pub const variant = options.x86_variant;
+// "auto" picks per model from the p3-x86c fleet A/B (docs/results/p3-x86c.md):
+// tiered on Zen 4, compact elsewhere. build.zig's resolveX86Variant mirrors it.
+pub const variant = if (options.x86_variant == .auto)
+    (if (builtin.cpu.model == &cpu.znver4) .tiered else .compact)
+else
+    options.x86_variant;
 pub const high_regs = variant != .entry and avx512 and
     builtin.cpu.has(.x86, .avx512vl) and vec == 64;
 pub const reordered = high_regs and (variant == .tiered or variant == .compact);
