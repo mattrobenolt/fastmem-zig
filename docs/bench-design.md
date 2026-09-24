@@ -329,9 +329,11 @@ Analysis:
   impl, variant), pool the samples of all rounds and take the median.
 - Report these ratios for each case, as `candidate / baseline` of the
   medians:
-  - each revision against the baseline revision, for `impl = fastmem`
-  - `fastmem` against `libc` and against `builtin`, for each revision
-  - `A/A` against the baseline, for the noise floor
+  - Each fastmem implementation against itself in the baseline revision.
+  - `builtin/glibc`, `fastmem_abi/glibc`, and `fastmem_inline/glibc` for each revision.
+  - `fastmem_abi/builtin` for each revision.
+  - `fastmem_inline/builtin_const` for const cases.
+  - `A/A` against the baseline for every implementation.
 - Compute a 95% confidence interval for each ratio with a bootstrap over
   rounds. Use a fixed seed. Use the Python standard library only.
 - The noise floor is per (target, op, size): the largest A/A departure
@@ -350,7 +352,7 @@ Analysis:
 
 ## Measurement binary: bench-fastmem
 
-This section defines schema v2 and supersedes the adapter comparisons above.
+This section defines schema v2.
 The implementation is `src/bench_fastmem.zig`.
 The parser is `bench/fastmem_bench/jsonl.py`.
 The native integration tests are `bench/tests/test_binary_v2.py`.
