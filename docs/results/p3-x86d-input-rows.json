@@ -1,0 +1,2398 @@
+{
+  "run_id": "20260924T201905Z-p3-x86c",
+  "variant": "fleet/p3-x86c-compact",
+  "rows": [
+    {
+      "target": "c7i",
+      "case": "copy/aligned/1024",
+      "candidate_ns": 6.7106459933580656,
+      "baseline_ns": 5.038979811557889,
+      "ratio": 1.3333662260360597,
+      "ci95": [
+        1.3193792132766005,
+        1.3449177372773105
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/127",
+      "candidate_ns": 1.62723404085449,
+      "baseline_ns": 1.6280176768185153,
+      "ratio": 1.0001134074382967,
+      "ci95": [
+        0.9975376211500212,
+        1.002695844778986
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/128",
+      "candidate_ns": 1.6202393514903222,
+      "baseline_ns": 1.6248915966827138,
+      "ratio": 0.997482834103,
+      "ci95": [
+        0.9793523676413759,
+        1.0008144927169182
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/192",
+      "candidate_ns": 2.166346486806325,
+      "baseline_ns": 2.160188006701785,
+      "ratio": 1.0027702692975506,
+      "ci95": [
+        0.9993288974893828,
+        1.0101667885391725
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/255",
+      "candidate_ns": 2.164407181999805,
+      "baseline_ns": 2.163557302904012,
+      "ratio": 1.0015294617531518,
+      "ci95": [
+        1.0003928156165092,
+        1.009436451199866
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/256",
+      "candidate_ns": 2.1657668065943616,
+      "baseline_ns": 2.1632987748002956,
+      "ratio": 1.005603122447593,
+      "ci95": [
+        0.9972336387569074,
+        1.0140428487118602
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/384",
+      "candidate_ns": 2.7083632873643904,
+      "baseline_ns": 2.445905927452764,
+      "ratio": 1.1081141643244115,
+      "ci95": [
+        1.103148043176106,
+        1.1117519202745336
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/511",
+      "candidate_ns": 3.5514691250491133,
+      "baseline_ns": 3.6323750319898513,
+      "ratio": 0.9859059666732839,
+      "ci95": [
+        0.9711214416501911,
+        1.002159333583028
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/512",
+      "candidate_ns": 2.705157362142312,
+      "baseline_ns": 2.445158602106293,
+      "ratio": 1.108554907155444,
+      "ci95": [
+        1.1039190105757826,
+        1.1132893201722778
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/768",
+      "candidate_ns": 5.703325471972974,
+      "baseline_ns": 4.099116136429383,
+      "ratio": 1.396030597343657,
+      "ci95": [
+        1.3807416690426486,
+        1.4447928708504698
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/aligned/96",
+      "candidate_ns": 1.6234413956993055,
+      "baseline_ns": 1.6247502602596737,
+      "ratio": 0.9989126221446863,
+      "ci95": [
+        0.967697458782613,
+        1.0003787133539803
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/1024",
+      "candidate_ns": 7.896292127627703,
+      "baseline_ns": 7.391713236925289,
+      "ratio": 1.0682627794841648,
+      "ci95": [
+        1.0596399516634707,
+        1.0706516372948407
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/127",
+      "candidate_ns": 1.6239748926782869,
+      "baseline_ns": 1.623386177355929,
+      "ratio": 0.9995878599558055,
+      "ci95": [
+        0.9301503333163081,
+        1.0036647157459118
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          4
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/128",
+      "candidate_ns": 1.6196929526627852,
+      "baseline_ns": 1.6262121349887546,
+      "ratio": 0.9978347928010787,
+      "ci95": [
+        0.9266868579197381,
+        1.001195095070948
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          4
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/192",
+      "candidate_ns": 2.5678298918343057,
+      "baseline_ns": 2.5860529841474533,
+      "ratio": 0.9926134486036183,
+      "ci95": [
+        0.9899422612844043,
+        0.9960545158367001
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/255",
+      "candidate_ns": 2.5639087264504976,
+      "baseline_ns": 2.5853365375109396,
+      "ratio": 0.9902113703742836,
+      "ci95": [
+        0.9889766575379749,
+        0.996333922961496
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/256",
+      "candidate_ns": 2.56570822175304,
+      "baseline_ns": 2.586496027627755,
+      "ratio": 0.9919351698997344,
+      "ci95": [
+        0.9864307640771562,
+        0.9947088868391994
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/384",
+      "candidate_ns": 4.607698477494345,
+      "baseline_ns": 4.608374717475216,
+      "ratio": 0.999833152730514,
+      "ci95": [
+        0.9985067733648564,
+        1.0024330928524687
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/511",
+      "candidate_ns": 4.621492038217015,
+      "baseline_ns": 4.610965380928595,
+      "ratio": 1.001922388496692,
+      "ci95": [
+        1.0002769766020363,
+        1.0035705070219774
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/512",
+      "candidate_ns": 4.614714488686948,
+      "baseline_ns": 4.613321880645934,
+      "ratio": 1.000283113115459,
+      "ci95": [
+        0.9975214014425022,
+        1.003052470791152
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/768",
+      "candidate_ns": 6.59714761457259,
+      "baseline_ns": 6.016834509525753,
+      "ratio": 1.1025077002582928,
+      "ci95": [
+        1.0929170000097885,
+        1.1122224801670528
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/cross-lane/96",
+      "candidate_ns": 1.6243470803819164,
+      "baseline_ns": 1.6240836532163871,
+      "ratio": 0.9995349235453722,
+      "ci95": [
+        0.9737208697918402,
+        1.004942305472126
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/1024",
+      "candidate_ns": 7.550073338339702,
+      "baseline_ns": 7.407887283879608,
+      "ratio": 1.0203319068355974,
+      "ci95": [
+        1.0172713842430414,
+        1.0234016371957997
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/127",
+      "candidate_ns": 1.6225708899682587,
+      "baseline_ns": 1.6249378203774478,
+      "ratio": 0.9980069430162015,
+      "ci95": [
+        0.9731006812900568,
+        1.0000686001644779
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/128",
+      "candidate_ns": 1.6245663839501914,
+      "baseline_ns": 1.6251275701102552,
+      "ratio": 0.9969766525996264,
+      "ci95": [
+        0.9104305832200743,
+        1.002623267252725
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          4
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/192",
+      "candidate_ns": 2.5666023455705242,
+      "baseline_ns": 2.589795723720094,
+      "ratio": 0.9904811811855315,
+      "ci95": [
+        0.9889066585733643,
+        0.9920582107294044
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/255",
+      "candidate_ns": 2.4340390097537754,
+      "baseline_ns": 2.443411507239346,
+      "ratio": 0.9992535379493978,
+      "ci95": [
+        0.9950290350134176,
+        1.006652858429466
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/256",
+      "candidate_ns": 2.449267597384593,
+      "baseline_ns": 2.4560858496339426,
+      "ratio": 0.9991151730577928,
+      "ci95": [
+        0.9723116808800228,
+        1.0266575509314269
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          3
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/384",
+      "candidate_ns": 4.614308204949346,
+      "baseline_ns": 4.604899337811609,
+      "ratio": 1.0028562740124871,
+      "ci95": [
+        1.0001867270384475,
+        1.0063669339699217
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/511",
+      "candidate_ns": 4.5972685519369545,
+      "baseline_ns": 4.604077335195445,
+      "ratio": 0.9989868444464827,
+      "ci95": [
+        0.9936944548107286,
+        1.0043074212054728
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/512",
+      "candidate_ns": 4.607980235494663,
+      "baseline_ns": 4.621827280410931,
+      "ratio": 0.9982924673345416,
+      "ci95": [
+        0.9956188416303178,
+        1.0000738543021384
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/768",
+      "candidate_ns": 6.366080877559067,
+      "baseline_ns": 6.035369583447128,
+      "ratio": 1.0562510061874568,
+      "ci95": [
+        1.0481200624888185,
+        1.0592606511878775
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/misaligned/96",
+      "candidate_ns": 1.6264081137372046,
+      "baseline_ns": 1.6265012488045034,
+      "ratio": 1.0009252821563202,
+      "ci95": [
+        0.9557472241969851,
+        1.0035891527626215
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/1024",
+      "candidate_ns": 7.425922137958769,
+      "baseline_ns": 4.8932230069316445,
+      "ratio": 1.5211689565179674,
+      "ci95": [
+        1.4959982611562335,
+        1.5380249090943645
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/127",
+      "candidate_ns": 1.6267400121584095,
+      "baseline_ns": 1.6220742127758903,
+      "ratio": 1.0021647658374888,
+      "ci95": [
+        0.9987440058606541,
+        1.0055972421287647
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/128",
+      "candidate_ns": 1.6190145335759318,
+      "baseline_ns": 1.6231104937659002,
+      "ratio": 0.9987031933668835,
+      "ci95": [
+        0.9091677569498445,
+        1.0033847528299378
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          4
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/192",
+      "candidate_ns": 2.1601687196932247,
+      "baseline_ns": 2.1156195280507735,
+      "ratio": 1.023979507010066,
+      "ci95": [
+        1.0156648904330174,
+        1.0277393188031896
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/255",
+      "candidate_ns": 2.1721692106119783,
+      "baseline_ns": 2.1644387954055153,
+      "ratio": 1.003074723275903,
+      "ci95": [
+        1.00005742551011,
+        1.0152003436157733
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/256",
+      "candidate_ns": 2.170176936613024,
+      "baseline_ns": 2.12165863790747,
+      "ratio": 1.0229188351263236,
+      "ci95": [
+        1.0184249663453682,
+        1.0424248579632822
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/384",
+      "candidate_ns": 2.7042646474396035,
+      "baseline_ns": 2.440804275458398,
+      "ratio": 1.1095512515005075,
+      "ci95": [
+        1.1054824736626558,
+        1.1136350046577224
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/511",
+      "candidate_ns": 3.514199758589843,
+      "baseline_ns": 3.520726080173511,
+      "ratio": 0.9982690311154392,
+      "ci95": [
+        0.9932263942459656,
+        1.0021573336252956
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/512",
+      "candidate_ns": 2.7059020753802,
+      "baseline_ns": 2.445903242266054,
+      "ratio": 1.10754651982129,
+      "ci95": [
+        1.1025004470918462,
+        1.1126156880969151
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/768",
+      "candidate_ns": 6.5889863927552454,
+      "baseline_ns": 3.8117705758849016,
+      "ratio": 1.7378124208117254,
+      "ci95": [
+        1.7248675922476875,
+        1.7624821648187101
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "copy/page-offset/96",
+      "candidate_ns": 1.6189107197079478,
+      "baseline_ns": 1.6283512252672514,
+      "ratio": 0.9962487200875695,
+      "ci95": [
+        0.9283270721558738,
+        1.000782895713182
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          4
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/1024",
+      "candidate_ns": 5.475488450750702,
+      "baseline_ns": 4.618614201649196,
+      "ratio": 1.1908232985029341,
+      "ci95": [
+        1.183936953618762,
+        1.200153946693195
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/127",
+      "candidate_ns": 2.169314768559321,
+      "baseline_ns": 2.1700598774268114,
+      "ratio": 0.9994365826170516,
+      "ci95": [
+        0.9966796170676206,
+        1.0020074233565277
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/128",
+      "candidate_ns": 2.1676175125914074,
+      "baseline_ns": 2.1682393015764596,
+      "ratio": 1.0007935050211825,
+      "ci95": [
+        0.9997132286161402,
+        1.00283192913393
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/192",
+      "candidate_ns": 2.3473087122897214,
+      "baseline_ns": 2.397092253909416,
+      "ratio": 0.9804828407010624,
+      "ci95": [
+        0.9762922869613259,
+        0.9926370720779726
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/255",
+      "candidate_ns": 2.3691319765259484,
+      "baseline_ns": 2.3728040087982407,
+      "ratio": 0.9880730314454202,
+      "ci95": [
+        0.9752974225595628,
+        1.0010159904940374
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/256",
+      "candidate_ns": 2.344385043103097,
+      "baseline_ns": 2.3926403363377333,
+      "ratio": 0.9797980703101841,
+      "ci95": [
+        0.9459046027718053,
+        1.0088612647404187
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/384",
+      "candidate_ns": 2.5867168437264834,
+      "baseline_ns": 2.5093791798011003,
+      "ratio": 1.0337998411446592,
+      "ci95": [
+        0.9859038107191307,
+        1.0390904044962526
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/511",
+      "candidate_ns": 3.52672776325679,
+      "baseline_ns": 3.5213406115276404,
+      "ratio": 1.00082277121417,
+      "ci95": [
+        0.9999662779452559,
+        1.0066992164092523
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/512",
+      "candidate_ns": 2.5677754631078207,
+      "baseline_ns": 2.4986719356747944,
+      "ratio": 1.0245572392887492,
+      "ci95": [
+        0.9777943153101345,
+        1.0332765207585535
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/768",
+      "candidate_ns": 4.279408164273706,
+      "baseline_ns": 3.5233700514597484,
+      "ratio": 1.218741932838647,
+      "ci95": [
+        1.2091892431721705,
+        1.2348980972465098
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/aligned/96",
+      "candidate_ns": 2.1700328808898215,
+      "baseline_ns": 2.1671075930911754,
+      "ratio": 1.0007374101557673,
+      "ci95": [
+        1.00005477778065,
+        1.003109149321516
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/1024",
+      "candidate_ns": 7.858914126133726,
+      "baseline_ns": 7.835317937955936,
+      "ratio": 1.000307885208043,
+      "ci95": [
+        0.9972854253208008,
+        1.0031993140370732
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/127",
+      "candidate_ns": 2.167750580907252,
+      "baseline_ns": 2.1697344560194716,
+      "ratio": 0.999923467338537,
+      "ci95": [
+        0.9985720835713439,
+        1.0012766799552606
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/128",
+      "candidate_ns": 2.1691177906973618,
+      "baseline_ns": 2.162511472143943,
+      "ratio": 1.0027960801672586,
+      "ci95": [
+        0.9953569571257309,
+        1.0057094271910556
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/192",
+      "candidate_ns": 2.446054267620303,
+      "baseline_ns": 2.445370011263134,
+      "ratio": 0.9996543851257733,
+      "ci95": [
+        0.9982281013168008,
+        1.0035251809274826
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/255",
+      "candidate_ns": 2.4378589784623226,
+      "baseline_ns": 2.4390776301360004,
+      "ratio": 0.9997052628073775,
+      "ci95": [
+        0.9990461411684535,
+        1.0013570744606246
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/256",
+      "candidate_ns": 2.438906939004986,
+      "baseline_ns": 2.4398499995278504,
+      "ratio": 0.9999298931107935,
+      "ci95": [
+        0.9986292838696684,
+        1.0025223810818533
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/384",
+      "candidate_ns": 4.6084136449280155,
+      "baseline_ns": 4.610141181210976,
+      "ratio": 0.9995370664682303,
+      "ci95": [
+        0.9969388048200972,
+        1.0013569914449103
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/511",
+      "candidate_ns": 4.60329893254319,
+      "baseline_ns": 4.605674946415659,
+      "ratio": 0.9996598805968508,
+      "ci95": [
+        0.9974899614291274,
+        1.003193516029861
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/512",
+      "candidate_ns": 4.619051649110288,
+      "baseline_ns": 4.614137867055312,
+      "ratio": 1.0000204218160256,
+      "ci95": [
+        0.9973537135197682,
+        1.0034320467116347
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/768",
+      "candidate_ns": 6.777652128033356,
+      "baseline_ns": 6.772451479330787,
+      "ratio": 1.0000568240500818,
+      "ci95": [
+        0.9973159995431489,
+        1.0038400896719772
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c7i",
+      "case": "set/misaligned/96",
+      "candidate_ns": 2.173639974380179,
+      "baseline_ns": 2.1642335522155918,
+      "ratio": 1.002423004269227,
+      "ci95": [
+        0.9984437151333714,
+        1.0054615094089077
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/1024",
+      "candidate_ns": 5.971382671054677,
+      "baseline_ns": 4.781801186219779,
+      "ratio": 1.2501092549823845,
+      "ci95": [
+        1.2460645450309387,
+        1.2621883167268582
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/127",
+      "candidate_ns": 1.5516878200209434,
+      "baseline_ns": 1.1253409058646704,
+      "ratio": 1.3773143441408904,
+      "ci95": [
+        1.372680736270623,
+        1.3802465185631814
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/128",
+      "candidate_ns": 1.5431873422296878,
+      "baseline_ns": 1.0349559994110888,
+      "ratio": 1.4898885052822413,
+      "ci95": [
+        1.4858630216095334,
+        1.4950120742414061
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/192",
+      "candidate_ns": 1.821876266813012,
+      "baseline_ns": 1.5876782676379868,
+      "ratio": 1.1511097696880215,
+      "ci95": [
+        1.1447328221233526,
+        1.164159402872412
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/255",
+      "candidate_ns": 1.848899700879064,
+      "baseline_ns": 1.863060715404913,
+      "ratio": 0.991763173907784,
+      "ci95": [
+        0.9883481301930047,
+        0.9942060057771439
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/256",
+      "candidate_ns": 1.8206094773954151,
+      "baseline_ns": 1.5837642775479215,
+      "ratio": 1.1495457393534545,
+      "ci95": [
+        1.1453755314881169,
+        1.1528366592272807
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/384",
+      "candidate_ns": 2.6215369071695163,
+      "baseline_ns": 2.390922685454112,
+      "ratio": 1.0952122280152807,
+      "ci95": [
+        1.042798705810982,
+        1.1055578066260008
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          0
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/511",
+      "candidate_ns": 3.358388498499195,
+      "baseline_ns": 3.35845584644652,
+      "ratio": 0.999904365795847,
+      "ci95": [
+        0.9990611027238466,
+        1.0005218060619112
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/512",
+      "candidate_ns": 2.6219027769007246,
+      "baseline_ns": 2.390578683006271,
+      "ratio": 1.0966185031734164,
+      "ci95": [
+        1.0890110845830236,
+        1.107164411309069
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/768",
+      "candidate_ns": 4.94737430372558,
+      "baseline_ns": 3.957634858415152,
+      "ratio": 1.2438902928663331,
+      "ci95": [
+        1.2310786496099453,
+        1.2552872629573313
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/aligned/96",
+      "candidate_ns": 1.5528846279361783,
+      "baseline_ns": 1.1250390703060675,
+      "ratio": 1.3796552491895224,
+      "ci95": [
+        1.373969044687677,
+        1.382275077044137
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/1024",
+      "candidate_ns": 7.64469127242325,
+      "baseline_ns": 7.097301517985966,
+      "ratio": 1.0769379989741976,
+      "ci95": [
+        1.075543532824472,
+        1.0779166708328074
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/127",
+      "candidate_ns": 1.5529019284356165,
+      "baseline_ns": 1.3283618472599519,
+      "ratio": 1.167695615771377,
+      "ci95": [
+        1.1625235478264262,
+        1.1691761051309633
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/128",
+      "candidate_ns": 1.5531831970757168,
+      "baseline_ns": 1.3288848850737842,
+      "ratio": 1.1677615553888279,
+      "ci95": [
+        1.1578854820171842,
+        1.171719842812603
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/192",
+      "candidate_ns": 2.326081011969254,
+      "baseline_ns": 2.326061049485623,
+      "ratio": 1.0001511888478232,
+      "ci95": [
+        0.9994982447423233,
+        1.0008570205568508
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/255",
+      "candidate_ns": 2.3259224230360545,
+      "baseline_ns": 2.3257344482825717,
+      "ratio": 0.9998617218529768,
+      "ci95": [
+        0.9988264490304315,
+        1.00054465034587
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/256",
+      "candidate_ns": 2.32579546554805,
+      "baseline_ns": 2.3256133350397987,
+      "ratio": 1.0001486304056162,
+      "ci95": [
+        0.999881897973136,
+        1.0003946132303418
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/384",
+      "candidate_ns": 4.393533264417449,
+      "baseline_ns": 4.391616832500307,
+      "ratio": 1.00031951979761,
+      "ci95": [
+        0.9999941666948741,
+        1.0006051067550887
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/511",
+      "candidate_ns": 4.393639966987483,
+      "baseline_ns": 4.391473089661401,
+      "ratio": 1.0006391065652973,
+      "ci95": [
+        1.0000923415746843,
+        1.0012067692078968
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/512",
+      "candidate_ns": 4.393991495986546,
+      "baseline_ns": 4.391489794631066,
+      "ratio": 1.000382786738395,
+      "ci95": [
+        0.9999547507314694,
+        1.0008110059684345
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/768",
+      "candidate_ns": 6.427490547741042,
+      "baseline_ns": 5.7731224328308315,
+      "ratio": 1.1140257628060295,
+      "ci95": [
+        1.1100384606020322,
+        1.117666348760636
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/cross-lane/96",
+      "candidate_ns": 1.5495192137454148,
+      "baseline_ns": 1.3282476586803016,
+      "ratio": 1.1654560451798375,
+      "ci95": [
+        1.1595086168050532,
+        1.1703918135712446
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/1024",
+      "candidate_ns": 7.535341414013988,
+      "baseline_ns": 7.078363038178417,
+      "ratio": 1.064743568803097,
+      "ci95": [
+        1.064215654942705,
+        1.0654863913497983
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/127",
+      "candidate_ns": 1.5464484287172007,
+      "baseline_ns": 1.2924578581178716,
+      "ratio": 1.1962974844994236,
+      "ci95": [
+        1.1903379680848616,
+        1.2001306859872471
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/128",
+      "candidate_ns": 1.5487587874491648,
+      "baseline_ns": 1.3283915979813203,
+      "ratio": 1.1656399994442463,
+      "ci95": [
+        1.162444442817288,
+        1.168243499153583
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/192",
+      "candidate_ns": 2.326053619858178,
+      "baseline_ns": 2.3271709524087076,
+      "ratio": 0.9992137296219122,
+      "ci95": [
+        0.9981151328360444,
+        1.0003135356018482
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/255",
+      "candidate_ns": 2.325765400148903,
+      "baseline_ns": 2.3257909975180264,
+      "ratio": 1.0000656878733059,
+      "ci95": [
+        0.9989010784498605,
+        1.000531245177502
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/256",
+      "candidate_ns": 2.3262620665538485,
+      "baseline_ns": 2.325915381985318,
+      "ratio": 0.999833758717109,
+      "ci95": [
+        0.9991439759848694,
+        1.0010874628322
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/384",
+      "candidate_ns": 4.392471938246251,
+      "baseline_ns": 4.3917466839622055,
+      "ratio": 1.000193605097899,
+      "ci95": [
+        0.9999124941290729,
+        1.000877996235682
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/511",
+      "candidate_ns": 4.391127824732217,
+      "baseline_ns": 4.393405327921354,
+      "ratio": 0.9997245710624582,
+      "ci95": [
+        0.999354597685146,
+        1.0000946814084701
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/512",
+      "candidate_ns": 4.392550525932224,
+      "baseline_ns": 4.391322280250828,
+      "ratio": 1.0003799596037093,
+      "ci95": [
+        1.000183285541338,
+        1.0007529226512613
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/768",
+      "candidate_ns": 6.2017022167963365,
+      "baseline_ns": 5.830867467073487,
+      "ratio": 1.0632031979600367,
+      "ci95": [
+        1.0622931713441428,
+        1.0639731001820871
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/misaligned/96",
+      "candidate_ns": 1.545468990939756,
+      "baseline_ns": 1.3282275802652905,
+      "ratio": 1.1652736148435499,
+      "ci95": [
+        1.162083607752598,
+        1.171485380319969
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/1024",
+      "candidate_ns": 6.8003152687254005,
+      "baseline_ns": 4.782805453006315,
+      "ratio": 1.4222168831334794,
+      "ci95": [
+        1.4156387878131214,
+        1.436152868253783
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/127",
+      "candidate_ns": 1.551446567366023,
+      "baseline_ns": 1.1249936850585958,
+      "ratio": 1.3775318400535383,
+      "ci95": [
+        1.369008194611041,
+        1.3842355492012148
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/128",
+      "candidate_ns": 1.5427007801144026,
+      "baseline_ns": 1.035697238013587,
+      "ratio": 1.488850060364285,
+      "ci95": [
+        1.4797473144629718,
+        1.4954226497743568
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/192",
+      "candidate_ns": 1.8210230873385715,
+      "baseline_ns": 1.5839165297861442,
+      "ratio": 1.1535426237392183,
+      "ci95": [
+        1.1429422261742685,
+        1.1840992050451276
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/255",
+      "candidate_ns": 1.834824268535554,
+      "baseline_ns": 1.8605648785404183,
+      "ratio": 0.9863901742242991,
+      "ci95": [
+        0.9842912156683888,
+        0.9897169841865449
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/256",
+      "candidate_ns": 1.8215728993227494,
+      "baseline_ns": 1.5870200147016966,
+      "ratio": 1.148037311210976,
+      "ci95": [
+        1.1439356267873055,
+        1.1529275931062288
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/384",
+      "candidate_ns": 2.5678991592225655,
+      "baseline_ns": 2.471017537456081,
+      "ratio": 1.039771350009779,
+      "ci95": [
+        1.0350860564205,
+        1.0451539497670141
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/511",
+      "candidate_ns": 3.3579778399887346,
+      "baseline_ns": 3.3579529463577327,
+      "ratio": 1.0000096108670706,
+      "ci95": [
+        0.9998423464959123,
+        1.000259325570519
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/512",
+      "candidate_ns": 2.5663135951597384,
+      "baseline_ns": 2.4664013442796957,
+      "ratio": 1.037935001317376,
+      "ci95": [
+        1.0298566657885886,
+        1.0421933009898368
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/768",
+      "candidate_ns": 5.235171106858941,
+      "baseline_ns": 3.935224460156336,
+      "ratio": 1.3296233444493295,
+      "ci95": [
+        1.3017229926313767,
+        1.3544061364829747
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "copy/page-offset/96",
+      "candidate_ns": 1.5475830279502472,
+      "baseline_ns": 1.1246256055645114,
+      "ratio": 1.375982262514658,
+      "ci95": [
+        1.3736672593902943,
+        1.3802470689968844
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/1024",
+      "candidate_ns": 4.782670393896868,
+      "baseline_ns": 4.391564064863392,
+      "ratio": 1.0881677507410448,
+      "ci95": [
+        1.0621695534166604,
+        1.0921989282827846
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/127",
+      "candidate_ns": 2.0488564535045186,
+      "baseline_ns": 1.1597594413316648,
+      "ratio": 1.7473914944690825,
+      "ci95": [
+        1.7016876637287228,
+        1.770747717398416
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/128",
+      "candidate_ns": 2.0565650443844055,
+      "baseline_ns": 1.147692803225434,
+      "ratio": 1.7928163504280712,
+      "ci95": [
+        1.7025241600625605,
+        1.8927381269305847
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/192",
+      "candidate_ns": 2.171626783524866,
+      "baseline_ns": 1.7191640507018433,
+      "ratio": 1.2662036053528427,
+      "ci95": [
+        1.2258463474828871,
+        1.2917061310120432
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/255",
+      "candidate_ns": 2.1660303651572814,
+      "baseline_ns": 1.8086056423307997,
+      "ratio": 1.2005998983774182,
+      "ci95": [
+        1.187364285538337,
+        1.2139830492967325
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/256",
+      "candidate_ns": 2.1834074013708484,
+      "baseline_ns": 1.7358973604931576,
+      "ratio": 1.2550828172278092,
+      "ci95": [
+        1.236252245944662,
+        1.2807966278420921
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/384",
+      "candidate_ns": 2.3735591380738104,
+      "baseline_ns": 2.3254107245717526,
+      "ratio": 1.0223009765342757,
+      "ci95": [
+        1.0132858205157966,
+        1.0741959101172955
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [
+          0
+        ],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/511",
+      "candidate_ns": 3.358846288379821,
+      "baseline_ns": 3.3586401557843875,
+      "ratio": 1.0000701405080672,
+      "ci95": [
+        0.9997594907920612,
+        1.0004479659640058
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/512",
+      "candidate_ns": 2.488608767671204,
+      "baseline_ns": 2.326341037747749,
+      "ratio": 1.0646370759527652,
+      "ci95": [
+        1.0491666554203853,
+        1.0803356145922276
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/768",
+      "candidate_ns": 4.008228294851651,
+      "baseline_ns": 3.358224651238938,
+      "ratio": 1.1936410496175387,
+      "ci95": [
+        1.169994714876042,
+        1.2023118848891707
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/aligned/96",
+      "candidate_ns": 2.0530315507957857,
+      "baseline_ns": 1.1915798563325701,
+      "ratio": 1.7277788160110672,
+      "ci95": [
+        1.7146242759250518,
+        1.8015923453932337
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/1024",
+      "candidate_ns": 7.491788796387954,
+      "baseline_ns": 7.498337072396257,
+      "ratio": 0.9992066086158983,
+      "ci95": [
+        0.9984569117120369,
+        0.9995766434128469
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/127",
+      "candidate_ns": 2.0516322759937484,
+      "baseline_ns": 1.2920591527351202,
+      "ratio": 1.5893938381814845,
+      "ci95": [
+        1.5840182091146793,
+        1.5992650136388322
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/128",
+      "candidate_ns": 2.0589957219562147,
+      "baseline_ns": 1.2923264539684345,
+      "ratio": 1.589234715144207,
+      "ci95": [
+        1.5810957671822155,
+        1.5974155596663582
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/192",
+      "candidate_ns": 2.32577662815984,
+      "baseline_ns": 2.3253896548981796,
+      "ratio": 1.0000070609297862,
+      "ci95": [
+        0.9996211763254524,
+        1.0004058088375254
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/255",
+      "candidate_ns": 2.3261169162895747,
+      "baseline_ns": 2.3255027600202274,
+      "ratio": 1.000184448763274,
+      "ci95": [
+        0.999537354978161,
+        1.0004579060013783
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/256",
+      "candidate_ns": 2.325833464776145,
+      "baseline_ns": 2.32564216808648,
+      "ratio": 1.0000825425299906,
+      "ci95": [
+        0.9995581894386562,
+        1.000666730847435
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/384",
+      "candidate_ns": 4.394833471869941,
+      "baseline_ns": 4.3954593825246056,
+      "ratio": 0.9998074404055023,
+      "ci95": [
+        0.9987811215830665,
+        1.0002335193605199
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/511",
+      "candidate_ns": 4.393751389297346,
+      "baseline_ns": 4.391295091558272,
+      "ratio": 1.0005076267694137,
+      "ci95": [
+        1.0002393082511618,
+        1.0007640561220486
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/512",
+      "candidate_ns": 4.3947952641904315,
+      "baseline_ns": 4.393030794185918,
+      "ratio": 1.0002133530296382,
+      "ci95": [
+        0.9997046858295532,
+        1.001054142631414
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/768",
+      "candidate_ns": 6.458232575776581,
+      "baseline_ns": 6.458903030534829,
+      "ratio": 0.9996013130492281,
+      "ci95": [
+        0.9988224109455622,
+        1.0002434119410586
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    },
+    {
+      "target": "c8i",
+      "case": "set/misaligned/96",
+      "candidate_ns": 2.0525340629962,
+      "baseline_ns": 1.292282071779034,
+      "ratio": 1.5879518845332168,
+      "ci95": [
+        1.5827809520813714,
+        1.5985822992515972
+      ],
+      "ci_level": 0.9375,
+      "ci_method": "signed-rank",
+      "rounds": 5,
+      "outlier_rounds": {
+        "candidate": [],
+        "baseline": []
+      }
+    }
+  ]
+}

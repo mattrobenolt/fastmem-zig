@@ -1,0 +1,733 @@
+[
+  {
+    "label": "install-auto-c7i",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c7i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c7i.log"
+  },
+  {
+    "label": "install-auto-c8i",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c8i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c8i.log"
+  },
+  {
+    "label": "install-auto-c7a",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=x86_64-linux-gnu -Dcpu=znver4 -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c7a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c7a.log"
+  },
+  {
+    "label": "install-auto-c8a",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=x86_64-linux-gnu -Dcpu=znver5 -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c8a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c8a.log"
+  },
+  {
+    "label": "install-auto-c7g",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v1 -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c7g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c7g.log"
+  },
+  {
+    "label": "install-auto-c8g",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v2 -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c8g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c8g.log"
+  },
+  {
+    "label": "install-auto-c9g",
+    "command": "zig build install -j4 -Dx86-variant=auto -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v3 -Doptimize=ReleaseFast -p /tmp/x86d-install-auto-c9g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-auto-c9g.log"
+  },
+  {
+    "label": "install-medium_first-c7i",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c7i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c7i.log"
+  },
+  {
+    "label": "install-medium_first-c8i",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c8i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c8i.log"
+  },
+  {
+    "label": "install-medium_first-c7a",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=znver4 -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c7a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c7a.log"
+  },
+  {
+    "label": "install-medium_first-c8a",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=znver5 -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c8a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c8a.log"
+  },
+  {
+    "label": "install-medium_first-c7g",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v1 -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c7g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c7g.log"
+  },
+  {
+    "label": "install-medium_first-c8g",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v2 -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c8g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c8g.log"
+  },
+  {
+    "label": "install-medium_first-c9g",
+    "command": "zig build install -j4 -Dx86-variant=medium_first -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v3 -Doptimize=ReleaseFast -p /tmp/x86d-install-medium_first-c9g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-medium_first-c9g.log"
+  },
+  {
+    "label": "install-ymm_medium-c7i",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c7i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c7i.log"
+  },
+  {
+    "label": "install-ymm_medium-c8i",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c8i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c8i.log"
+  },
+  {
+    "label": "install-ymm_medium-c7a",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=znver4 -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c7a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c7a.log"
+  },
+  {
+    "label": "install-ymm_medium-c8a",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=znver5 -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c8a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c8a.log"
+  },
+  {
+    "label": "install-ymm_medium-c7g",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v1 -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c7g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c7g.log"
+  },
+  {
+    "label": "install-ymm_medium-c8g",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v2 -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c8g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c8g.log"
+  },
+  {
+    "label": "install-ymm_medium-c9g",
+    "command": "zig build install -j4 -Dx86-variant=ymm_medium -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v3 -Doptimize=ReleaseFast -p /tmp/x86d-install-ymm_medium-c9g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-ymm_medium-c9g.log"
+  },
+  {
+    "label": "install-straight_1k-c7i",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c7i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c7i.log"
+  },
+  {
+    "label": "install-straight_1k-c8i",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c8i --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c8i.log"
+  },
+  {
+    "label": "install-straight_1k-c7a",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=znver4 -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c7a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c7a.log"
+  },
+  {
+    "label": "install-straight_1k-c7g",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v1 -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c7g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c7g.log"
+  },
+  {
+    "label": "install-straight_1k-c8a",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=znver5 -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c8a --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c8a.log"
+  },
+  {
+    "label": "install-straight_1k-c9g",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v3 -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c9g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c9g.log"
+  },
+  {
+    "label": "install-straight_1k-c8g",
+    "command": "zig build install -j4 -Dx86-variant=straight_1k -Dtarget=aarch64-linux-gnu -Dcpu=neoverse_v2 -Doptimize=ReleaseFast -p /tmp/x86d-install-straight_1k-c8g --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-install-straight_1k-c8g.log"
+  },
+  {
+    "label": "asm-auto",
+    "command": "zig build asm-all -j4 -Dx86-variant=auto -p /tmp/x86d-asm-auto --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-asm-auto.log"
+  },
+  {
+    "label": "asm-medium_first",
+    "command": "zig build asm-all -j4 -Dx86-variant=medium_first -p /tmp/x86d-asm-medium_first --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-asm-medium_first.log"
+  },
+  {
+    "label": "asm-ymm_medium",
+    "command": "zig build asm-all -j4 -Dx86-variant=ymm_medium -p /tmp/x86d-asm-ymm_medium --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-asm-ymm_medium.log"
+  },
+  {
+    "label": "asm-straight_1k",
+    "command": "zig build asm-all -j4 -Dx86-variant=straight_1k -p /tmp/x86d-asm-straight_1k --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-asm-straight_1k.log"
+  },
+  {
+    "label": "asm-control",
+    "command": "zig build asm-all -j4 -p /tmp/x86d-asm-control --summary all",
+    "cwd": "/tmp/x86d-control",
+    "exit_code": 0,
+    "log": "/tmp/x86d-asm-control.log"
+  },
+  {
+    "label": "assemble-control-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-control/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-control-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "assemble-auto-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-auto/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-auto-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-auto-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "arm-asm-equal-auto-aarch64-linux-gnu",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-control/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-control-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-musl.log"
+  },
+  {
+    "label": "assemble-auto-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-auto/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-auto-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-auto-aarch64-linux-musl.log"
+  },
+  {
+    "label": "arm-asm-equal-auto-aarch64-linux-musl",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-control/asm/aarch64-macos-none.s -o /tmp/x86d-asm-control-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-macos-none.log"
+  },
+  {
+    "label": "assemble-auto-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-auto/asm/aarch64-macos-none.s -o /tmp/x86d-asm-auto-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-auto-aarch64-macos-none.log"
+  },
+  {
+    "label": "arm-asm-equal-auto-aarch64-macos-none",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-control/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-control-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "assemble-medium_first-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-medium_first/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-medium_first-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-medium_first-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "arm-asm-equal-medium_first-aarch64-linux-gnu",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-control/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-control-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-musl.log"
+  },
+  {
+    "label": "assemble-medium_first-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-medium_first/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-medium_first-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-medium_first-aarch64-linux-musl.log"
+  },
+  {
+    "label": "arm-asm-equal-medium_first-aarch64-linux-musl",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-control/asm/aarch64-macos-none.s -o /tmp/x86d-asm-control-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-macos-none.log"
+  },
+  {
+    "label": "assemble-medium_first-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-medium_first/asm/aarch64-macos-none.s -o /tmp/x86d-asm-medium_first-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-medium_first-aarch64-macos-none.log"
+  },
+  {
+    "label": "arm-asm-equal-medium_first-aarch64-macos-none",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-control/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-control-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "assemble-ymm_medium-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-ymm_medium/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-ymm_medium-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-ymm_medium-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "arm-asm-equal-ymm_medium-aarch64-linux-gnu",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-control/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-control-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-musl.log"
+  },
+  {
+    "label": "assemble-ymm_medium-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-ymm_medium/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-ymm_medium-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-ymm_medium-aarch64-linux-musl.log"
+  },
+  {
+    "label": "arm-asm-equal-ymm_medium-aarch64-linux-musl",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-control/asm/aarch64-macos-none.s -o /tmp/x86d-asm-control-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-macos-none.log"
+  },
+  {
+    "label": "assemble-ymm_medium-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-ymm_medium/asm/aarch64-macos-none.s -o /tmp/x86d-asm-ymm_medium-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-ymm_medium-aarch64-macos-none.log"
+  },
+  {
+    "label": "arm-asm-equal-ymm_medium-aarch64-macos-none",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-control/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-control-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "assemble-straight_1k-aarch64-linux-gnu",
+    "command": "zig cc -target aarch64-linux-gnu -c /tmp/x86d-asm-straight_1k/asm/aarch64-linux-gnu.s -o /tmp/x86d-asm-straight_1k-aarch64-linux-gnu.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-straight_1k-aarch64-linux-gnu.log"
+  },
+  {
+    "label": "arm-asm-equal-straight_1k-aarch64-linux-gnu",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-control/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-control-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-linux-musl.log"
+  },
+  {
+    "label": "assemble-straight_1k-aarch64-linux-musl",
+    "command": "zig cc -target aarch64-linux-musl -c /tmp/x86d-asm-straight_1k/asm/aarch64-linux-musl.s -o /tmp/x86d-asm-straight_1k-aarch64-linux-musl.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-straight_1k-aarch64-linux-musl.log"
+  },
+  {
+    "label": "arm-asm-equal-straight_1k-aarch64-linux-musl",
+    "exit_code": 0
+  },
+  {
+    "label": "assemble-control-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-control/asm/aarch64-macos-none.s -o /tmp/x86d-asm-control-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-control-aarch64-macos-none.log"
+  },
+  {
+    "label": "assemble-straight_1k-aarch64-macos-none",
+    "command": "zig cc -target aarch64-macos-none -c /tmp/x86d-asm-straight_1k/asm/aarch64-macos-none.s -o /tmp/x86d-asm-straight_1k-aarch64-macos-none.o",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-assemble-straight_1k-aarch64-macos-none.log"
+  },
+  {
+    "label": "arm-asm-equal-straight_1k-aarch64-macos-none",
+    "exit_code": 0
+  },
+  {
+    "label": "x86-text-equal-auto-sapphirerapids",
+    "exit_code": 0,
+    "sha256": "bb2a6533460c73d4171c3771338c4d093d042d3128ee2f310ff43fa0185c7d99"
+  },
+  {
+    "label": "x86-text-equal-auto-graniterapids",
+    "exit_code": 0,
+    "sha256": "d4f16fc689a2cb0385906305cbfa579ce2db17b556c8852099e85c10713325a3"
+  },
+  {
+    "label": "x86-text-equal-auto-znver4",
+    "exit_code": 0,
+    "sha256": "2e6e50252cd4655212d6cfd54e09001b72afee85d2359657103b3418d3313af9"
+  },
+  {
+    "label": "x86-text-equal-auto-znver5",
+    "exit_code": 0,
+    "sha256": "5e0d24120d08e8713419889ea2bd54e5d587b0e9ae112ecd3556b93d0adc65c3"
+  },
+  {
+    "label": "x86-text-equal-auto-x86_64_v3",
+    "exit_code": 0,
+    "sha256": "809c8e20fc4217df7a42dfda776cd00ad9c25c46c4a7bcc5e87a06225cc1ea13"
+  },
+  {
+    "label": "x86-text-equal-medium_first-sapphirerapids",
+    "exit_code": 0,
+    "sha256": "bb2a6533460c73d4171c3771338c4d093d042d3128ee2f310ff43fa0185c7d99"
+  },
+  {
+    "label": "x86-text-equal-medium_first-znver4",
+    "exit_code": 0,
+    "sha256": "2e6e50252cd4655212d6cfd54e09001b72afee85d2359657103b3418d3313af9"
+  },
+  {
+    "label": "x86-text-equal-medium_first-znver5",
+    "exit_code": 0,
+    "sha256": "5e0d24120d08e8713419889ea2bd54e5d587b0e9ae112ecd3556b93d0adc65c3"
+  },
+  {
+    "label": "x86-text-equal-medium_first-x86_64_v3",
+    "exit_code": 0,
+    "sha256": "809c8e20fc4217df7a42dfda776cd00ad9c25c46c4a7bcc5e87a06225cc1ea13"
+  },
+  {
+    "label": "x86-text-equal-ymm_medium-sapphirerapids",
+    "exit_code": 0,
+    "sha256": "bb2a6533460c73d4171c3771338c4d093d042d3128ee2f310ff43fa0185c7d99"
+  },
+  {
+    "label": "x86-text-equal-ymm_medium-znver4",
+    "exit_code": 0,
+    "sha256": "2e6e50252cd4655212d6cfd54e09001b72afee85d2359657103b3418d3313af9"
+  },
+  {
+    "label": "x86-text-equal-ymm_medium-znver5",
+    "exit_code": 0,
+    "sha256": "5e0d24120d08e8713419889ea2bd54e5d587b0e9ae112ecd3556b93d0adc65c3"
+  },
+  {
+    "label": "x86-text-equal-ymm_medium-x86_64_v3",
+    "exit_code": 0,
+    "sha256": "809c8e20fc4217df7a42dfda776cd00ad9c25c46c4a7bcc5e87a06225cc1ea13"
+  },
+  {
+    "label": "x86-text-equal-straight_1k-znver4",
+    "exit_code": 0,
+    "sha256": "2e6e50252cd4655212d6cfd54e09001b72afee85d2359657103b3418d3313af9"
+  },
+  {
+    "label": "x86-text-equal-straight_1k-znver5",
+    "exit_code": 0,
+    "sha256": "5e0d24120d08e8713419889ea2bd54e5d587b0e9ae112ecd3556b93d0adc65c3"
+  },
+  {
+    "label": "x86-text-equal-straight_1k-x86_64_v3",
+    "exit_code": 0,
+    "sha256": "809c8e20fc4217df7a42dfda776cd00ad9c25c46c4a7bcc5e87a06225cc1ea13"
+  },
+  {
+    "label": "guard-build-medium_first-graniterapids-ReleaseSafe",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseSafe -p /tmp/x86d-tests-medium_first-graniterapids-ReleaseSafe --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-medium_first-graniterapids-ReleaseSafe.log"
+  },
+  {
+    "label": "guard-build-medium_first-graniterapids-Debug",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=medium_first -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=Debug -p /tmp/x86d-tests-medium_first-graniterapids-Debug --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-medium_first-graniterapids-Debug.log"
+  },
+  {
+    "label": "guard-build-ymm_medium-graniterapids-ReleaseSafe",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseSafe -p /tmp/x86d-tests-ymm_medium-graniterapids-ReleaseSafe --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-ymm_medium-graniterapids-ReleaseSafe.log"
+  },
+  {
+    "label": "guard-build-ymm_medium-graniterapids-Debug",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=ymm_medium -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=Debug -p /tmp/x86d-tests-ymm_medium-graniterapids-Debug --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-ymm_medium-graniterapids-Debug.log"
+  },
+  {
+    "label": "guard-build-straight_1k-graniterapids-ReleaseSafe",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=ReleaseSafe -p /tmp/x86d-tests-straight_1k-graniterapids-ReleaseSafe --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-straight_1k-graniterapids-ReleaseSafe.log"
+  },
+  {
+    "label": "guard-build-straight_1k-graniterapids-Debug",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=graniterapids -Doptimize=Debug -p /tmp/x86d-tests-straight_1k-graniterapids-Debug --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-straight_1k-graniterapids-Debug.log"
+  },
+  {
+    "label": "guard-build-straight_1k-sapphirerapids-ReleaseSafe",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=ReleaseSafe -p /tmp/x86d-tests-straight_1k-sapphirerapids-ReleaseSafe --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-straight_1k-sapphirerapids-ReleaseSafe.log"
+  },
+  {
+    "label": "guard-build-straight_1k-sapphirerapids-Debug",
+    "command": "zig build test-bin test-unit-bin -j4 -Dx86-variant=straight_1k -Dtarget=x86_64-linux-gnu -Dcpu=sapphirerapids -Doptimize=Debug -p /tmp/x86d-tests-straight_1k-sapphirerapids-Debug --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-guard-build-straight_1k-sapphirerapids-Debug.log"
+  },
+  {
+    "label": "v3-unit-build",
+    "command": "zig build test-unit-bin -Dtarget=x86_64-linux-musl -Dcpu=x86_64_v3 -Doptimize=ReleaseFast -p /tmp/x86d-v3 --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-v3-unit-build.log"
+  },
+  {
+    "label": "v3-unit-run",
+    "command": "qemu-x86_64 /tmp/x86d-v3/bin/fastmem-unit-tests",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-v3-unit-run.log"
+  },
+  {
+    "label": "test-final",
+    "command": "zig build test -j6 --summary all",
+    "cwd": "/Users/matt/code/worktrees/fastmem-zig/pi-worktree-77cf0697-052e-4ee1-926a-1bcc20b660ca-s0-0",
+    "exit_code": 0,
+    "log": "/tmp/x86d-test-final.log"
+  },
+  {
+    "label": "codegen-auto",
+    "command": "zig build codegen-x86 -Dx86-variant=auto -p /tmp/x86d-auto --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (sapphirerapids/compact): 12 passed",
+      "x86 gate mutation tests (graniterapids/compact): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-entry",
+    "command": "zig build codegen-x86 -Dx86-variant=entry -p /tmp/x86d-entry --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (graniterapids/entry): 12 passed",
+      "x86 gate mutation tests (sapphirerapids/entry): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-high_regs",
+    "command": "zig build codegen-x86 -Dx86-variant=high_regs -p /tmp/x86d-high_regs --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (graniterapids/high_regs): 12 passed",
+      "x86 gate mutation tests (sapphirerapids/high_regs): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-tiered",
+    "command": "zig build codegen-x86 -Dx86-variant=tiered -p /tmp/x86d-tiered --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (sapphirerapids/tiered): 12 passed",
+      "x86 gate mutation tests (graniterapids/tiered): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-compact",
+    "command": "zig build codegen-x86 -Dx86-variant=compact -p /tmp/x86d-compact --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (graniterapids/compact): 12 passed",
+      "x86 gate mutation tests (sapphirerapids/compact): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-medium_first",
+    "command": "zig build codegen-x86 -Dx86-variant=medium_first -p /tmp/x86d-medium_first --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (sapphirerapids/compact): 12 passed",
+      "x86 gate mutation tests (graniterapids/medium_first): 12 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-ymm_medium",
+    "command": "zig build codegen-x86 -Dx86-variant=ymm_medium -p /tmp/x86d-ymm_medium --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (sapphirerapids/compact): 12 passed",
+      "x86 gate mutation tests (graniterapids/ymm_medium): 14 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "codegen-straight_1k",
+    "command": "zig build codegen-x86 -Dx86-variant=straight_1k -p /tmp/x86d-straight_1k --summary all",
+    "exit_code": 0,
+    "summary": [
+      "x86 gate mutation tests (graniterapids/straight_1k): 13 passed",
+      "x86 gate mutation tests (sapphirerapids/straight_1k): 13 passed",
+      "Build Summary: 19/19 steps succeeded"
+    ]
+  },
+  {
+    "label": "lint-lane",
+    "command": "ziglint src/x86_64/",
+    "exit_code": 0
+  },
+  {
+    "label": "lint-all",
+    "command": "ziglint src/",
+    "exit_code": 1,
+    "note": "Existing warnings outside src/x86_64 only.",
+    "output": [
+      "Z024: src/common.zig:23: line exceeds 100 bytes (104 bytes)",
+      "Z024: src/common.zig:108: line exceeds 100 bytes (102 bytes)",
+      "Z032: src/common.zig:98: acronym in 'loadVN' should use standard casing: 'loadVn'",
+      "Z032: src/common.zig:108: acronym in 'storeVN' should use standard casing: 'storeVn'",
+      "Z001: src/aarch64/memcpy_sve.zig:135: function 'head_neon' should be camelCase",
+      "Z001: src/aarch64/memcpy_sve.zig:158: function 'head_hybrid' should be camelCase",
+      "Z006: src/aarch64/small.zig:18: variable 'Vec16' should be snake_case",
+      "Z006: src/aarch64/small.zig:19: variable 'Vec32' should be snake_case",
+      "Z024: src/memmove.zig:61: line exceeds 100 bytes (102 bytes)",
+      "Z024: src/memmove.zig:84: line exceeds 100 bytes (116 bytes)",
+      "Z024: src/memmove.zig:97: line exceeds 100 bytes (154 bytes)",
+      "Z024: src/memmove.zig:127: line exceeds 100 bytes (115 bytes)",
+      "Z024: src/memmove.zig:149: line exceeds 100 bytes (108 bytes)",
+      "Z024: src/memmove.zig:157: line exceeds 100 bytes (125 bytes)",
+      "Z024: src/forward.zig:35: line exceeds 100 bytes (104 bytes)",
+      "Z024: src/forward.zig:53: line exceeds 100 bytes (108 bytes)",
+      "Z024: src/forward.zig:95: line exceeds 100 bytes (116 bytes)",
+      "Z024: src/forward.zig:119: line exceeds 100 bytes (108 bytes)",
+      "Z024: src/forward.zig:131: line exceeds 100 bytes (125 bytes)",
+      "Z001: src/asm_probe.zig:11: function 'fastmem_copy' should be camelCase",
+      "Z001: src/asm_probe.zig:15: function 'fastmem_move' should be camelCase",
+      "Z001: src/asm_probe.zig:19: function 'fastmem_set' should be camelCase",
+      "Z001: src/asm_probe.zig:23: function 'builtin_memcpy' should be camelCase",
+      "Z001: src/asm_probe.zig:27: function 'builtin_memmove' should be camelCase",
+      "Z001: src/asm_probe.zig:31: function 'builtin_memset' should be camelCase",
+      "Z024: src/memcpy.zig:100: line exceeds 100 bytes (116 bytes)"
+    ]
+  },
+  {
+    "label": "execution-summary",
+    "native_tests": 27,
+    "qemu_v3_unit_tests": 26,
+    "local_guard_runs": 0,
+    "avx512_execution": false,
+    "arm_golden_repin": false
+  }
+]
