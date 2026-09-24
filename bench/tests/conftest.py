@@ -1,4 +1,4 @@
-"""Schema-v1 fixtures and project configuration."""
+"""Schema-v2 fixtures and project configuration."""
 
 import json
 from pathlib import Path
@@ -7,6 +7,39 @@ from typing import Any
 import pytest
 
 from ec2bench.config import Config
+
+LIBC_PATH = "/fixture/lib/libc.so.6"
+RESOLUTION: dict[str, Any] = {
+    name: {
+        "glibc": {
+            "address": 0x10000 + offset,
+            "dli_fname": LIBC_PATH,
+            "dli_fbase": 0x10000,
+            "offset": offset,
+        },
+        "builtin": {
+            "address": 0x20000 + offset,
+            "dli_fname": "/fixture/bench-fastmem",
+            "dli_fbase": 0x20000,
+            "offset": offset,
+        },
+    }
+    for name, offset in (("memcpy", 16), ("memmove", 32), ("memset", 48))
+}
+PROBE: dict[str, Any] = {
+    "libc_path": LIBC_PATH,
+    "symbols": {
+        name: {"offset": hex(pair["glibc"]["offset"])} for name, pair in RESOLUTION.items()
+    },
+}
+META_V2 = {
+    "resolution": RESOLUTION,
+    "libc_path": LIBC_PATH,
+    "libc_base": 0x10000,
+    "fastmem_set": False,
+    "set_value": 165,
+    "dist_file": None,
+}
 
 
 @pytest.fixture
@@ -37,8 +70,9 @@ zig_cpu = "neoverse_v2"
 def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
     records: list[dict[str, Any]] = [
         {
+            **META_V2,
             "type": "meta",
-            "schema": 1,
+            "schema": 2,
             "rev": "fixture",
             "zig": "0.16.0",
             "target": "x86_64-linux-gnu",
@@ -51,11 +85,16 @@ def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
             "samples": 2,
             "sample_ms": 20,
             "warmup_ms": 10,
-            "impls": ["builtin", "fastmem", "libc"],
+            "impls": ["builtin", "fastmem_abi", "fastmem_inline", "glibc"],
             "perf": {"available": False, "events": [], "error": "fixture"},
         }
     ]
-    for implementation, factor in (("builtin", 2), ("fastmem", 1), ("libc", 1.25)):
+    for implementation, factor in (
+        ("builtin", 2),
+        ("fastmem_abi", 1),
+        ("fastmem_inline", 0.9),
+        ("glibc", 1.25),
+    ):
         for index in range(2):
             records.append(  # noqa: PERF401 — fixture records stay explicit
                 {
@@ -74,6 +113,8 @@ def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
                     "cycles": None,
                     "instructions": None,
                     "ref_cycles": None,
+                    "time_enabled": None,
+                    "time_running": None,
                 }
             )
     records.append({"type": "end", "cases": 1, "elapsed_ns": 10000})

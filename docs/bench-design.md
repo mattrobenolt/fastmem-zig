@@ -350,95 +350,310 @@ Analysis:
 
 ## Measurement binary: bench-fastmem
 
-The binary measures. It does not format output for humans. Its stdout is
-JSONL. Its stderr is free text for diagnostics.
+This section defines schema v2 and supersedes the adapter comparisons above.
+The implementation is `src/bench_fastmem.zig`.
+The parser is `bench/fastmem_bench/jsonl.py`.
+The native integration tests are `bench/tests/test_binary_v2.py`.
+
+The binary writes JSONL to stdout and diagnostics to stderr.
+It retains samples until the run ends, so the first record includes all performance counter errors.
+An interrupted run has no complete JSONL artifact.
 
 ### CLI
 
+```text
+bench-fastmem [--suite quick|standard|large|const|dist]
+              [--filter <substring>]...
+              [--impl builtin,glibc,fastmem_abi,fastmem_inline,builtin_const]
+              [--samples N] [--sample-ms M] [--warmup-ms W]
+              [--seed S] [--dist-file <path>] [--list]
 ```
-bench-fastmem [--suite quick|standard|dist] [--filter <substring>]
-              [--impl builtin,fastmem,libc] [--samples N]
-              [--sample-ms M] [--warmup-ms W] [--seed S] [--list]
+
+The defaults are `standard`, all applicable implementations, 20 ms per sample, 10 ms warmup, and seed 1.
+The default sample count is the least common multiple of the applicable implementation counts across selected cases.
+An unfiltered standard or quick run uses four samples.
+A const run uses two samples.
+An explicit `--samples` value overrides balance.
+
+The filter selects case IDs by substring.
+Multiple filters form a union.
+The parser accepts both `--flag value` and `--flag=value`.
+Empty selections and invalid arguments cause a nonzero exit.
+
+### Implementations and resolution
+
+| Name | Operation |
+|---|---|
+| `builtin` | Runtime-length `@memcpy`, `@memmove`, or `@memset` in a noinline C-ABI wrapper |
+| `glibc` | The function pointer from `dlopen("libc.so.6")` and `dlsym` |
+| `fastmem_abi` | The public fastmem API in a noinline C-ABI wrapper |
+| `fastmem_inline` | The public fastmem API directly in the timed loop |
+| `builtin_const` | `@memcpy` with a comptime-known length directly in the timed loop |
+
+The three indirect implementations share one timed loop for each operation.
+A volatile load reads the selected function pointer once before each batch.
+The loop calls that pointer for each operation.
+The const profile compares only `builtin_const` and `fastmem_inline`.
+
+The public API does not yet provide `fastmem.set`.
+Consequently, set cases contain only `builtin` and `glibc` samples.
+The meta field `fastmem_set` records this absence.
+The compile-time declaration check enables both fastmem set paths when that API exists.
+
+At startup, `dlinfo(RTLD_DI_LINKMAP)` identifies the library that `dlopen` returns.
+Each glibc pointer must have the same `dladdr` path and base as that library.
+The path must end with `/libc.so.6`.
+The library base must differ from the executable base.
+
+The builtin evidence comes from `@extern` addresses for `memcpy`, `memmove`, and `memset`.
+Each address must resolve to the executable, not libc.
+A failed invariant causes a nonzero exit and an error on stderr.
+The build includes compiler-rt explicitly.
+The harness binary check proves that each builtin wrapper calls the corresponding local text symbol.
+
+The inline and ABI paths call the existing public fastmem API without kernel modifications.
+These names identify call boundaries, not independent kernel implementations.
+
+### Cases and buffers
+
+A fixed-size case ID is `<op>/<profile>/<size>`.
+The operation is `copy`, `move`, or `set`.
+
+| Operation | Profiles |
+|---|---|
+| copy | `aligned`: offsets 0/0, `misaligned`: offsets 1/3, `cross-lane`: offsets `chunk-1`/`chunk/2` |
+| move | `disjoint`, plus `fwd-gapN` and `bwd-gapN` for gaps 1, `chunk-1`, and `chunk+1` |
+| set | `aligned`: destination offset 0, `misaligned`: destination offset 3 |
+
+Forward move places the destination below the source.
+Backward move places the destination above the source.
+The requested gap remains fixed even when the size does not exceed it.
+Such small cases do not overlap.
+Disjoint move uses separate mappings.
+
+The standard runtime sizes are:
+
+```text
+0, 1, 2, 3, 4, 7, 8, 15, 16, 24, 31, 32, 48, 63, 64, 96,
+127, 128, 192, 255, 256, 384, 511, 512, 768, 1024, 2048,
+4096, 8192, 16384, 65536, 262144, 1048576
 ```
 
-Defaults: `--suite standard`, all impls that the build includes,
-`--samples 5`, `--sample-ms 20`, `--warmup-ms 10`. `--list` prints one
-JSON line for each case and runs nothing.
+The quick runtime sizes are:
 
-### Cases
+```text
+8, 32, 64, 256, 1024, 4096, 16384, 262144
+```
 
-A case ID is `<op>/<profile>/<size>`. For `move`, the profile is
-`<direction>-gap<gap>`.
+The large runtime sizes are 1, 4, 16, and 64 MiB.
+Large remains a separate suite.
+The const suite uses the `copy/const/<size>` profile at these sizes:
 
-- `copy` profiles: `aligned` (source offset 0, destination offset 0),
-  `misaligned` (1, 3), and `cross-lane` (`chunk - 1`, `chunk / 2`), where
-  `chunk` is the SIMD chunk size.
-- `move` profiles: directions `fwd` and `bwd`, gaps 1, `chunk - 1`, and
-  `chunk + 1`.
-- `standard` sizes: 0, 1, 2, 3, 4, 7, 8, 15, 16, 24, 31, 32, 48, 63, 64,
-  96, 127, 128, 192, 255, 256, 384, 511, 512, 768, 1024, 2048, 4096,
-  8192, 16384, 65536, 262144, 1048576.
-- `quick` sizes: 8, 32, 64, 256, 1024, 4096, 16384, 262144.
-- `dist` cases: a fixed pseudo-random sequence of sizes, generated from
-  `--seed`, is copied in a loop. Each call has a different size and a
-  different offset inside a buffer. The case IDs are `copy/dist/<name>`
-  and `move/dist/<name>`. The distributions are `small` (sizes 0–256,
-  weighted to small sizes) and `mixed` (sizes 0–16384, log-uniform).
-  The `ns` field is per call. `size` is the mean size.
-- A full `standard` run of one binary on one host takes 4 minutes or
-  less. A `quick` run takes 1 minute or less.
+```text
+1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256
+```
 
-Buffers come from page-aligned heap memory. The loop mutates the source
-and reads the destination so that the compiler cannot remove the copy.
-The existing `runCopyOnce` loop shows the method.
+The standard suite also includes all const cases and both synthetic distributions for every operation.
+With the current API, standard contains 415 cases and quick contains 96 cases.
+These counts follow the construction in `buildCases` and the native coverage test.
 
-Inside one case, the binary rotates the impl order for each sample. This
-cancels slow drift between impls.
+All buffers come from page-aligned anonymous `mmap` mappings sized for the case.
+Each mapping has 1024 additional bytes for offsets and zero-length pointer validity.
+Copy and move mutate the source and read a destination byte after each operation.
+Set writes the nonzero byte 165 and reads a destination byte.
+A memory clobber preserves the entire inline operation, not only the observed byte.
+
+### Distributions
+
+A distribution contains 4096 seeded entries with sizes and offsets.
+The loop repeats that sequence.
+The sample field `size` is its arithmetic mean.
+The `ns` field remains a total over `iters` calls, not a per-call value.
+
+| Case suffix | Size distribution | Offset range |
+|---|---|---|
+| `dist/small` | Minimum of two uniform draws from 0 through 256 | 0 through 127 |
+| `dist/mixed` | Log-uniform sizes from 0 through 16384 | 0 through 511 |
+| `dist/file` | Weighted draws from the supplied histogram | 0 through 511 |
+
+Distribution copy uses separate source and destination mappings.
+Distribution move uses independently selected offsets in one shared mapping.
+Distribution set ignores the source offset.
+
+The option `--dist-file` requires `--suite dist` and replaces the synthetic distributions.
+Its JSON format is `{"<size>": weight, ...}`.
+Sizes are integer byte counts from zero through 1 GiB.
+Weights are finite, nonnegative numbers, with a positive total.
+The file limit is 1 MiB.
+
+The adapter accepts `--dist-file`, saves its bytes and SHA-256 digest, and uploads the file with the binary.
+The manifest records the original path and digest.
+The meta record contains the path that the binary reads.
+
+### Calibration and sample order
+
+Each implementation starts with a 64-iteration pilot after its warmup.
+Calibration scales the batch both downward and upward toward the requested sample duration.
+It stops within 25 percent, after 12 attempts, or at the iteration limits.
+The limits are one operation and 1073741824 operations.
+A single slow operation can exceed the duration target.
+
+Each recorded sample contains its actual iteration count.
+The next sample uses a proportional adjustment from the previous duration.
+Within a case, sample `s` starts at implementation index `s % count`.
+This rotation balances positions when the sample count is a multiple of the implementation count.
 
 ### Performance counters
 
-On Linux, the binary opens a `perf_event_open` group for the benchmark
-thread: `cycles`, `instructions`, and on x86 also `ref-cycles`. It counts
-user space only. If the kernel refuses the group, the counter fields are
-`null` and the meta line records the error. The binary does not fail.
+The Linux group contains cycles, instructions, and x86 ref-cycles.
+The group counts the benchmark thread and excludes kernel and hypervisor execution.
+Its read format is `GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING`.
+Every reset, enable, and disable ioctl uses `PERF_IOC_FLAG_GROUP`.
+Every ioctl result is checked.
 
-### JSONL schema, version 1
+The sample stores unscaled event counts.
+The fields `time_enabled` and `time_running` expose multiplexing in nanoseconds.
+They are per-sample deltas because `PERF_EVENT_IOC_RESET` does not reset those kernel time fields.
+The group reset does reset all event counts.
 
-The first line is the meta record:
+A failed open, ioctl, or read disables the group for the rest of the run.
+Affected samples contain null counter and time fields.
+Earlier successful samples retain their counts.
+The meta record contains the error and sets `perf.available` to false.
+The consecutive-sample test skips when the host denies access or supplies no PMU runtime.
+
+### JSONL schema, version 2
+
+Every measurement consists of one meta record, sample records, and one end record.
+The parser rejects schema v1 and files without an end record.
+It also rejects duplicate samples and incomplete per-case implementation sets.
+
+Meta fields:
+
+| Field | Type and meaning |
+|---|---|
+| `type`, `schema` | Literal `"meta"` and integer 2 |
+| `rev`, `zig`, `target`, `cpu`, `optimize` | Build identifiers. Optimize is `"ReleaseFast"`. |
+| `link_libc`, `chunk_bytes` | Literal true and the SIMD chunk size |
+| `suite`, `seed`, `samples`, `sample_ms`, `warmup_ms` | Effective configuration |
+| `impls` | Selected implementation names applicable to at least one selected case |
+| `dist_file` | String path or null |
+| `set_value`, `fastmem_set` | Integer 165 and the availability of the public set API |
+| `libc_path`, `libc_base` | The `dlopen` library path and integer base address |
+| `resolution` | Objects for `memcpy`, `memmove`, and `memset` |
+| `perf` | Object with `available`, `events`, and `error` |
+
+Each resolution object contains `glibc` and `builtin` evidence objects.
+Each evidence object contains these fields:
+
+| Field | Type and meaning |
+|---|---|
+| `address` | Positive integer function pointer |
+| `dli_fname` | Nonempty library or executable path |
+| `dli_fbase` | Positive integer base address |
+| `offset` | Nonnegative integer `address - dli_fbase` |
+
+The `perf.events` list names the requested events, even when the group is unavailable.
+The `perf.error` field is a diagnostic string or null.
+The `perf.available` field is true only when no counter error occurs during the run.
+
+A sample has this shape. The numbers are illustrative, not benchmark evidence.
 
 ```json
-{"type":"meta","schema":1,"rev":"<-Drev value>","zig":"0.16.0",
- "target":"x86_64-linux-gnu","cpu":"sapphirerapids","optimize":"ReleaseFast",
- "link_libc":true,"chunk_bytes":32,"suite":"standard","seed":1,
- "samples":5,"sample_ms":20,"warmup_ms":10,"impls":["builtin","fastmem","libc"],
- "perf":{"available":true,"events":["cycles","instructions","ref-cycles"],"error":null}}
+{"type":"sample","case":"copy/aligned/64","op":"copy","profile":"aligned","size":64,"src_off":0,"dst_off":0,"gap":null,"impl":"fastmem_abi","sample":0,"iters":1000,"ns":10000,"cycles":30000,"instructions":9000,"ref_cycles":null,"time_enabled":11000,"time_running":11000}
 ```
 
-Each sample is one line:
+Sample fields:
+
+| Field | Type and meaning |
+|---|---|
+| `case`, `op`, `profile` | Case identity and operation metadata |
+| `size` | Nonnegative number. Fixed size or distribution mean, in bytes. |
+| `src_off`, `dst_off` | Nonnegative integers for fixed cases, null for distributions |
+| `gap` | Integer for a fixed directional move, otherwise null |
+| `impl` | One applicable implementation name |
+| `sample` | Zero-based sample index within this case and implementation |
+| `iters` | Positive integer operation count |
+| `ns` | Positive elapsed nanoseconds for the batch |
+| `cycles`, `instructions`, `ref_cycles` | Nonnegative integer totals or null |
+| `time_enabled`, `time_running` | Nonnegative integer nanoseconds or null |
+
+On aarch64, `ref_cycles` is always null.
+The source offset has no operational meaning for set.
+Consumers compute ns per operation as `ns / iters`.
+They do not scale wall-clock time with the PMU time fields.
+
+The end record has this shape:
 
 ```json
-{"type":"sample","case":"copy/aligned/64","op":"copy","profile":"aligned",
- "size":64,"src_off":0,"dst_off":0,"gap":null,"impl":"fastmem","sample":0,
- "iters":1048576,"ns":12345678,"cycles":40000000,"instructions":9000000,
- "ref_cycles":null}
+{"type":"end","cases":96,"elapsed_ns":123456789}
 ```
 
-`ns`, `cycles`, `instructions`, and `ref_cycles` are totals for `iters`
-operations. The last line is `{"type":"end","cases":<n>,"elapsed_ns":<n>}`.
-A consumer rejects a file without an `end` line.
+The field `cases` counts selected cases, not samples.
+The field `elapsed_ns` includes warmup, calibration, and measurements, but excludes JSON emission.
+With `--list`, case records replace samples.
+A case record has `type`, `case`, `op`, `profile`, and `size` fields.
+The analysis parser does not accept list output as a measurement.
 
-### build.zig
+### Adapter comparisons and goals
 
-- `-Drev=<string>`: a build option that the binary reports in `meta`.
-  The default is `unknown`.
-- `zig build install` installs `bench-fastmem` and `libc-probe` for the
-  selected `-Dtarget` and `-Dcpu`. `libc-probe` uses the selected target,
-  not the host.
-- `zig build bench` builds and runs locally, as before.
+The schema-v2 adapter reports these comparisons for each common case:
 
-### libc-probe
+- `builtin/glibc`: the ecosystem gap.
+- `fastmem_abi/glibc`: the G2 kernel comparison.
+- `fastmem_inline/glibc`: the G4 inline comparison.
+- `fastmem_abi/builtin`: the G3 compiler-rt comparison.
+- `fastmem_inline/builtin_const`: the const comparison.
+- Each fastmem implementation against itself in the baseline revision.
 
-`libc-probe` prints one JSON object: the resolved path of libc, the glibc
-version (`gnu_get_libc_version`), and for `memcpy` and `memmove` the
-runtime address, the symbol name from `dladdr`, and the offset from the
-libc base. The harness disassembles the implementation at that offset.
+Ratios use candidate time divided by reference time.
+The adapter retains the round bootstrap and per-operation, per-size A/A floors described above.
+Significance requires at least five rounds and an available A/A floor.
+Distribution floors remain per operation and size tier.
+
+Both output files contain a Goals section for each target, revision, and operation.
+The machine representation is `targets.<target>.goals` in `summary.json`.
+Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, or NA status.
+Missing cases, fewer than five rounds, or absent A/A evidence produce NA for the affected component.
+
+G2 uses only the fixed standard runtime cases.
+Its evidence includes the overall geometric mean, tier means, and significant regressions above 1.10.
+A significant regression above a threshold requires a confidence interval above that threshold and an excess greater than the noise floor.
+The configured minimum effect also applies to that excess.
+
+G3 requires the standard runtime cases and both synthetic distributions.
+It reports the worst ratio and significant regressions above 1.00.
+G4 evaluates `dist/small` and the const timing component independently.
+The const component applies only to copy.
+Its no-call component is NA: `checked by binary test, P4`.
+A copy timing pass therefore does not imply a complete G4 pass.
+
+The goal implementation is `bench/fastmem_bench/goals.py`.
+The goal tests are `bench/tests/test_v2.py`.
+The thresholds come from G2 through G4 in `docs/fastmem-plan.md`.
+
+### Build and libc-probe
+
+The option `-Drev=<string>` sets the revision label. Its default is `unknown`.
+Benchmarks always link libc and include compiler-rt.
+The option `-Dlink-libc` remains accepted for command compatibility.
+The library module and kernels remain unchanged.
+
+The install step includes `bench-fastmem` and `libc-probe` for the selected target and CPU.
+The bench step runs the measurement binary locally.
+The test step includes startup resolution, calibration, order balance, and PMU reset tests.
+
+The probe prints its libc path, glibc version, and resolved memory symbols as one JSON object.
+Each symbol contains its address, optional symbol name, and actual pointer offset from the library base.
+The symbol set includes `memcpy`, `memmove`, and `memset`.
+Probe addresses and offsets remain hexadecimal strings for compatibility.
+
+Each raw file must agree with the independent probe on all three glibc offsets and the libc path.
+Process addresses are not compared because ASLR can change them.
+A mismatch fails that target immediately, including during offline analysis.
+The manifest retains the probe evidence.
+
+The harness saves on-box disassembly for all three glibc functions beside the target artifacts.
+These artifacts remain under gitignored result directories.
+They never enter this MIT repository.
+The clean-room rule is in `docs/fastmem-plan.md`.

@@ -12,6 +12,15 @@ const fmt = std.fmt;
 const math = std.math;
 const testing = std.testing;
 const linux = std.os.linux;
+const ArrayList = std.ArrayList;
+const posix = std.posix;
+const time = std.time;
+const process = std.process;
+const meta = std.meta;
+const json = std.json;
+const print = std.debug.print;
+const page_size_min = std.heap.page_size_min;
+const DefaultPrng = std.Random.DefaultPrng;
 const c = @cImport({
     @cDefine("_GNU_SOURCE", "1");
     @cInclude("dlfcn.h");
@@ -20,8 +29,11 @@ const c = @cImport({
 
 const chunk_bytes = @min(std.simd.suggestVectorLength(u8) orelse 16, 32);
 const standard_sizes = [_]u32{
-    0,   1,   2,   3,   4,   7,   8,   15,  16,   24,   31,   32,   48,    63,    64,     96,      127,
-    128, 192, 255, 256, 384, 511, 512, 768, 1024, 2048, 4096, 8192, 16384, 65536, 262144, 1048576,
+    0,       1,    2,    3,    4,    7,     8,     15,
+    16,      24,   31,   32,   48,   63,    64,    96,
+    127,     128,  192,  255,  256,  384,   511,   512,
+    768,     1024, 2048, 4096, 8192, 16384, 65536, 262144,
+    1048576,
 };
 const quick_sizes = [_]u32{ 8, 32, 64, 256, 1024, 4096, 16384, 262144 };
 const large_sizes = [_]u32{ 1 << 20, 4 << 20, 16 << 20, 64 << 20 };
@@ -143,7 +155,13 @@ const Symbols = struct {
     }
 };
 
-fn validateResolution(reference: Evidence, local: Evidence, own: Evidence, path: []const u8, base: u64) !void {
+fn validateResolution(
+    reference: Evidence,
+    local: Evidence,
+    own: Evidence,
+    path: []const u8,
+    base: u64,
+) !void {
     if (!mem.eql(u8, reference.dli_fname, path) or reference.dli_fbase != base or
         reference.dli_fbase == own.dli_fbase or !mem.endsWith(u8, path, "/libc.so.6"))
         return error.GlibcResolvedOutsideLibc;
@@ -156,8 +174,14 @@ test "resolution rejects executable glibc and libc builtins" {
     defer symbols.deinit();
     const pair = symbols.resolution[0];
     const own = try Evidence.resolve(@ptrCast(&builtinCopy));
-    try testing.expectError(error.GlibcResolvedOutsideLibc, validateResolution(pair.builtin, pair.builtin, own, symbols.libc_path, symbols.libc_base));
-    try testing.expectError(error.BuiltinDidNotResolveToExecutable, validateResolution(pair.glibc, pair.glibc, own, symbols.libc_path, symbols.libc_base));
+    try testing.expectError(
+        error.GlibcResolvedOutsideLibc,
+        validateResolution(pair.builtin, pair.builtin, own, symbols.libc_path, symbols.libc_base),
+    );
+    try testing.expectError(
+        error.BuiltinDidNotResolveToExecutable,
+        validateResolution(pair.glibc, pair.glibc, own, symbols.libc_path, symbols.libc_base),
+    );
 }
 
 const Counts = struct {
@@ -227,7 +251,7 @@ const Perf = struct {
         if (self.failure != null or !self.ioctl(0x2401)) return null;
         var data: [3 + count]u64 = undefined;
         const bytes = mem.asBytes(&data);
-        const n = std.posix.read(self.fds[0], bytes) catch {
+        const n = posix.read(self.fds[0], bytes) catch {
             self.failure = "perf group read failed";
             self.close();
             return null;
@@ -258,7 +282,7 @@ test "perf consecutive samples reset instructions for the whole group" {
     var perf: Perf = .init();
     defer perf.close();
     if (perf.failure) |failure| {
-        std.debug.print("perf test skipped: {s}\n", .{failure});
+        print("perf test skipped: {s}\n", .{failure});
         return error.SkipZigTest;
     }
     var counts: [2]Counts = undefined;
@@ -280,7 +304,7 @@ test "perf consecutive samples reset instructions for the whole group" {
 const Config = struct {
     suite: Suite = .standard,
     impls: []const Impl = &.{ .builtin, .glibc, .fastmem_abi, .fastmem_inline, .builtin_const },
-    filters: std.ArrayList([]const u8) = .empty,
+    filters: ArrayList([]const u8) = .empty,
     samples: u32 = 0,
     sample_ms: u32 = 20,
     warmup_ms: u32 = 10,
@@ -311,13 +335,15 @@ fn parseArgs(arena: Allocator, args: []const [:0]const u8) !Config {
             break :blk args[index];
         };
         if (mem.eql(u8, flag, "--suite")) {
-            cfg.suite = std.meta.stringToEnum(Suite, value) orelse return error.InvalidSuite;
+            cfg.suite = meta.stringToEnum(Suite, value) orelse return error.InvalidSuite;
         } else if (mem.eql(u8, flag, "--impl")) {
-            var list: std.ArrayList(Impl) = .empty;
+            var list: ArrayList(Impl) = .empty;
             var names = mem.splitScalar(u8, value, ',');
             while (names.next()) |name| {
-                const impl = std.meta.stringToEnum(Impl, name) orelse return error.InvalidImplementation;
-                if (mem.findScalar(Impl, list.items, impl) != null) return error.DuplicateImplementation;
+                const impl = meta.stringToEnum(Impl, name) orelse
+                    return error.InvalidImplementation;
+                if (mem.findScalar(Impl, list.items, impl) != null)
+                    return error.DuplicateImplementation;
                 try list.append(arena, impl);
             }
             cfg.impls = list.items;
@@ -356,12 +382,14 @@ const Case = struct {
     seq: ?[]const Entry = null,
 
     fn accepts(self: Case, impl: Impl) bool {
-        if (mem.eql(u8, self.profile, "const")) return impl == .builtin_const or impl == .fastmem_inline;
+        if (mem.eql(u8, self.profile, "const"))
+            return impl == .builtin_const or impl == .fastmem_inline;
         if (impl == .builtin_const) return false;
-        return self.op != .set or has_fastmem_set or (impl != .fastmem_abi and impl != .fastmem_inline);
+        return self.op != .set or has_fastmem_set or
+            (impl != .fastmem_abi and impl != .fastmem_inline);
     }
 };
-fn addCase(arena: Allocator, cases: *std.ArrayList(Case), cfg: Config, case: Case) !void {
+fn addCase(arena: Allocator, cases: *ArrayList(Case), cfg: Config, case: Case) !void {
     if (!cfg.matches(case.id)) return;
     for (cfg.impls) |impl| {
         if (case.accepts(impl)) {
@@ -382,9 +410,9 @@ fn fixedCase(arena: Allocator, op: Op, profile: []const u8, size: u32) !Case {
 const Weight = struct { size: u32, cumulative: f64 };
 fn readHistogram(arena: Allocator, io: Io, path: []const u8) ![]const Weight {
     const bytes = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20));
-    const parsed = try std.json.parseFromSlice(std.json.Value, arena, bytes, .{});
+    const parsed = try json.parseFromSlice(json.Value, arena, bytes, .{});
     if (parsed.value != .object) return error.HistogramMustBeObject;
-    var weights: std.ArrayList(Weight) = .empty;
+    var weights: ArrayList(Weight) = .empty;
     var iterator = parsed.value.object.iterator();
     var total: f64 = 0;
     while (iterator.next()) |entry| {
@@ -404,12 +432,19 @@ fn readHistogram(arena: Allocator, io: Io, path: []const u8) ![]const Weight {
     if (total == 0) return error.EmptyHistogram;
     return weights.items;
 }
-fn distribution(arena: Allocator, cfg: Config, op: Op, name: []const u8, weights: ?[]const Weight) !Case {
-    var prng = std.Random.DefaultPrng.init(cfg.seed +% @as(u64, @intFromEnum(op)));
+fn distribution(
+    arena: Allocator,
+    cfg: Config,
+    op: Op,
+    name: []const u8,
+    weights: ?[]const Weight,
+) !Case {
+    var prng = DefaultPrng.init(cfg.seed +% @as(u64, @intFromEnum(op)));
     const random = prng.random();
     const seq = try arena.create([seq_len]Entry);
     var sum: u64 = 0;
     var maximum: u32 = 0;
+    const off_max: u32 = if (mem.eql(u8, name, "small")) 127 else 511;
     for (seq) |*entry| {
         const size: u32 = if (weights) |hist| blk: {
             const draw = random.float(f64) * hist[hist.len - 1].cumulative;
@@ -421,8 +456,8 @@ fn distribution(arena: Allocator, cfg: Config, op: Op, name: []const u8, weights
         ) else @trunc(@exp(@log(@as(f64, 16385)) * random.float(f64)) - 1);
         entry.* = .{
             .size = size,
-            .src_off = random.intRangeAtMost(u32, 0, 511),
-            .dst_off = random.intRangeAtMost(u32, 0, 511),
+            .src_off = random.intRangeAtMost(u32, 0, off_max),
+            .dst_off = random.intRangeAtMost(u32, 0, off_max),
         };
         sum += size;
         maximum = @max(maximum, size);
@@ -438,15 +473,20 @@ fn distribution(arena: Allocator, cfg: Config, op: Op, name: []const u8, weights
     };
 }
 fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
-    var cases: std.ArrayList(Case) = .empty;
+    var cases: ArrayList(Case) = .empty;
     if (cfg.suite == .dist) {
         const weights = if (cfg.dist_file) |path| try readHistogram(arena, io, path) else null;
         for ([_]Op{ .copy, .move, .set }) |op| {
-            const names: []const []const u8 = if (weights != null) &.{"file"} else &.{ "small", "mixed" };
-            for (names) |name| try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, weights));
+            const names: []const []const u8 = if (weights != null)
+                &.{"file"}
+            else
+                &.{ "small", "mixed" };
+            for (names) |name|
+                try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, weights));
         }
     } else if (cfg.suite == .@"const") {
-        for (const_sizes) |size| try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+        for (const_sizes) |size|
+            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
     } else {
         const sizes: []const u32 = switch (cfg.suite) {
             .quick => &quick_sizes,
@@ -477,7 +517,9 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
             try addCase(arena, &cases, cfg, try fixedCase(arena, .move, "disjoint", size));
             for ([_]bool{ false, true }) |backward| {
                 for ([_]u32{ 1, chunk_bytes - 1, chunk_bytes + 1 }) |gap| {
-                    const profile = try fmt.allocPrint(arena, "{s}-gap{d}", .{ if (backward) "bwd" else "fwd", gap });
+                    const profile = try fmt.allocPrint(arena, "{s}-gap{d}", .{
+                        if (backward) "bwd" else "fwd", gap,
+                    });
                     var case = try fixedCase(arena, .move, profile, size);
                     case.gap = gap;
                     case.shared = true;
@@ -488,17 +530,25 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
             }
         }
     }
+    if (cfg.suite == .standard) {
+        for (const_sizes) |size|
+            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+        for ([_]Op{ .copy, .move, .set }) |op| {
+            for ([_][]const u8{ "small", "mixed" }) |name|
+                try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, null));
+        }
+    }
     if (cases.items.len == 0) return error.NoMatchingCases;
     return cases.items;
 }
 
 const Buffers = struct {
-    src: []align(std.heap.page_size_min) u8,
-    dst: []align(std.heap.page_size_min) u8,
+    src: []align(page_size_min) u8,
+    dst: []align(page_size_min) u8,
     fn init(case: Case) !Buffers {
         const len = @as(u64, case.max_len) + 1024;
         const src = try mapBytes(len);
-        errdefer std.posix.munmap(src);
+        errdefer posix.munmap(src);
         const dst = try mapBytes(len);
         for (src, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
         // These buffers contain synthetic bytes, never secrets.
@@ -506,12 +556,19 @@ const Buffers = struct {
         return .{ .src = src, .dst = dst };
     }
     fn deinit(self: Buffers) void {
-        std.posix.munmap(self.src);
-        std.posix.munmap(self.dst);
+        posix.munmap(self.src);
+        posix.munmap(self.dst);
     }
 };
-fn mapBytes(len: u64) ![]align(std.heap.page_size_min) u8 {
-    return std.posix.mmap(null, len, .{ .READ = true, .WRITE = true }, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0);
+fn mapBytes(len: u64) ![]align(page_size_min) u8 {
+    return posix.mmap(
+        null,
+        len,
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        -1,
+        0,
+    );
 }
 const Functions = struct { copy: CopyFn, set: SetFn };
 const Result = struct { ns: u64, iters: u64, counters: ?Counts };
@@ -572,7 +629,15 @@ noinline fn runLoop(
     mem.doNotOptimizeAway(checksum);
     return .{ .ns = ns, .iters = iters, .counters = counters };
 }
-fn runBatch(io: Io, perf: ?*Perf, symbols: *const Symbols, case: Case, buffers: Buffers, impl: Impl, iters: u64) Result {
+fn runBatch(
+    io: Io,
+    perf: ?*Perf,
+    symbols: *const Symbols,
+    case: Case,
+    buffers: Buffers,
+    impl: Impl,
+    iters: u64,
+) Result {
     const functions: Functions = .{
         .copy = switch (impl) {
             .glibc => if (case.op == .move) symbols.move else symbols.copy,
@@ -588,8 +653,28 @@ fn runBatch(io: Io, perf: ?*Perf, symbols: *const Symbols, case: Case, buffers: 
     if (mem.eql(u8, case.profile, "const")) {
         inline for (const_sizes) |len| {
             if (case.max_len == len) return switch (impl) {
-                .builtin_const => runLoop(.copy, .builtin_const, len, io, perf, &functions, case, buffers, iters),
-                .fastmem_inline => runLoop(.copy, .fastmem_inline, len, io, perf, &functions, case, buffers, iters),
+                .builtin_const => runLoop(
+                    .copy,
+                    .builtin_const,
+                    len,
+                    io,
+                    perf,
+                    &functions,
+                    case,
+                    buffers,
+                    iters,
+                ),
+                .fastmem_inline => runLoop(
+                    .copy,
+                    .fastmem_inline,
+                    len,
+                    io,
+                    perf,
+                    &functions,
+                    case,
+                    buffers,
+                    iters,
+                ),
                 else => unreachable,
             };
         }
@@ -611,7 +696,14 @@ test "calibration shrinks oversized pilots, including the cap" {
     try testing.expectEqual(@as(u64, max_iters / 2), scaleIterations(max_iters, 40, 20));
     try testing.expectEqual(@as(u64, 10000), scaleIterations(1000, 2, 20));
 }
-fn calibrate(io: Io, symbols: *const Symbols, case: Case, buffers: Buffers, impl: Impl, target: u64) u64 {
+fn calibrate(
+    io: Io,
+    symbols: *const Symbols,
+    case: Case,
+    buffers: Buffers,
+    impl: Impl,
+    target: u64,
+) u64 {
     var iters: u64 = 64;
     for (0..12) |_| {
         const result = runBatch(io, null, symbols, case, buffers, impl, iters);
@@ -623,17 +715,26 @@ fn calibrate(io: Io, symbols: *const Symbols, case: Case, buffers: Buffers, impl
     return iters;
 }
 const Sample = struct { case: Case, impl: Impl, sample: u32, result: Result };
-fn measureCase(arena: Allocator, io: Io, cfg: Config, symbols: *const Symbols, perf: *Perf, case: Case, output: *std.ArrayList(Sample)) !void {
+fn measureCase(
+    arena: Allocator,
+    io: Io,
+    cfg: Config,
+    symbols: *const Symbols,
+    perf: *Perf,
+    case: Case,
+    output: *ArrayList(Sample),
+) !void {
     const buffers: Buffers = try .init(case);
     defer buffers.deinit();
-    var impls: std.ArrayList(Impl) = .empty;
+    var impls: ArrayList(Impl) = .empty;
     for (cfg.impls) |impl| if (case.accepts(impl)) try impls.append(arena, impl);
     var iterations = [_]u64{0} ** 5;
-    const target = @as(u64, cfg.sample_ms) * std.time.ns_per_ms;
+    const target = @as(u64, cfg.sample_ms) * time.ns_per_ms;
     for (impls.items, 0..) |impl, index| {
         if (cfg.warmup_ms != 0) {
             const start = Io.Timestamp.now(io, .awake);
-            while (start.durationTo(.now(io, .awake)).nanoseconds < @as(u64, cfg.warmup_ms) * std.time.ns_per_ms)
+            const warmup_ns = @as(u64, cfg.warmup_ms) * time.ns_per_ms;
+            while (start.durationTo(.now(io, .awake)).nanoseconds < warmup_ns)
                 _ = runBatch(io, null, symbols, case, buffers, impl, 64);
         }
         iterations[index] = calibrate(io, symbols, case, buffers, impl, target);
@@ -643,7 +744,12 @@ fn measureCase(arena: Allocator, io: Io, cfg: Config, symbols: *const Symbols, p
             const index = (position + sample) % impls.items.len;
             const impl = impls.items[index];
             const result = runBatch(io, perf, symbols, case, buffers, impl, iterations[index]);
-            try output.append(arena, .{ .case = case, .impl = impl, .sample = @intCast(sample), .result = result });
+            try output.append(arena, .{
+                .case = case,
+                .impl = impl,
+                .sample = @intCast(sample),
+                .result = result,
+            });
             iterations[index] = scaleIterations(result.iters, result.ns, target);
         }
     }
@@ -665,11 +771,12 @@ test "default samples balance every applicable implementation count" {
         .{ .id = "set/aligned/8", .op = .set, .profile = "aligned", .size = 8, .max_len = 8 },
     };
     try testing.expectEqual(@as(u32, 4), balancedSamples(.{}, &cases));
-    try testing.expectEqual(@as(u32, 6), balancedSamples(.{ .impls = &.{ .builtin, .glibc, .fastmem_abi } }, &cases));
+    const cfg: Config = .{ .impls = &.{ .builtin, .glibc, .fastmem_abi } };
+    try testing.expectEqual(@as(u32, if (has_fastmem_set) 3 else 6), balancedSamples(cfg, &cases));
 }
 
 fn jsonLine(w: *Io.Writer, value: anytype) !void {
-    try std.json.Stringify.value(value, .{}, w);
+    try json.Stringify.value(value, .{}, w);
     try w.writeByte('\n');
 }
 fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
@@ -678,7 +785,8 @@ fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
         .schema = 2,
         .rev = options.rev,
         .zig = builtin.zig_version_string,
-        .target = @tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ "-" ++ @tagName(builtin.abi),
+        .target = @tagName(builtin.cpu.arch) ++ "-" ++
+            @tagName(builtin.os.tag) ++ "-" ++ @tagName(builtin.abi),
         .cpu = builtin.cpu.model.name,
         .optimize = @tagName(builtin.mode),
         .link_libc = true,
@@ -694,8 +802,16 @@ fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
         .fastmem_set = has_fastmem_set,
         .libc_path = symbols.libc_path,
         .libc_base = symbols.libc_base,
-        .resolution = .{ .memcpy = symbols.resolution[0], .memmove = symbols.resolution[1], .memset = symbols.resolution[2] },
-        .perf = .{ .available = perf.failure == null, .events = Perf.names, .@"error" = perf.failure },
+        .resolution = .{
+            .memcpy = symbols.resolution[0],
+            .memmove = symbols.resolution[1],
+            .memset = symbols.resolution[2],
+        },
+        .perf = .{
+            .available = perf.failure == null,
+            .events = Perf.names,
+            .@"error" = perf.failure,
+        },
     });
 }
 fn emitSample(w: *Io.Writer, sample: Sample) !void {
@@ -722,7 +838,7 @@ fn emitSample(w: *Io.Writer, sample: Sample) !void {
         .time_running = if (counters) |v| @as(?u64, v.time_running) else null,
     });
 }
-fn run(init: std.process.Init) !void {
+fn run(init: process.Init) !void {
     const arena = init.arena.allocator();
     var cfg = try parseArgs(arena, try init.minimal.args.toSlice(arena));
     var symbols = try Symbols.init();
@@ -730,11 +846,21 @@ fn run(init: std.process.Init) !void {
     var perf: Perf = .init();
     defer perf.close();
     const cases = try buildCases(arena, init.io, cfg);
+    var active: ArrayList(Impl) = .empty;
+    for (cfg.impls) |impl| {
+        for (cases) |case| {
+            if (case.accepts(impl)) {
+                try active.append(arena, impl);
+                break;
+            }
+        }
+    }
+    cfg.impls = active.items;
     if (cfg.samples == 0) cfg.samples = balancedSamples(cfg, cases);
-    var output: std.ArrayList(Sample) = .empty;
+    var output: ArrayList(Sample) = .empty;
     const start = Io.Timestamp.now(init.io, .awake);
     if (!cfg.list) for (cases) |case| {
-        std.debug.print("bench-fastmem: {s}\n", .{case.id});
+        print("bench-fastmem: {s}\n", .{case.id});
         try measureCase(arena, init.io, cfg, &symbols, &perf, case, &output);
     };
     const elapsed: u64 = @intCast(start.durationTo(.now(init.io, .awake)).nanoseconds);
@@ -754,11 +880,14 @@ fn run(init: std.process.Init) !void {
     } else for (output.items) |sample| try emitSample(w, sample);
     try jsonLine(w, .{ .type = "end", .cases = cases.len, .elapsed_ns = elapsed });
     try w.flush();
-    if (perf.failure) |failure| std.debug.print("bench-fastmem: perf unavailable: {s}\n", .{failure});
+    if (perf.failure) |failure|
+        print("bench-fastmem: perf unavailable: {s}\n", .{failure});
 }
-pub fn main(init: std.process.Init) void {
+pub fn main(init: process.Init) void {
     run(init) catch |err| {
-        std.debug.print("bench-fastmem: {s}. No complete measurement was produced.\n", .{@errorName(err)});
-        std.process.exit(1);
+        print("bench-fastmem: {s}. No complete measurement was produced.\n", .{
+            @errorName(err),
+        });
+        process.exit(1);
     };
 }

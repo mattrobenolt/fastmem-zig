@@ -1,13 +1,15 @@
-"""Record shapes that the real bench-fastmem binary emits (schema v1)."""
+"""Record shapes that the real bench-fastmem binary emits (schema v2)."""
 
 import json
 from pathlib import Path
 
 from fastmem_bench.jsonl import parse
+from tests.conftest import META_V2
 
 META = {
+    **META_V2,
     "type": "meta",
-    "schema": 1,
+    "schema": 2,
     "rev": "x",
     "zig": "0.16.0",
     "target": "aarch64-linux-gnu",
@@ -20,18 +22,20 @@ META = {
     "samples": 1,
     "sample_ms": 1,
     "warmup_ms": 1,
-    "impls": ["fastmem"],
+    "impls": ["fastmem_abi"],
     "perf": {"available": False, "events": [], "error": "EACCES"},
 }
 BASE = {
     "type": "sample",
-    "impl": "fastmem",
+    "impl": "fastmem_abi",
     "sample": 0,
     "iters": 10,
     "ns": 100,
     "cycles": None,
-    "instructions": 0,
+    "instructions": None,
     "ref_cycles": None,
+    "time_enabled": None,
+    "time_running": None,
 }
 ROWS = [
     {

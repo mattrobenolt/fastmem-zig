@@ -22,7 +22,7 @@ def test_schema(tmp_path: Path) -> None:
     path = tmp_path / "round.jsonl"
     measurement(path)
     parsed = parse(path)
-    assert parsed.meta["schema"] == 1
+    assert parsed.meta["schema"] == 2
     assert parsed.samples[0]["ns"] / parsed.samples[0]["iters"] == 20
     path.write_text("\n".join(path.read_text().splitlines()[:-1]))
     with pytest.raises(ValueError, match="no end record"):
@@ -35,7 +35,7 @@ def test_reject_invalid(tmp_path: Path, mutation: str) -> None:
     measurement(path)
     records = [json.loads(line) for line in path.read_text().splitlines()]
     if mutation == "schema":
-        records[0]["schema"] = 2
+        records[0]["schema"] = 1
     elif mutation == "cases":
         records[-1]["cases"] = 2
     elif mutation == "iters":

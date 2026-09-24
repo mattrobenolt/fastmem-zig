@@ -144,5 +144,6 @@ def test_build_race_enotempty(config: Config, monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(Path, "rename", rename)
+    monkeypatch.setattr("fastmem_bench.build.verify_builtin_calls", lambda _: None)
     results = build_all(config, [source], ["intel"])
     assert results["v0/intel"].error is None

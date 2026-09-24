@@ -43,7 +43,7 @@ def orders(variants: list[str], rounds: int, seed: int) -> list[list[str]]:
 
 def glibc_disassembly(box: Box, probe: dict[str, Any], remote: str) -> None:
     library = shlex.quote(probe["libc_path"])
-    for symbol in ("memcpy", "memmove"):
+    for symbol in ("memcpy", "memmove", "memset"):
         offset = probe["symbols"][symbol]["offset"]
         start = int(offset, 0) if isinstance(offset, str) else int(offset)
         # dladdr cannot supply IFUNC implementation sizes. Keep a bounded window.
@@ -54,7 +54,7 @@ def glibc_disassembly(box: Box, probe: dict[str, Any], remote: str) -> None:
         box.run(command)
 
 
-def execute(
+def execute(  # noqa: PLR0915 — keep the target lifecycle and cleanup together
     config: Config,
     box: Box,
     builds: list[Build],
@@ -76,6 +76,12 @@ def execute(
     for variant, build in by_variant.items():
         box.upload(build.prefix / "bin/bench-fastmem", f"{remote}/bin/{variant}")
     box.upload(builds[0].prefix / "bin/libc-probe", remote)
+    binary_args = list(binary_args or [])
+    if "--dist-file" in binary_args:
+        index = binary_args.index("--dist-file") + 1
+        histogram = Path(binary_args[index])
+        box.upload(histogram, remote + "/distribution")
+        binary_args[index] = remote + "/distribution/" + histogram.name
     progress("host facts and glibc")
     facts = collect(box, config.results_dir)
     (destination / "facts.json").write_text(json.dumps(facts, indent=2) + "\n")
@@ -115,9 +121,15 @@ def execute(
                             error=error,
                         )
                         box.download(f"{remote}/raw/{variant}", destination / "raw" / variant)
-                        parse(destination / "raw" / variant / f"r{round_index}.jsonl")
+                        parse(destination / "raw" / variant / f"r{round_index}.jsonl", probe=probe)
             finally:
                 stop_isolated(box, path.name)
     finally:
         box.download(remote, destination)
-    return {"cpu": cpu, "schedule": schedule, "instance_id": box.instance_id, "warnings": warnings}
+    return {
+        "cpu": cpu,
+        "schedule": schedule,
+        "instance_id": box.instance_id,
+        "warnings": warnings,
+        "libc_probe": probe,
+    }

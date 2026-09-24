@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -131,6 +132,7 @@ def build_all(
                 for binary in ("bench-fastmem", "libc-probe"):
                     if not (temporary / "bin" / binary).is_file():
                         raise FileNotFoundError(f"Build did not install {binary}")
+                verify_builtin_calls(temporary / "bin/bench-fastmem")
                 (temporary / "complete.json").write_text(
                     json.dumps({"key": key_data, "command": args})
                 )
@@ -150,10 +152,39 @@ def build_all(
     return parallel(pairs, build, workers=os.cpu_count() or 1)
 
 
+def verify_builtin_calls(binary: Path) -> None:
+    """Prove that startup @extern evidence names the actual wrapper callees."""
+    symbols = subprocess.run(
+        ["llvm-nm", str(binary)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    for name in ("memcpy", "memmove", "memset"):
+        if not re.search(rf"^[0-9a-f]+ t {name}$", symbols, re.MULTILINE):
+            raise ValueError(f"{binary}: {name} is not local executable text")
+        assembly = subprocess.run(
+            ["llvm-objdump", "-d", f"--disassemble-symbols=builtin_{name}", str(binary)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+        if f"<{name}>" not in assembly or f"<{name}@plt>" in assembly:
+            raise ValueError(f"{binary}: builtin_{name} does not call the local {name}")
+
+
 def disassemble(build: Build, destination: Path) -> str | None:
     binary = build.prefix / "bin/bench-fastmem"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    expected = {"fastmem_copy", "fastmem_move", "builtin_memcpy", "builtin_memmove"}
+    expected = {
+        "fastmem_copy",
+        "fastmem_move",
+        "builtin_memcpy",
+        "builtin_memmove",
+        "builtin_memset",
+    }
     try:
         symbols = subprocess.run(
             ["llvm-objdump", "--syms", str(binary)],
@@ -166,7 +197,8 @@ def disassemble(build: Build, destination: Path) -> str | None:
             {
                 line.split()[-1]
                 for line in symbols.splitlines()
-                if line.split() and line.split()[-1].startswith(("fastmem_", "builtin_"))
+                if line.split()
+                and line.split()[-1].startswith(("fastmem_", "builtin_", "bench_fastmem.runLoop"))
             }
         )
         missing = expected - set(names)

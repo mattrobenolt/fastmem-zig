@@ -10,7 +10,7 @@ from ec2bench.config import Config
 from ec2bench.parallel import Outcome
 from fastmem_bench.build import Build, Source
 from fastmem_bench.runner import run
-from tests.conftest import measurement
+from tests.conftest import PROBE, measurement
 from tests.test_protocol import FakeBox, setup
 
 
@@ -46,7 +46,7 @@ def test_run_up_partial_success_and_passthrough(
         for variant in ("v0", "aa"):
             for index in range(5):
                 measurement(path / "intel/raw" / variant / f"r{index}.jsonl")
-        return {"warnings": []}
+        return {"warnings": [], "libc_probe": PROBE}
 
     monkeypatch.setattr("fastmem_bench.runner.execute", execute)
     result = CliRunner().invoke(
@@ -58,7 +58,7 @@ def test_run_up_partial_success_and_passthrough(
             "--filter",
             "aligned",
             "--impl",
-            "fastmem,libc",
+            "fastmem_abi,glibc",
             "--samples",
             "2",
             "--sample-ms",
@@ -75,7 +75,7 @@ def test_run_up_partial_success_and_passthrough(
         "--filter",
         "aligned",
         "--impl",
-        "fastmem,libc",
+        "fastmem_abi,glibc",
         "--samples",
         "2",
         "--sample-ms",

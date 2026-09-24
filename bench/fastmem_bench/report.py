@@ -9,7 +9,11 @@ from rich.table import Table
 
 
 def comparison(row: dict[str, Any]) -> str:
-    return f"A/A ({row['candidate_impl']})" if row["comparison"] == "A/A" else row["comparison"]
+    return (
+        f"{row['comparison']} ({row['candidate_impl']})"
+        if row["comparison"] in {"A/A", "revision"}
+        else row["comparison"]
+    )
 
 
 def write(path: Path, summary: dict[str, Any]) -> None:
@@ -39,6 +43,7 @@ def write(path: Path, summary: dict[str, Any]) -> None:
             continue
         for warning in result.get("warnings", []):
             text += [f"Warning: {warning}", ""]
+        text += goal_table(result.get("goals", []))
         text += [f"Minimum effect: {result['minimum_effect']:.4%}.", ""]
         if result["noise_floors"]:
             text += ["| A/A floor group | Noise floor |", "|---|---:|"]
@@ -78,3 +83,39 @@ def write(path: Path, summary: dict[str, Any]) -> None:
         text.append("")
     (path / "report.md").write_text("\n".join(text))
     Console().print(table)
+
+
+def goal_table(goals: list[dict[str, Any]]) -> list[str]:
+    text = [
+        "### Goals",
+        "",
+        "| Variant | Operation | Goal | Verdict | Evidence |",
+        "|---|---|---|---|---|",
+    ]
+    for goal in goals:
+        for name in ("G2", "G3", "G4"):
+            value = goal[name]
+            if name == "G2":
+                evidence = (
+                    f"geomean={value['geomean']}, tiers={value['tier_geomeans']}, "
+                    f"significant >1.10: {len(value['significant_above_1_10'])}, "
+                    f"cases={value['cases']}/{value['required_cases']}, rounds={value['rounds']}"
+                )
+            elif name == "G3":
+                evidence = (
+                    f"worst={value['worst_ratio']}, "
+                    f"significant >1: {len(value['significant_above_1'])}, "
+                    f"missing={len(value['missing_cases'])}, rounds={value['rounds']}"
+                )
+            else:
+                evidence = (
+                    f"small={value['small']['status']} (ratio={value['small']['ratio']}), "
+                    f"const={value['const']['status']}, no-call=NA (checked by binary test, P4)"
+                )
+            if "reason" in value:
+                evidence += ". " + value["reason"]
+            text.append(
+                f"| {goal['variant']} | {goal['op']} | {name} | {value['status']} | {evidence} |"
+            )
+    text += ["", "Full goal evidence and missing cases appear in `summary.json`.", ""]
+    return text
