@@ -32,7 +32,13 @@ PROBE: dict[str, Any] = {
         name: {"offset": hex(pair["glibc"]["offset"])} for name, pair in RESOLUTION.items()
     },
 }
+CODEGEN: dict[str, Any] = {
+    "binary_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "checked_roots": ["fastmem_copy", "fastmem_move", "bench_fastmem.runFastmemInline__test"],
+    "delegations": [],
+}
 META_V2 = {
+    "codegen": CODEGEN,
     "resolution": RESOLUTION,
     "libc_path": LIBC_PATH,
     "libc_base": 0x10000,

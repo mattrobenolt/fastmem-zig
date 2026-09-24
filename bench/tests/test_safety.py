@@ -1,5 +1,6 @@
 import errno
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,8 @@ def test_stop_before_restore_on_interrupt(config: Config) -> None:
 
 
 def test_build_race_enotempty(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import CODEGEN
+
     config.targets["intel"]["zig_target"] = "x86_64-linux-gnu"
     source = Source("v0", "WORKTREE", config.root, "hash")
 
@@ -139,11 +142,13 @@ def test_build_race_enotempty(config: Config, monkeypatch: pytest.MonkeyPatch) -
 
     def rename(_path: Path, target: Path) -> None:
         target.mkdir(exist_ok=True)
+        shutil.copytree(_path / "bin", target / "bin")
         (target / "complete.json").write_text("{}")
         raise OSError(errno.ENOTEMPTY, "Directory not empty")
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(Path, "rename", rename)
     monkeypatch.setattr("fastmem_bench.build.verify_builtin_calls", lambda _: None)
+    monkeypatch.setattr("fastmem_bench.build.inspect_codegen", lambda _: CODEGEN)
     results = build_all(config, [source], ["intel"])
     assert results["v0/intel"].error is None

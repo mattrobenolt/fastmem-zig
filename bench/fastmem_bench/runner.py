@@ -15,6 +15,7 @@ from ec2bench.parallel import Outcome, parallel, progress
 from ec2bench.runs import create_run, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze, validate_effect
 from fastmem_bench.build import build_all, disassemble, provenance, resolve
+from fastmem_bench.codegen import verify_recorded
 from fastmem_bench.protocol import execute, orders
 from fastmem_bench.report import write
 
@@ -135,6 +136,18 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
     write_manifest(path, manifest)
     builds = build_all(config, sources, names)
     manifest.update(provenance(sources, builds))
+    manifest["codegen"] = {
+        name: {
+            source.variant: build.codegen
+            for source in sources
+            if (build := builds[f"{source.variant}/{name}"].value) is not None
+        }
+        for name in names
+    }
+    if not no_aa:
+        for evidence in manifest["codegen"].values():
+            if variants[0] in evidence:
+                evidence["aa"] = evidence[variants[0]]
     write_manifest(path, manifest)
     outputs = fleet.outputs()
 
@@ -180,6 +193,8 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
             expected_round_count=rounds,
             probe=protocol["libc_probe"],
         )
+        if result["codegen"] != protocol["codegen"]:
+            raise ValueError("Analysis codegen evidence disagrees with the build")
         # Keep the independent resolution evidence in both the manifest and target artifacts.
         manifest.setdefault("libc_probes", {})[name] = protocol["libc_probe"]
         result["protocol"] = protocol
@@ -238,6 +253,9 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
                 expected_round_count=manifest["rounds"],
                 probe=json.loads((run_dir / target / "libc-probe.json").read_text()),
             )
+            expected = manifest.get("codegen", {}).get(target)
+            if expected is not None:
+                verify_recorded(result["codegen"], expected)
             old = previous.get("targets", {}).get(target, {})
             if "protocol" in old:
                 result["protocol"] = old["protocol"]

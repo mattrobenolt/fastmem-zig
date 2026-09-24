@@ -74,7 +74,10 @@ def execute(  # noqa: PLR0915 — keep the target lifecycle and cleanup together
     box.run(f"mkdir -p {shlex.quote(remote)}")
     by_variant = {build.source.variant: build for build in builds}
     for variant, build in by_variant.items():
+        if build.codegen is None:
+            raise ValueError(f"Missing codegen evidence for {variant}/{target}")
         box.upload(build.prefix / "bin/bench-fastmem", f"{remote}/bin/{variant}")
+        box.upload(build.prefix / "bin/codegen.json", f"{remote}/bin/{variant}")
     box.upload(builds[0].prefix / "bin/libc-probe", remote)
     binary_args = list(binary_args or [])
     if "--dist-file" in binary_args:
@@ -115,13 +118,29 @@ def execute(  # noqa: PLR0915 — keep the target lifecycle and cleanup together
                         run_isolated(
                             box,
                             cpu,
-                            [binary, "--suite", suite, "--seed", str(seed), *(binary_args or [])],
+                            [
+                                binary,
+                                "--suite",
+                                suite,
+                                "--seed",
+                                str(seed),
+                                "--codegen-file",
+                                f"{remote}/bin/{binary_variant}/codegen.json",
+                                *(binary_args or []),
+                            ],
                             unit=f"{path.name}-{variant}-r{round_index}",
                             output=output,
                             error=error,
                         )
                         box.download(f"{remote}/raw/{variant}", destination / "raw" / variant)
-                        parse(destination / "raw" / variant / f"r{round_index}.jsonl", probe=probe)
+                        measurement = parse(
+                            destination / "raw" / variant / f"r{round_index}.jsonl",
+                            probe=probe,
+                        )
+                        if measurement.meta["codegen"] != by_variant[variant].codegen:
+                            raise ValueError(
+                                f"Raw codegen evidence disagrees with build for {variant}"
+                            )
             finally:
                 stop_isolated(box, path.name)
     finally:
@@ -132,4 +151,5 @@ def execute(  # noqa: PLR0915 — keep the target lifecycle and cleanup together
         "instance_id": box.instance_id,
         "warnings": warnings,
         "libc_probe": probe,
+        "codegen": {variant: build.codegen for variant, build in by_variant.items()},
     }

@@ -84,7 +84,12 @@ def slowdown(row: dict[str, Any], threshold: float) -> bool:
     return row["ci95"][0] > threshold
 
 
-def evaluate(rows: list[dict[str, Any]], variants: list[str]) -> list[dict[str, Any]]:
+def evaluate(
+    rows: list[dict[str, Any]],
+    variants: list[str],
+    *,
+    codegen: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     # Import here to keep the statistical implementation in one module.
     from fastmem_bench.analysis import geomean
 
@@ -179,6 +184,7 @@ def evaluate(rows: list[dict[str, Any]], variants: list[str]) -> list[dict[str, 
                 const_evidence["reason"] = (
                     "All const sizes, five rounds, and A/A evidence are required."
                 )
+            apply_codegen(g2, g3, (codegen or {}).get(variant))
             goals.append({"variant": variant, "op": op, "G2": g2, "G3": g3, "G4": g4})
     return goals
 
@@ -197,3 +203,20 @@ def detail(row: dict[str, Any]) -> dict[str, Any]:
             "significant",
         )
     }
+
+
+def apply_codegen(g2: dict[str, Any], g3: dict[str, Any], evidence: dict[str, Any] | None) -> None:
+    if evidence is None:
+        for goal in (g2, g3):
+            goal.update(status="NA", reason="The binary has no codegen evidence.")
+        return
+    symbols = sorted({call["symbol"] for call in evidence["delegations"]})
+    if symbols:
+        reasons = [f"fastmem delegates to {symbol}" for symbol in symbols]
+        for goal in (g2, g3):
+            goal.update(
+                status="INVALID",
+                reason=". ".join(reasons),
+                reasons=reasons,
+                delegations=evidence["delegations"],
+            )

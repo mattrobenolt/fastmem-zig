@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from fastmem_bench.codegen import inspect
 from fastmem_bench.jsonl import parse_text, verify_probe
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,3 +127,30 @@ def test_native_shared_indirect_loop_and_compiler_rt() -> None:
         # Clock callbacks also use indirect calls. Match only the memory operation site.
         instructions = "\n".join(site.splitlines()[:6])
         assert re.search(r"\bblr\s+x\d+|\bcallq?\s+\*", instructions)
+
+
+def test_native_codegen_evidence_is_bound_to_the_executable(tmp_path: Path) -> None:
+    evidence = inspect(BINARY)
+    sidecar = tmp_path / "codegen.json"
+    sidecar.write_text(json.dumps(evidence))
+    args = (
+        "--suite",
+        "quick",
+        "--filter",
+        "copy/aligned/8",
+        "--sample-ms",
+        "1",
+        "--warmup-ms",
+        "0",
+        "--codegen-file",
+        str(sidecar),
+    )
+    result = invoke(*args)
+    assert result.returncode == 0, result.stderr
+    assert parse_text(result.stdout).meta["codegen"] == evidence
+    evidence["binary_sha256"] = "0" * 64
+    sidecar.write_text(json.dumps(evidence))
+    result = invoke(*args)
+    assert result.returncode != 0
+    assert "CodegenEvidenceDoesNotMatchExecutable" in result.stderr
+    assert not result.stdout

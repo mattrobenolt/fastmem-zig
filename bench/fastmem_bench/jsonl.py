@@ -59,6 +59,29 @@ class Resolution(Record):
     builtin: Evidence
 
 
+class Delegation(Record):
+    caller: str
+    symbol: Literal["memcpy", "memmove", "memset"]
+    address: str = Field(pattern=r"^0x[0-9a-f]+$")
+
+
+class Codegen(Record):
+    binary_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checked_roots: list[str]
+    delegations: list[Delegation]
+
+    @model_validator(mode="after")
+    def check_roots(self) -> Codegen:
+        roots = set(self.checked_roots)
+        if len(roots) != len(self.checked_roots) or not {"fastmem_copy", "fastmem_move"} <= roots:
+            raise ValueError("Codegen evidence requires unique ABI roots")
+        if not any(root.startswith("bench_fastmem.runFastmemInline") for root in roots):
+            raise ValueError("Codegen evidence requires inline roots")
+        if any(call.caller not in roots for call in self.delegations):
+            raise ValueError("Delegation caller is outside the inspected roots")
+        return self
+
+
 class Meta(Record):
     type: Literal["meta"]
     schema_version: Literal[2] = Field(alias="schema")
@@ -82,6 +105,7 @@ class Meta(Record):
     libc_path: str
     libc_base: int = Field(gt=0)
     resolution: dict[str, Resolution]
+    codegen: Codegen | None
 
     @field_validator("schema_version", mode="before")
     @classmethod

@@ -74,13 +74,17 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     expected_round_count: int | None = None,
     probe: dict[str, Any] | None = None,
 ) -> tuple[
-    dict[tuple[str, str, str], dict[int, list[float]]], dict[str, dict[str, Any]], list[str]
+    dict[tuple[str, str, str], dict[int, list[float]]],
+    dict[str, dict[str, Any]],
+    list[str],
+    dict[str, Any],
 ]:
     data: dict[tuple[str, str, str], dict[int, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     details: dict[str, dict[str, Any]] = {}
     variant_cases: dict[str, set[tuple[str, str]]] = {}
+    codegen: dict[str, Any] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -94,6 +98,10 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
         expected_rounds = rounds
         for path in paths:
             measurement = parse(path, probe=probe)
+            evidence = measurement.meta["codegen"]
+            if variant in codegen and codegen[variant] != evidence:
+                raise ValueError(f"Codegen evidence changed within {variant}")
+            codegen[variant] = evidence
             cases = {(sample["case"], sample["impl"]) for sample in measurement.samples}
             if variant in variant_cases and cases != variant_cases[variant]:
                 raise ValueError(f"Rounds have different case/implementation sets within {variant}")
@@ -123,7 +131,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     data = {key: rounds for key, rounds in data.items() if (key[1], key[2]) in common}
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return data, details, warnings
+    return data, details, warnings, codegen
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -148,7 +156,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_effect(minimum_effect)
-    data, details, warnings = load_rounds(
+    data, details, warnings, codegen = load_rounds(
         raw,
         [*variants, *([aa] if aa else [])],
         expected_round_count=expected_round_count,
@@ -213,7 +221,8 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
             ):
                 compare(case, f"{candidate}/{reference}", variant, candidate, variant, reference)
     result = summarize(rows, warnings, minimum_effect)
-    result["goals"] = evaluate(rows, variants)
+    result["codegen"] = codegen
+    result["goals"] = evaluate(rows, variants, codegen=codegen)
     return result
 
 

@@ -368,7 +368,7 @@ bench-fastmem [--suite quick|standard|large|const|dist]
               [--filter <substring>]...
               [--impl builtin,glibc,fastmem_abi,fastmem_inline,builtin_const]
               [--samples N] [--sample-ms M] [--warmup-ms W]
-              [--seed S] [--dist-file <path>] [--list]
+              [--seed S] [--dist-file <path>] [--codegen-file <path>] [--list]
 ```
 
 The defaults are `standard`, all applicable implementations, 20 ms per sample, 10 ms warmup, and seed 1.
@@ -555,6 +555,7 @@ Meta fields:
 | `set_value`, `fastmem_set` | Integer 165 and the availability of the public set API |
 | `libc_path`, `libc_base` | The `dlopen` library path and integer base address |
 | `resolution` | Objects for `memcpy`, `memmove`, and `memset` |
+| `codegen` | Binary inspection evidence, or null without `--codegen-file` |
 | `perf` | Object with `available`, `events`, and `error` |
 
 Each resolution object contains `glibc` and `builtin` evidence objects.
@@ -627,7 +628,7 @@ Distribution floors remain per operation and size tier.
 
 Both output files contain a Goals section for each target, revision, and operation.
 The machine representation is `targets.<target>.goals` in `summary.json`.
-Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, or NA status.
+Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, NA, or INVALID status.
 Missing cases, fewer than five rounds, or absent A/A evidence produce NA for the affected component.
 
 G2 includes the fixed standard runtime cases and `dist/small` and `dist/mixed`.
@@ -646,6 +647,38 @@ A copy timing pass therefore does not imply a complete G4 pass.
 The goal implementation is `bench/fastmem_bench/goals.py`.
 The goal tests are `bench/tests/test_v2.py`.
 The thresholds come from G2 through G4 in `docs/fastmem-plan.md`.
+
+### Delegation evidence
+
+The harness disassembles every `fastmem_*` ABI entry and every `runFastmemInline` loop body.
+Separate inline entry names keep builtin const loops outside that check.
+The check detects calls and tail branches to `memcpy`, `memmove`, or `memset`.
+It examines caller disassembly, not glibc implementation code.
+
+The build artifact `bin/codegen.json` contains these fields:
+
+| Field | Type and meaning |
+|---|---|
+| `binary_sha256` | 64 lowercase hexadecimal characters that identify the executable bytes |
+| `checked_roots` | The unique ABI and inline symbols that the harness inspects |
+| `delegations` | A list of objects with `caller`, `symbol`, and hexadecimal instruction `address` strings |
+
+Missing ABI or inline roots fail the build check.
+The harness supplies `--codegen-file` on every remote run.
+The binary checks its `/proc/self/exe` digest against the sidecar before any measurement.
+A digest mismatch causes a nonzero exit.
+The binary emits the evidence unchanged in `meta.codegen`.
+
+The manifest records the same evidence for every target and variant.
+The harness checks raw meta records against that evidence.
+Offline analysis also checks the raw records against the manifest.
+Evidence must remain identical across rounds of one variant.
+
+Any detected delegation marks G2 and G3 INVALID for that target and variant, across all operations.
+The reason names each symbol, for example `fastmem delegates to memcpy`.
+INVALID takes precedence over incomplete timing evidence and over a favorable ratio.
+No codegen evidence produces NA, never PASS, for G2 and G3.
+The fastmem kernels remain unchanged.
 
 ### Build and libc-probe
 

@@ -397,6 +397,7 @@ const Config = struct {
     warmup_ms: u32 = 10,
     seed: u64 = 1,
     dist_file: ?[]const u8 = null,
+    codegen_file: ?[]const u8 = null,
     list: bool = false,
 
     fn matches(self: Config, id: []const u8) bool {
@@ -438,6 +439,8 @@ fn parseArgs(arena: Allocator, args: []const [:0]const u8) !Config {
             try cfg.filters.append(arena, value);
         } else if (mem.eql(u8, flag, "--dist-file")) {
             cfg.dist_file = value;
+        } else if (mem.eql(u8, flag, "--codegen-file")) {
+            cfg.codegen_file = value;
         } else if (mem.eql(u8, flag, "--seed")) {
             cfg.seed = try fmt.parseInt(u64, value, 10);
         } else if (mem.eql(u8, flag, "--samples")) {
@@ -667,7 +670,7 @@ const Result = struct { ns: u64, iters: u64, counters: ?Counts };
 
 // The volatile load stops LLVM from specializing the shared indirect loop for a known wrapper.
 // Every indirect implementation enters the same instantiation, with one pointer load per batch.
-noinline fn runLoop(
+inline fn loopBody(
     comptime op: Op,
     comptime mode: Mode,
     comptime const_len: ?u32,
@@ -713,6 +716,32 @@ noinline fn runLoop(
     const counters = if (perf) |p| p.end() else null;
     return .{ .ns = ns, .iters = iters, .counters = counters };
 }
+// Dedicated entry names let the harness inspect inline fastmem separately from builtin_const.
+noinline fn runFastmemInline(
+    comptime op: Op,
+    comptime const_len: ?u32,
+    io: Io,
+    perf: ?*Perf,
+    functions: *const Functions,
+    case: Case,
+    buffers: Buffers,
+    iters: u64,
+) Result {
+    return loopBody(op, .fastmem_inline, const_len, io, perf, functions, case, buffers, iters);
+}
+noinline fn runLoop(
+    comptime op: Op,
+    comptime mode: Mode,
+    comptime const_len: ?u32,
+    io: Io,
+    perf: ?*Perf,
+    functions: *const Functions,
+    case: Case,
+    buffers: Buffers,
+    iters: u64,
+) Result {
+    return loopBody(op, mode, const_len, io, perf, functions, case, buffers, iters);
+}
 fn runBatch(
     io: Io,
     perf: ?*Perf,
@@ -751,9 +780,8 @@ fn runBatch(
                     buffers,
                     iters,
                 ),
-                .fastmem_inline => runLoop(
+                .fastmem_inline => runFastmemInline(
                     .copy,
-                    .fastmem_inline,
                     len,
                     io,
                     perf,
@@ -769,7 +797,7 @@ fn runBatch(
     }
     return switch (case.op) {
         inline else => |op| if (impl == .fastmem_inline)
-            runLoop(op, .fastmem_inline, null, io, perf, &functions, case, buffers, iters)
+            runFastmemInline(op, null, io, perf, &functions, case, buffers, iters)
         else
             runLoop(op, .indirect, null, io, perf, &functions, case, buffers, iters),
     };
@@ -866,7 +894,36 @@ fn jsonLine(w: *Io.Writer, value: anytype) !void {
     try json.Stringify.value(value, .{}, w);
     try w.writeByte('\n');
 }
-fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
+const Codegen = struct {
+    binary_sha256: []const u8,
+    checked_roots: []const []const u8,
+    delegations: []const struct { caller: []const u8, symbol: []const u8, address: []const u8 },
+
+    fn read(arena: Allocator, io: Io, path: []const u8) !Codegen {
+        const bytes = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20));
+        const parsed = try json.parseFromSlice(Codegen, arena, bytes, .{});
+        const executable = try Io.Dir.cwd().readFileAlloc(
+            io,
+            "/proc/self/exe",
+            arena,
+            .limited(128 << 20),
+        );
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(executable, &digest, .{});
+        const hex = fmt.bytesToHex(digest, .lower);
+        if (!mem.eql(u8, &hex, parsed.value.binary_sha256))
+            return error.CodegenEvidenceDoesNotMatchExecutable;
+        return parsed.value;
+    }
+};
+
+fn emitMeta(
+    w: *Io.Writer,
+    cfg: Config,
+    symbols: Symbols,
+    perf: Perf,
+    codegen: ?Codegen,
+) !void {
     var perf_error: [512]u8 = undefined;
     try jsonLine(w, .{
         .type = "meta",
@@ -888,6 +945,7 @@ fn emitMeta(w: *Io.Writer, cfg: Config, symbols: Symbols, perf: Perf) !void {
         .dist_file = cfg.dist_file,
         .set_value = set_value,
         .fastmem_set = has_fastmem_set,
+        .codegen = codegen,
         .libc_path = symbols.libc_path,
         .libc_base = symbols.libc_base,
         .resolution = .{
@@ -931,6 +989,7 @@ fn run(init: process.Init) !void {
     var cfg = try parseArgs(arena, try init.minimal.args.toSlice(arena));
     var symbols = try Symbols.init();
     defer symbols.deinit();
+    const codegen = if (cfg.codegen_file) |path| try Codegen.read(arena, init.io, path) else null;
     var perf: Perf = .init();
     defer perf.close();
     const cases = try buildCases(arena, init.io, cfg);
@@ -956,7 +1015,7 @@ fn run(init: process.Init) !void {
     var buffer: [8192]u8 = undefined;
     var writer: Io.File.Writer = .init(.stdout(), init.io, &buffer);
     const w = &writer.interface;
-    try emitMeta(w, cfg, symbols, perf);
+    try emitMeta(w, cfg, symbols, perf, codegen);
     if (cfg.list) {
         for (cases) |case| try jsonLine(w, .{
             .type = "case",

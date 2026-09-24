@@ -6,10 +6,15 @@ from typing import Any
 import pytest
 
 from fastmem_bench.analysis import analyze
-from fastmem_bench.goals import CONST_SIZES, evaluate, required_cases
+from fastmem_bench.goals import CONST_SIZES, required_cases
+from fastmem_bench.goals import evaluate as evaluate_goals
 from fastmem_bench.jsonl import parse, parse_text, verify_probe
-from tests.conftest import PROBE, measurement
+from tests.conftest import CODEGEN, PROBE, measurement
 from tests.test_protocol import FakeBox, setup
+
+
+def evaluate(rows: list[dict[str, Any]], variants: list[str]) -> list[dict[str, Any]]:
+    return evaluate_goals(rows, variants, codegen=dict.fromkeys(variants, CODEGEN))
 
 
 def test_v2_resolution_and_probe(tmp_path: Path) -> None:
