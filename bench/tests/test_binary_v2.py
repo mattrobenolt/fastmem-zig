@@ -109,10 +109,16 @@ def test_native_shared_indirect_loop_and_compiler_rt() -> None:
         [
             "llvm-objdump",
             "-d",
+            "--source",
             "--disassemble-symbols=" + ",".join(loops),
             str(BINARY),
         ],
         text=True,
     )
     # The C function pointer path remains indirect after ReleaseFast optimization.
-    assert re.search(r"\bblr\s+x\d+|\bcallq?\s+\*", disassembly)
+    call_sites = disassembly.split("function(dst, src, len);")[1:]
+    assert call_sites
+    for site in call_sites:
+        # Clock callbacks also use indirect calls. Match only the memory operation site.
+        instructions = "\n".join(site.splitlines()[:6])
+        assert re.search(r"\bblr\s+x\d+|\bcallq?\s+\*", instructions)
