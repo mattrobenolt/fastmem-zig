@@ -101,7 +101,15 @@ G1. Correctness.
 - Guard-page tests pass for every operation: all sizes 0 to 1024, every
   source and destination offset 0 to 63, both overlap directions and every
   gap 1 to 128 for `move`, and sizes up to 1 MiB at page boundaries.
-- The differential fuzzer against a byte-loop reference passes.
+- Large moves also use the gaps 3840, 3841, 3968, 4000, 4095, 4096, 4097,
+  8192, len/2, and len-1 (the 4K-aliasing dispatch), in both directions,
+  and disjoint moves run with the destination below and above the source.
+- The largest guard-tested size is above the largest non-temporal
+  threshold of any kernel on the target, so the NT path has coverage.
+- The test data does not repeat within the largest tested size.
+- The differential fuzzers (copy, move, set) use a byte-loop reference,
+  canaries, independent offsets, lengths up to 64 KiB, and move gaps up to
+  16 KiB in both directions.
 - The tests run on the target hardware of each box, not only locally.
 
 G2. Kernel parity with glibc (C-ABI call, runtime length).
