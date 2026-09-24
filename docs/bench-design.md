@@ -384,7 +384,7 @@ Empty selections and invalid arguments cause a nonzero exit.
 
 | Name | Operation |
 |---|---|
-| `builtin` | Runtime-length `@memcpy`, `@memmove`, or `@memset` in a noinline C-ABI wrapper |
+| `builtin` | The validated `@extern` pointer to compiler-rt `memcpy`, `memmove`, or `memset` |
 | `glibc` | The function pointer from `dlopen("libc.so.6")` and `dlsym` |
 | `fastmem_abi` | The public fastmem API in a noinline C-ABI wrapper |
 | `fastmem_inline` | The public fastmem API directly in the timed loop |
@@ -409,6 +409,8 @@ The builtin evidence comes from `@extern` addresses for `memcpy`, `memmove`, and
 Each address must resolve to the executable, not libc.
 A failed invariant causes a nonzero exit and an error on stderr.
 The build includes compiler-rt explicitly.
+Builtin wrappers remain only for the codegen proof.
+The timed builtin path calls their resolved callees directly, without the extra wrapper.
 The harness binary check proves that each builtin wrapper calls the corresponding local text symbol.
 
 The inline and ABI paths call the existing public fastmem API without kernel modifications.

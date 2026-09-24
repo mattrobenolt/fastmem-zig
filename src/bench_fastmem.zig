@@ -641,12 +641,15 @@ fn runBatch(
         .copy = switch (impl) {
             .glibc => if (case.op == .move) symbols.move else symbols.copy,
             .fastmem_abi => if (case.op == .move) &fastmemMove else &fastmemCopy,
-            else => if (case.op == .move) &builtinMove else &builtinCopy,
+            else => if (case.op == .move)
+                @extern(CopyFn, .{ .name = "memmove" })
+            else
+                @extern(CopyFn, .{ .name = "memcpy" }),
         },
         .set = switch (impl) {
             .glibc => symbols.set,
             .fastmem_abi => &fastmemSet,
-            else => &builtinSet,
+            else => @extern(SetFn, .{ .name = "memset" }),
         },
     };
     if (mem.eql(u8, case.profile, "const")) {
