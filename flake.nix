@@ -62,7 +62,7 @@
             ]
             # User-mode qemu runs cross-built x86 test binaries on the arm
             # dev host (AVX2 only: it lacks AVX-512). Linux only.
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qemu-user ];
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.qemu-user ];
             # Keep uv on the nix interpreter; never download a Python.
             env = {
               UV_PYTHON = "${pkgs.python314}/bin/python3";
