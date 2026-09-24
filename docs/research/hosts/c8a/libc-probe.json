@@ -1,0 +1,32 @@
+{
+  "libc_path": "/nix/store/7nbi22pcc92y2fqbkyp7h3srvvklmckb-glibc-2.40-224/lib/libc.so.6",
+  "glibc_version": "2.40",
+  "symbols": {
+    "memcpy": {
+      "address": "0x7ffff7796380",
+      "symbol": null,
+      "offset": "0x196380",
+      "resolved_variant": [
+        "__memcpy_avx512_unaligned_erms",
+        "__memmove_avx512_unaligned_erms"
+      ]
+    },
+    "memmove": {
+      "address": "0x7ffff7796380",
+      "symbol": null,
+      "offset": "0x196380",
+      "resolved_variant": [
+        "__memcpy_avx512_unaligned_erms",
+        "__memmove_avx512_unaligned_erms"
+      ]
+    },
+    "memset": {
+      "address": "0x7ffff7796c00",
+      "symbol": null,
+      "offset": "0x196c00",
+      "resolved_variant": [
+        "__memset_avx512_unaligned_erms"
+      ]
+    }
+  }
+}
