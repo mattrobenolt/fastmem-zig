@@ -115,6 +115,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            // Match the production module so tests build the same code.
+            .no_builtin = true,
+            .omit_frame_pointer = true,
         }),
     });
 
