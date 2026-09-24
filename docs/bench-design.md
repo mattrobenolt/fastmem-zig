@@ -705,3 +705,105 @@ The harness saves on-box disassembly for all three glibc functions beside the ta
 These artifacts remain under gitignored result directories.
 They never enter this MIT repository.
 The clean-room rule is in `docs/fastmem-plan.md`.
+
+## Correctness tests (G1)
+
+`src/tests/main.zig` exercises the public API, not private kernels.
+`zig build install` installs the static Linux binary at `zig-out/bin/fastmem-tests`.
+`zig build test-bin` installs only this binary.
+`zig build test-guard -Doptimize=ReleaseFast` executes the full guard suite.
+The separate step keeps the exhaustive matrix outside the short unit-test cycle.
+
+The API contract is:
+
+```zig
+pub fn copy(comptime T: type, dest: []T, source: []const T) void;
+pub fn move(comptime T: type, dest: []T, source: []const T) void;
+pub fn set(comptime T: type, dest: []T, value: T) void;
+pub const impl = .{
+    .copy = @as([]const u8, "kernel-name"),
+    .move = @as([]const u8, "kernel-name"),
+    .set = @as([]const u8, "kernel-name"),
+};
+```
+
+Functions can be inline.
+Each `impl` field identifies the selected kernel family at comptime.
+The tests gate `set` with `@hasDecl` until the public function exists.
+A pass with `set_available: false` covers only copy and move, not all of G1.
+
+### Guard coverage
+
+Each mapping has inaccessible pages on both sides of its accessible window.
+The suite reuses two mappings per size class and slides slices inside them.
+The source mapping for disjoint operations is read-only.
+The oracle uses independent byte loops, with intrinsics disabled.
+Every case compares the entire accessible destination window, which includes all canaries outside the destination slice.
+
+| Operation | Lengths | Offsets or gaps | Placement |
+|---|---|---|---|
+| Copy and disjoint move | Every length 0..1024 | Cartesian product of source and destination insets 0..63 | Start and end |
+| Overlap move | Every length 0..1024 | Every gap 0..128, both directions | Union start and union end |
+| Set, when available | Every length 0..1024 | Destination insets 0..63, values 0x00/0x5a/0xff | Start and end |
+| Copy and disjoint move | Large samples through 1 MiB | Source and destination insets 0 and 1 | Start and end |
+| Overlap move | Large samples through 1 MiB | Every gap 0..128, both directions | Union start and union end |
+| Set, when available | Large samples through 1 MiB | Destination insets 0 and 1, values 0x00/0x5a/0xff | Start and end |
+
+Large samples include powers of two from 1024 through 1 MiB, with adjacent lengths that remain within the limit.
+They also include 4095, 4096, and 4097 multiplied by powers of two through the same limit.
+Duplicate lengths remain separate test cases.
+Gap zero tests identity moves.
+
+Page protection has page granularity, so arbitrary offsets cannot all touch a guard page exactly.
+Inset zero puts the slice start or end directly against the corresponding guard.
+For every small length, each source has exact adjacency with every destination inset, and each destination has exact adjacency with every source inset.
+Both slices use the same placement side in each disjoint case.
+Overlap cases place the union against the guard, so neither valid slice crosses an inaccessible page.
+Canaries detect writes into accessible padding, but cannot detect reads into that padding.
+
+### Result protocol
+
+The binary emits one JSON line on stdout and exits nonzero on failure.
+The summary contains:
+
+- `schema: 1` and `status: "pass"` or `"fail"`.
+- `cases`, `elapsed_ns`, `cpu`, and `optimize`.
+- `set_available` and the three `impl` identifiers.
+- `detail` and the last case's operation, length, offsets, gap, side, and value.
+
+SIGSEGV and SIGBUS handlers report `guard-page fault` with the current case before exit.
+A fixed buffer and raw write keep the fault path independent of allocation and buffered output.
+Offsets in failure records are relative to the accessible window, not the selected slice.
+A fault can indicate a source write because the disjoint source mapping is read-only.
+
+The existing copy and move differential fuzzers remain in `src/root.zig`.
+The gated set fuzzer in `src/tests/fuzz.zig` compares the entire buffer against a byte-loop reference.
+`just fuzz 1K` runs the fuzzers with the ReleaseSafe workaround for Zig issue 30655.
+
+### Fleet adapter
+
+`just b test` tests every active target.
+Repeated `--target` options select specific targets.
+`--up` requests fleet startup through `ec2bench`.
+Without `--up`, the command neither launches nor terminates instances.
+
+The adapter builds two ReleaseFast binaries per target:
+
+- The `zig_target` and `zig_cpu` from `bench.toml`.
+- The same target with `x86_64_v3` on x86 or `generic` on aarch64.
+
+Targets run in parallel without CPU isolation.
+Each target runs its two variants sequentially.
+A failed variant does not prevent the other variant from execution.
+The table reports both statuses and set availability.
+Any failed build, transport, summary, or suite causes a nonzero exit.
+
+Each `bench-results/<timestamp>-test/` directory contains:
+
+- `manifest.json`, with source hash, Git state, Zig version, target configuration, and instance IDs.
+- `summary.json`, with results and kernel identifiers for each target and variant.
+- `<target>/<variant>/build/`, with the binary, build command, and build log.
+- `<target>/<variant>/raw/`, with stdout JSON, stderr, exit status, and the remote binary.
+
+The adapter preserves raw files after test failures and attempts their retrieval after transport failures.
+`bench/tests/test_correctness.py` covers the adapter with fake builds, boxes, and fleet responses.

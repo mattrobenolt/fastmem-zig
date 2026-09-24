@@ -6,7 +6,7 @@ const Guarded = @import("Guarded.zig");
 const posix = std.posix;
 const linux = std.os.linux;
 const mem = std.mem;
-const fmt = std.fmt;
+const json = std.json;
 const Io = std.Io;
 const process = std.process;
 
@@ -34,33 +34,21 @@ comptime {
 fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
     var buffer: [2048]u8 = undefined;
     const c = @as(*volatile Case, &current).*;
-    const line = fmt.bufPrint(
-        &buffer,
-        "{{\"schema\":1,\"status\":\"{s}\",\"cases\":{d},\"elapsed_ns\":{d}," ++
-            "\"cpu\":\"{s}\",\"optimize\":\"{s}\",\"set_available\":{}," ++
-            "\"impl\":{{\"copy\":\"{s}\",\"move\":\"{s}\",\"set\":\"{s}\"}}," ++
-            "\"detail\":\"{s}\",\"case\":{{\"op\":\"{s}\",\"len\":{d},\"src\":{d}," ++
-            "\"dst\":{d},\"gap\":{d},\"side\":\"{s}\",\"value\":{d}}}}}\n",
-        .{
-            status,
-            count,
-            elapsed_ns,
-            builtin.cpu.model.name,
-            @tagName(builtin.mode),
-            @hasDecl(fastmem, "set"),
-            fastmem.impl.copy,
-            fastmem.impl.move,
-            fastmem.impl.set,
-            detail,
-            @tagName(c.op),
-            c.len,
-            c.src,
-            c.dst,
-            c.gap,
-            @tagName(c.side),
-            c.value,
-        },
-    ) catch return;
+    var writer: Io.Writer = .fixed(&buffer);
+    json.Stringify.value(.{
+        .schema = 1,
+        .status = status,
+        .cases = count,
+        .elapsed_ns = elapsed_ns,
+        .cpu = builtin.cpu.model.name,
+        .optimize = @tagName(builtin.mode),
+        .set_available = @hasDecl(fastmem, "set"),
+        .impl = fastmem.impl,
+        .detail = detail,
+        .case = c,
+    }, .{}, &writer) catch return;
+    writer.writeByte('\n') catch return;
+    const line = writer.buffered();
     _ = linux.write(1, line.ptr, line.len);
 }
 
@@ -221,7 +209,7 @@ fn run(allocator: mem.Allocator) !void {
     for (&small, 0..) |*len, i| len.* = @intCast(i);
     try sizeClass(allocator, &small, 64, 1);
     // Each large size gets its own page-rounded window, not a 1 MiB small-case mapping.
-    var power: u32 = 2048;
+    var power: u32 = 1024;
     while (power <= 1024 * 1024) : (power *= 2) {
         for ([_]u32{ power - 1, power, power + 1 }) |len| {
             if (len > 1024 * 1024) continue;
