@@ -26,7 +26,7 @@ exe.root_module.addImport("fastmem", fastmem.module("fastmem"));
 comptime { @import("fastmem").exportSymbols(); }
 ```
 
-4. Remove other strong definitions of the three memory symbols from the same link.
+4. Remove your own definitions of the three memory symbols before you enable the exports.
 5. For Debug builds, set `exe.use_llvm = true` or pass `-fllvm` to `zig build-exe`.
 
 ## API choice
@@ -40,23 +40,32 @@ The consumer module keeps its normal builtin behavior.
 The consumer must not set `no_builtin = true` for this feature.
 That setting can replace builtin calls with inline loops, which symbol exports cannot intercept.
 
-Zig functions use `@export` with `.strong` linkage and `.hidden` visibility.
-The aarch64 ABI entries are assembly functions.
-Zig 0.16 rejects `@export` of an extern function.
-The aarch64 path therefore uses strong, hidden ELF aliases through `.globl`, `.hidden`, and `.set`.
+Both architectures use `@export` with `.strong` linkage and `.hidden` visibility.
+The aarch64 entries are naked Zig functions with their original assembly instructions.
+The API casts their addresses to the libc function types.
+The byte tests pin each kernel to its measured instruction bytes.
+No assembler-only alias bypasses Zig symbol checks.
 
 ## Guarantees
 
 For runtime byte lengths, the ReleaseFast and ReleaseSafe consumer probes call the fastmem ABI entries.
 The probes cover links both with and without libc.
 They also cover links both with and without the compiler-rt `__udivti3` helper.
-The strong definitions take precedence over compiler-rt and glibc.
+The strong definitions take precedence over compiler-rt in separate archive objects and over glibc.
+Compiler-rt inside the same Zig compilation receives a collision error.
 
 The exported kernel bodies contain no branch to any memory entry.
-The binary tests also follow direct branches into Zig kernel helpers.
-They exclude standard-library panic handlers for invalid inputs.
+The binary tests follow every direct branch target, including common helpers and standard-library functions.
+They exclude only named panic handlers for invalid inputs.
+An unresolved direct target fails the audit.
+A compiled negative fixture proves that the audit detects recursion through `std.mem.replace`.
+
 A ReleaseSafe panic handler can use memory functions for its diagnostic output.
 The checks do not claim a proof for arbitrary indirect control flow.
+
+The generic ABI entries and fallback helpers also use `@disableIntrinsics()`.
+Baseline x86_64 probes pass without the module-level `no_builtin` setting.
+The public module retains that setting as another safeguard.
 
 The three symbols do not appear in `.dynsym`.
 This holds for the executable probes and the shared-library probes.
@@ -98,6 +107,8 @@ A shared library can opt in for its own link unit.
 Its internal calls bind to its hidden fastmem definitions.
 Those definitions do not interpose the executable or other shared libraries.
 The tests inspect both direct calls and `.dynsym` in `-dynamic` library builds.
+Separate shared-library probes disable compiler-rt with `-fno-compiler-rt`.
+Compiler-rt cannot mask an incorrect export visibility in those probes.
 
 An executable export does not replace the private memory operations of an already-built shared library.
 For example, handoff's AWS-LC shared library keeps its own glibc calls.
@@ -116,12 +127,27 @@ Fortified C calls keep their existing bounds-check behavior.
 
 ### Competing definitions
 
-The link must have only one strong provider of each memory symbol.
-An existing replacement must be removed before this API is enabled.
+Consumers must remove their own definitions of all three memory symbols before the opt-in.
+This requirement includes all export kinds:
 
-A conflicting Zig export in the same assembly unit can silently replace an aarch64 `.set` alias.
-The compiler does not always report a duplicate symbol in that case.
-The handoff validation caught this conflict through ABI-address checks before its final test runs.
+- Strong exports.
+- Weak exports.
+- Exports without explicit linkage.
+
+Zig rejects a competing export on both architectures with this diagnostic:
+
+```text
+error: exported symbol collision: memset
+```
+
+The diagnostic names the conflicting symbol.
+The collision tests cover each symbol and each export kind on both architectures.
+They also reject `zig build-obj -fcompiler-rt`, which inserts compiler-rt into the same compilation.
+Normal executable links can retain compiler-rt in its separate archive object.
+
+The earlier aarch64 assembler aliases silently lost to competing Zig definitions.
+The current naked entries remove that failure mode.
+Handoff still requires removal of its existing `memset` export before the opt-in.
 
 ## Test commands
 
@@ -139,14 +165,22 @@ nix develop -c zig build test-export-std
 
 `zig build test` also runs `test-export`.
 The standard-library subset is a separate step because its four builds take several minutes.
-The Linux test environment needs Python and LLVM tools from the flake.
-Cross-architecture execution uses user-mode QEMU from the flake.
+
+The checks need Python and LLVM tools from the flake.
+Linux hosts execute compatible Linux binaries.
+Cross-architecture execution requires an available user-mode QEMU executable.
+Other hosts compile and inspect the Linux probes without execution.
+The standard-library step follows the same rule.
+Its non-Linux matrix uses explicit Linux targets rather than the native target.
 
 The binary matrix covers these cases:
 
 - Both architectures, both release modes, libc on or off, and u128 division on or off.
 - Debug with LLVM, Debug builtin probes without LLVM, and refusal of non-LLVM exports.
-- Opt-out controls, relocatable-object linkage, dynamic executables, and shared libraries.
+- Opt-out controls and relocatable-object linkage.
+- Dynamic executables and shared libraries, including libraries without compiler-rt.
+- Competing exports and compiler-rt inside the same compilation.
+- Original aarch64 instruction bytes and fallback kernels without module-level intrinsic suppression.
 - Generic aarch64, Neoverse V1/V2/V3, x86_64 baseline, and x86_64_v3.
 
 The libc-free consumer tests execute every length from 0 through 8192 bytes.
@@ -160,4 +194,5 @@ The native standard-library and handoff tests exercise SVE on launchpad.
 
 The [validation record](results/export-layer-0.16.md) contains the tested revisions and results.
 The upstream subset passes 254 tests in each of four configurations.
-The handoff copy passes both release modes with the export active, including its live socket tests.
+The earlier handoff validation passed both release modes with the export active, including its live socket tests.
+That validation predates the naked-entry revision.

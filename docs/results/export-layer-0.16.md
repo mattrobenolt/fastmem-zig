@@ -7,8 +7,15 @@ The validation made no performance claim and launched no AWS instances.
 
 ## Binary matrix
 
-`zig build test-export -j4 --summary all` passed all 100 build steps.
-The step includes 28 linked images, two Debug objects, two linkage objects, and two expected compile failures.
+The revised export code reached `247e198` after review.
+`zig build test-export -j4 --summary all` passed all 203 build steps.
+The step includes these checks:
+
+- 33 valid linked images and one deliberately recursive image.
+- Two Debug objects and two linkage objects.
+- Four aarch64 objects with pinned instruction bytes.
+- 36 expected collision failures and two expected backend failures.
+- Seven Python tests for host selection and the branch audit.
 
 | Hazard | Test | Result |
 |---|---|---|
@@ -16,9 +23,14 @@ The step includes 28 linked images, two Debug objects, two linkage objects, and 
 | Weak export | Relocatable symbols are `GLOBAL HIDDEN` | Pass |
 | Compiler-rt override | Runtime u128 division adds `__udivti3` without a provider change | Pass |
 | glibc override | Both libc states retain the fastmem addresses | Pass |
-| Kernel recursion | Direct branch audit of entries and Zig kernel helpers | Pass |
+| Kernel recursion | Every direct branch target except named panic handlers | Pass |
+| Hidden helper recursion | Compiled `std.mem.replace` fixture receives rejection | Pass |
+| Competing Zig exports | All three names, strong/weak/default, on both architectures | Expected collision errors |
+| Same-compilation compiler-rt | All three names with `build-obj -fcompiler-rt` | Expected collision errors |
+| Local intrinsic suppression | Baseline x86_64 without module-level `no_builtin`, three modes | Pass |
+| aarch64 code preservation | Per-entry bytes match `2fe71ee`, four CPU models | Pass |
 | Executable interposition | Three memory symbols absent from `.dynsym` | Pass |
-| Shared-library interposition | Same absence in both ELF shared-library probes | Pass |
+| Shared-library interposition | Same absence with and without compiler-rt on both architectures | Pass |
 | C binding | Three separate C probes branch to the same ABI addresses | Pass |
 | Accidental opt-in | Disabled controls bind to compiler-rt, not the ABI addresses | Pass |
 | Unsupported backend | Both non-LLVM export attempts produce the expected compile error | Pass |
@@ -30,7 +42,51 @@ Their fill operation is a call on aarch64 and inline `rep stosb` on x86_64.
 
 The glibc cross binaries receive static inspection only.
 Zig 0.16 rejects static glibc links for these targets.
-The native handoff tests provide runtime coverage with glibc and compiler-rt together.
+The earlier handoff tests provide runtime coverage with glibc and compiler-rt together.
+That coverage predates the naked-entry revision.
+
+## Review regression checks
+
+The aarch64 entries now use naked Zig functions and `@export`.
+Their instruction bytes remain identical to `2fe71ee`.
+The object metadata and section layout are not byte-identical.
+Each entry retains its 64-byte alignment.
+The permanent byte tests compare SHA-256 hashes of the instruction bodies.
+
+| CPU | Set bytes | Copy bytes | Move bytes |
+|---|---:|---:|---:|
+| Generic aarch64 | 288 | 448 | 448, same entry as copy |
+| Neoverse V1 | 256 | 368 | 368, same entry as copy |
+| Neoverse V2 | 256 | 368 | 368, same entry as copy |
+| Neoverse V3 | 336 | 512 | 192, separate head and padding |
+
+The reviewer's three conflict files each fail on generic aarch64 and Neoverse V3:
+
+- `/tmp/rv-p6/conf/conflict.zig`
+- `/tmp/rv-p6/conf/conflict_weak.zig`
+- `/tmp/rv-p6/conf/conflict_default.zig`
+
+Each error includes `exported symbol collision: memset`.
+The permanent suite covers all three symbols on these CPU models and x86_64_v3.
+It also checks all three collision diagnostics from compiler-rt inside one compilation.
+
+The strengthened audit rejects the reviewer's original planted Debug binary.
+Its cache identifier is `3d5bf64c3f6c1f8302a15307cba1b026` under `/tmp/rv-p6/fm/.zig-cache/o`.
+The diagnostic contains this exact path:
+
+```text
+memmove -> x86_64.move.mediumKernel -> x86_64.move.largeKernel -> mem.replace__anon_36442 -> memmove
+```
+
+A separate temporary copy exported `memset` with default visibility.
+Its x86_64 shared library used `-fno-compiler-rt`.
+`llvm-readelf` showed `memset` in `.dynsym`, and the checker rejected its visibility.
+The permanent suite includes this shared-library configuration on both architectures.
+
+The host tests simulate Linux and non-Linux systems.
+They test both available and absent QEMU executables.
+No Darwin host executed the suite during this validation.
+Linux binaries receive static checks when no compatible Linux runner exists.
 
 ## Standard library
 
@@ -47,6 +103,7 @@ nix develop -c zig build test-export-std
 | x86_64_v3, QEMU | ReleaseFast | 254 passed |
 | x86_64_v3, QEMU | ReleaseSafe | 254 passed |
 
+The post-review rerun passed all four configurations above.
 The selected tests cover these modules:
 
 - `std.mem`
@@ -77,6 +134,8 @@ The BLAKE3 reference vectors and parallel-versus-sequential tests pass unchanged
 Source revision: `148f2d7b101ec6e725dbdd052ff6e4f367f37ef4`.
 The source came from `git archive` into `/tmp/fastmem-p6-handoff`.
 The original handoff checkout remained unchanged.
+The results in this section predate the review fixes.
+This revision did not repeat the handoff tests.
 
 The copy added the fastmem package dependency and imports to four roots:
 
@@ -89,6 +148,11 @@ Each root called `fastmem.exportSymbols()`.
 Each root also exposed three ABI-address constants for binary inspection.
 The copy removed only the competing export block from `src/memset.zig`.
 Its original implementation and tests remained intact.
+
+The temporary `build.zig` also changed two inspection settings:
+
+- `load_mod.strip = false` retained symbols because `-Dstrip=false` did not reach that module.
+- `b.installArtifact(tests)` installed the main test binary.
 
 The first integration attempt exposed a fastmem package bug.
 Private assembly probes replaced the public `fastmem` module with the last cross target, `aarch64-macos-none`.
@@ -129,7 +193,8 @@ No live socket test was disabled for this validation.
 The main suite includes real handshakes, certificate reload, drain, timeout, and connect-cancel tests.
 The other roots add 21 load-client tests, four backend tests, and nine sink tests.
 
-The four main test images pass the ABI-address and `.dynsym` checks.
+The four main test images passed the ABI-address and `.dynsym` checks.
+The backend, sink, and load test images did not receive those binary checks.
 Their cache identifiers, in the same order as the commands above, are:
 
 - `32a2cce1d4a3f5cab808afbcc80e7820`
@@ -144,13 +209,30 @@ Handoff did not receive a production source change from this lane.
 
 Non-LLVM exports remain unsupported.
 The same-link replacement intentionally affects C objects.
-A competing strong memory definition violates the API contract and can evade the assembler duplicate-symbol check.
+A competing Zig definition now fails compilation on both architectures.
+The direct-branch audit excludes named panic handlers and does not resolve indirect control flow.
 Other object formats remain unsupported.
 The validation does not establish performance parity or correctness on every fleet CPU.
 
 ## Repository checks
 
-`zig build test -j2 --summary all` passed all 109 build steps and all 27 Zig tests.
-`zig build -j2 --summary all` passed all nine build steps.
-The modified Zig files pass `zig fmt --check` and `ziglint`.
-The full `ziglint src/` command still reports 26 existing warnings in untouched kernel and assembly-probe files.
+`zig build test -j4 --summary all` passed all 212 build steps and all 27 Zig tests.
+`zig build -j4 --summary all` passed all nine build steps.
+`zig fmt --check build.zig src/` passed.
+
+The following paths pass `ziglint` without warnings:
+
+- `build.zig`
+- `src/root.zig`
+- `src/export/`
+- `src/aarch64/memcpy_advsimd.zig`
+- `src/aarch64/memset_advsimd.zig`
+- `src/aarch64/memset_sve.zig`
+
+The full `ziglint src/` command exits with status 1 and reports 26 pre-existing warnings.
+Some warnings occur in modified fallback files and `src/aarch64/memcpy_sve.zig`.
+The earlier claim that every modified Zig file passed lint was incorrect.
+All line-length warnings in `build.zig` are now resolved.
+
+Review-fix logs are under `/tmp/p6-fixes`.
+The original validation logs remain under `/tmp/p6-probes`.
