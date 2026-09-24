@@ -26,6 +26,17 @@ pub const flags: Flags = .{
     .move = memmove_impl.flags,
 };
 
+/// Comptime kernel identifiers for correctness and benchmark reports.
+pub const impl = .{
+    .copy = @as([]const u8, "zig-simd"),
+    .move = @as([]const u8, "zig-simd"),
+    .set = @as([]const u8, "unavailable"),
+};
+
+test {
+    _ = @import("tests/fuzz.zig");
+}
+
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
     memcpy_impl.copy(T, dest, source);
 }
