@@ -27,3 +27,28 @@ Port-level deviations (each is documented in the file header): the
 `L()`) are expanded by hand; the GNU_PROPERTY note (link-level BTI/PAC
 marking) is omitted because no other object in a Zig link carries it;
 the BTI landing pad (`hint 34`) is kept. No algorithmic change.
+
+### MIT permission notice (Arm Optimized Routines)
+
+fastmem uses the MIT option of the upstream dual license. Per its terms,
+the notice from the upstream `LICENSE` file is reproduced here:
+
+> Copyright (c) 1999-2022, Arm Limited.
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
