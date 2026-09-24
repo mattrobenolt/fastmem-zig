@@ -11,3 +11,4 @@ zig-pkg/
 .zig-cache/
 zig-out/
 .bench-cache/
+infra/modules/*/.terraform.lock.hcl
