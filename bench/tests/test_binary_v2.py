@@ -35,6 +35,14 @@ def test_native_quick_resolution_and_balance() -> None:
     verify_probe(measurement, probe)
     assert measurement.end["cases"] == 120
     assert measurement.meta["samples"] == 4
+    assert measurement.meta["schema"] == 3
+    memory = measurement.meta["memory"]
+    # Quick needs at most 256 KiB + 128 KiB + 1 per region: one 2 MiB page each.
+    assert (memory["region_bytes"], memory["arena_bytes"]) == (2 << 20, 6 << 20)
+    assert memory["base_align"] == 1 << 30
+    # The host decides whether THP backs the arena. The counts must still be readable.
+    assert memory["anon_huge_bytes_start"] is not None
+    assert memory["anon_huge_bytes_end"] is not None
     assert any(
         row["profile"] == "page-offset" and row["src_off"] == 0 and row["dst_off"] == 2048
         for row in measurement.samples
@@ -57,11 +65,10 @@ def test_native_const_and_distributions(suite: str) -> None:
     result = invoke("--suite", suite, "--sample-ms", "1", "--warmup-ms", "0")
     assert result.returncode == 0, result.stderr
     measurement = parse_text(result.stdout)
-    assert measurement.end["cases"] == (13 if suite == "const" else 6)
+    assert measurement.end["cases"] == (39 if suite == "const" else 6)
+    assert {row["op"] for row in measurement.samples} == {"copy", "move", "set"}
     if suite == "const":
         assert {row["impl"] for row in measurement.samples} == {"builtin_const", "fastmem_inline"}
-    else:
-        assert {row["op"] for row in measurement.samples} == {"copy", "move", "set"}
 
 
 def test_native_histogram_and_standard_coverage(tmp_path: Path) -> None:
@@ -75,10 +82,13 @@ def test_native_histogram_and_standard_coverage(tmp_path: Path) -> None:
     assert {row["size"] for row in measurement.samples} == {24}
     result = invoke("--suite", "standard", "--list")
     records: list[dict[str, Any]] = [json.loads(line) for line in result.stdout.splitlines()]
-    assert records[-1]["cases"] == 514
+    assert records[-1]["cases"] == 540
+    assert records[0]["memory"] is None
     cases = {row["case"] for row in records[1:-1]}
     assert {
         "copy/const/256",
+        "move/const/1",
+        "set/const/256",
         "move/dist/small",
         "set/dist/mixed",
         "move/fwd-gap4096/65536",

@@ -15,6 +15,9 @@ from tests.conftest import measurement
         (1, "extra", 1),
         (-1, "extra", 1),
         (0, "schema", 2.0),
+        (0, "schema", 3.0),
+        (0, "schema", 4),
+        (0, "memory", None),
         (0, "chunk_bytes", 7),
         (0, "chunk_bytes", 16.0),
         (0, "samples", True),
@@ -65,7 +68,7 @@ def test_rejects_nested_and_cross_field_errors(tmp_path: Path, mutation: str) ->
         records[0]["suite"] = "dist"
     text = "\n".join(map(json.dumps, records))
     if mutation == "duplicate":
-        text = text.replace('"schema": 2', '"schema": 1, "schema": 2')
+        text = text.replace('"schema": 3', '"schema": 1, "schema": 3')
     with pytest.raises(ValueError, match=r"."):
         parse_text(text)
 

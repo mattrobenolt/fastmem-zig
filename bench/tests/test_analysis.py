@@ -35,7 +35,9 @@ def test_schema(tmp_path: Path) -> None:
     path = tmp_path / "round.jsonl"
     measurement(path)
     parsed = parse(path)
-    assert parsed.meta["schema"] == 2
+    assert parsed.meta["schema"] == 3
+    measurement(path, schema=2)
+    assert parse(path).meta["schema"] == 2
     assert parsed.samples[0]["ns"] / parsed.samples[0]["iters"] == 20
     path.write_text("\n".join(path.read_text().splitlines()[:-1]))
     with pytest.raises(ValueError, match="no end record"):

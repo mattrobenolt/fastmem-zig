@@ -1,4 +1,4 @@
-//! Measurement binary, schema v2. See docs/bench-design.md.
+//! Measurement binary, schema v3. See docs/bench-design.md.
 //! All timings use independent code. No external memory implementation is copied here.
 
 const std = @import("std");
@@ -21,6 +21,7 @@ const json = std.json;
 const print = std.debug.print;
 const page_size_min = std.heap.page_size_min;
 const DefaultPrng = std.Random.DefaultPrng;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const c = @cImport({
     @cDefine("_GNU_SOURCE", "1");
     @cInclude("dlfcn.h");
@@ -42,6 +43,17 @@ const max_size = 1 << 30;
 const seq_len = 4096;
 const max_iters = 1 << 30;
 const set_value = 0xa5;
+const schema = 3;
+// Memory regions are whole PMD huge pages, so that THP can back every byte.
+const huge_page_bytes = 2 << 20;
+// Virtual address bits below this alignment are the same in every process. Structures
+// indexed or hashed by virtual address (L1D way predictors, TLB sets) then see one layout
+// instead of a new ASLR draw per round.
+const arena_align = 1 << 30;
+// Linux 5.14. std.os.linux.MADV does not define it.
+const madv_populate_write = 23;
+const madv_collapse = 25;
+const thp_dir = "/sys/kernel/mm/transparent_hugepage/";
 const has_fastmem_set = @hasDecl(fastmem, "set");
 const Op = enum { copy, move, set };
 const Impl = enum { builtin, glibc, fastmem_abi, fastmem_inline, builtin_const };
@@ -472,13 +484,31 @@ const Case = struct {
     seq: ?[]const Entry = null,
 
     fn accepts(self: Case, impl: Impl) bool {
-        if (mem.eql(u8, self.profile, "const"))
-            return impl == .builtin_const or impl == .fastmem_inline;
-        if (impl == .builtin_const) return false;
-        return self.op != .set or has_fastmem_set or
-            (impl != .fastmem_abi and impl != .fastmem_inline);
+        const fastmem_impl = impl == .fastmem_abi or impl == .fastmem_inline;
+        if (self.op == .set and !has_fastmem_set and fastmem_impl) return false;
+        return if (self.constant())
+            impl == .builtin_const or impl == .fastmem_inline
+        else
+            impl != .builtin_const;
+    }
+    fn constant(self: Case) bool {
+        return mem.eql(u8, self.profile, "const");
+    }
+    // Bytes of each arena region that the case can touch.
+    fn footprint(self: Case) u64 {
+        const padding: u64 = if (self.seq != null)
+            512
+        else
+            @as(u64, @max(self.src_off, self.dst_off)) + 1;
+        return @as(u64, self.max_len) + padding;
     }
 };
+fn addConstCases(arena: Allocator, cases: *ArrayList(Case), cfg: Config) !void {
+    for ([_]Op{ .copy, .move, .set }) |op| {
+        for (const_sizes) |size|
+            try addCase(arena, cases, cfg, try fixedCase(arena, op, "const", size));
+    }
+}
 fn addCase(arena: Allocator, cases: *ArrayList(Case), cfg: Config, case: Case) !void {
     if (!cfg.matches(case.id)) return;
     for (cfg.impls) |impl| {
@@ -575,8 +605,7 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
                 try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, weights));
         }
     } else if (cfg.suite == .@"const") {
-        for (const_sizes) |size|
-            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+        try addConstCases(arena, &cases, cfg);
     } else {
         const sizes: []const u32 = switch (cfg.suite) {
             .quick => &quick_sizes,
@@ -630,8 +659,7 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
         }
     }
     if (cfg.suite == .standard) {
-        for (const_sizes) |size|
-            try addCase(arena, &cases, cfg, try fixedCase(arena, .copy, "const", size));
+        try addConstCases(arena, &cases, cfg);
         for ([_]Op{ .copy, .move, .set }) |op| {
             for ([_][]const u8{ "small", "mixed" }) |name|
                 try addCase(arena, &cases, cfg, try distribution(arena, cfg, op, name, null));
@@ -644,34 +672,265 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
 const Buffers = struct {
     src: []align(page_size_min) u8,
     dst: []align(page_size_min) u8,
-    fn init(case: Case) !Buffers {
-        const padding: u64 = if (case.seq != null)
-            512
-        else
-            @as(u64, @max(case.src_off, case.dst_off)) + 1;
-        const len = @as(u64, case.max_len) + padding;
-        const src = try mapBytes(len);
-        errdefer posix.munmap(src);
-        const dst = try mapBytes(len);
-        for (src, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
-        // These buffers contain synthetic bytes, never secrets.
-        @memset(dst, 0x5a);
-        return .{ .src = src, .dst = dst };
+};
+
+/// Transparent huge page policy of the host, from sysfs.
+const Thp = struct {
+    enabled: ?[]const u8,
+    defrag: ?[]const u8,
+    pmd_bytes: ?u64,
+
+    /// The allocator must be an arena: the strings live until the process ends.
+    fn read(arena: Allocator, io: Io) Thp {
+        const size = sysfs("hpage_pmd_size", arena, io);
+        return .{
+            .enabled = selected(sysfs("enabled", arena, io)),
+            .defrag = selected(sysfs("defrag", arena, io)),
+            .pmd_bytes = if (size) |text|
+                fmt.parseInt(u64, mem.trim(u8, text, " \n"), 10) catch null
+            else
+                null,
+        };
     }
-    fn deinit(self: Buffers) void {
-        posix.munmap(self.src);
-        posix.munmap(self.dst);
+    fn sysfs(comptime name: []const u8, arena: Allocator, io: Io) ?[]const u8 {
+        return readKernelFile(arena, io, thp_dir ++ name, 4096);
+    }
+    /// The active choice of a sysfs policy list, for example `madvise` in
+    /// `always [madvise] never`.
+    fn selected(text: ?[]const u8) ?[]const u8 {
+        const after = (mem.cutScalar(u8, text orelse return null, '[') orelse return null)[1];
+        return (mem.cutScalar(u8, after, ']') orelse return null)[0];
     }
 };
-fn mapBytes(len: u64) ![]align(page_size_min) u8 {
-    return posix.mmap(
-        null,
+
+test "thp policy parsing selects the bracketed value" {
+    try testing.expectEqualStrings("madvise", Thp.selected("always [madvise] never\n").?);
+    try testing.expectEqualStrings("always", Thp.selected("[always] defer never").?);
+    try testing.expect(Thp.selected("always madvise never") == null);
+    try testing.expect(Thp.selected(null) == null);
+}
+
+/// The benchmark memory: one mapping for every case of the run. It is allocated and
+/// pre-faulted once, before any timing. Each case uses the same fixed offsets in it, so
+/// physical placement does not change between cases, and virtual placement does not
+/// change between processes. With THP, the physical address bits below 21 equal the
+/// virtual bits: the cache set of every byte is then the same in every round.
+///
+/// Layout: [src region][dst region][seq region]. Every region is a multiple of 2 MiB.
+const Memory = struct {
+    bytes: []align(page_size_min) u8,
+    region_bytes: u64,
+    advice: linux.E,
+    populate: linux.E,
+    collapse: linux.E,
+    thp: Thp,
+    huge_start: ?u64,
+    huge_end: ?u64 = null,
+
+    const seq_bytes = mem.alignForward(u64, seq_len * @sizeOf(Entry), huge_page_bytes);
+
+    fn init(arena: Allocator, io: Io, cases: []const Case) !Memory {
+        var need: u64 = 1;
+        for (cases) |case| need = @max(need, case.footprint());
+        const region_bytes = mem.alignForward(u64, need, huge_page_bytes);
+        const bytes = try reserveAligned(2 * region_bytes + seq_bytes);
+        errdefer posix.munmap(bytes);
+        // The advice must precede the first touch: a fault in an advised range allocates
+        // a huge page directly. khugepaged would collapse pages later, during timing.
+        const advice = advise(bytes, linux.MADV.HUGEPAGE);
+        const populate = advise(bytes, madv_populate_write);
+        // Without MADV_POPULATE_WRITE, these stores fault in every page before timing.
+        fill(bytes, region_bytes, region_bytes);
+        // The sequence region contains synthetic entries, never secrets.
+        @memset(bytes[2 * region_bytes ..], 0);
+        // A fault falls back to small pages when no free huge page exists. The collapse
+        // retries with synchronous compaction (Linux 6.1). It is a no-op for huge pages.
+        const collapse = advise(bytes, madv_collapse);
+        var self: Memory = .{
+            .bytes = bytes,
+            .region_bytes = region_bytes,
+            .advice = advice,
+            .populate = populate,
+            .collapse = collapse,
+            .thp = .read(arena, io),
+            .huge_start = null,
+        };
+        self.huge_start = self.hugeBytes(arena, io);
+        return self;
+    }
+    fn deinit(self: *Memory) void {
+        posix.munmap(self.bytes);
+        self.* = undefined;
+    }
+    /// Restores the initial bytes of the case footprint and returns views at the fixed
+    /// region starts. A shared case uses only the source region.
+    fn buffers(self: Memory, case: Case) Buffers {
+        const len = case.footprint();
+        fill(self.bytes, self.region_bytes, len);
+        return .{
+            .src = self.bytes[0..len],
+            .dst = @alignCast(self.bytes[self.region_bytes..][0..len]),
+        };
+    }
+    /// Copies a distribution sequence to the fixed sequence region.
+    fn placeSeq(self: Memory, seq: []const Entry) []const Entry {
+        const slot: [*]Entry = @ptrCast(@alignCast(self.bytes[2 * self.region_bytes ..].ptr));
+        @memcpy(slot[0..seq.len], seq);
+        return slot[0..seq.len];
+    }
+    // The regions contain synthetic bytes, never secrets.
+    fn fill(bytes: []u8, region_bytes: u64, len: u64) void {
+        for (bytes[0..len], 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
+        @memset(bytes[region_bytes..][0..len], 0x5a);
+    }
+    fn advise(bytes: []align(page_size_min) u8, advice: u32) linux.E {
+        return linux.errno(linux.madvise(bytes.ptr, bytes.len, advice));
+    }
+    fn hugeBytes(self: Memory, arena: Allocator, io: Io) ?u64 {
+        const smaps = readKernelFile(arena, io, "/proc/self/smaps", 64 << 20) orelse return null;
+        defer arena.free(smaps);
+        return anonHugeBytes(smaps, @intFromPtr(self.bytes.ptr), self.bytes.len);
+    }
+    fn meta(self: Memory) MemoryMeta {
+        return .{
+            .arena_bytes = self.bytes.len,
+            .region_bytes = self.region_bytes,
+            .dst_offset = self.region_bytes,
+            .seq_offset = 2 * self.region_bytes,
+            .hugepage_advice = @tagName(self.advice),
+            .populate = @tagName(self.populate),
+            .collapse = @tagName(self.collapse),
+            .thp_enabled = self.thp.enabled,
+            .thp_defrag = self.thp.defrag,
+            .thp_pmd_bytes = self.thp.pmd_bytes,
+            .anon_huge_bytes_start = self.huge_start,
+            .anon_huge_bytes_end = self.huge_end,
+        };
+    }
+};
+const MemoryMeta = struct {
+    layout: []const u8 = "arena",
+    arena_bytes: u64,
+    region_bytes: u64,
+    base_align: u64 = arena_align,
+    src_offset: u64 = 0,
+    dst_offset: u64,
+    seq_offset: u64,
+    hugepage_advice: []const u8,
+    populate: []const u8,
+    collapse: []const u8,
+    thp_enabled: ?[]const u8,
+    thp_defrag: ?[]const u8,
+    thp_pmd_bytes: ?u64,
+    anon_huge_bytes_start: ?u64,
+    anon_huge_bytes_end: ?u64,
+};
+
+/// procfs reports size 0, so a positional read stops at once. Read the stream.
+fn readKernelFile(arena: Allocator, io: Io, path: []const u8, limit: usize) ?[]u8 {
+    var file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    defer file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var reader = file.readerStreaming(io, &buffer);
+    return reader.interface.allocRemaining(arena, .limited(limit)) catch null;
+}
+
+/// Maps `len` bytes at an `arena_align` boundary. It reserves the slack as PROT_NONE,
+/// maps the aligned part over it, and releases the rest.
+fn reserveAligned(len: u64) ![]align(page_size_min) u8 {
+    const private: posix.MAP = .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .NORESERVE = true };
+    const reserve = try posix.mmap(null, len + arena_align, .{}, private, -1, 0);
+    const start = @intFromPtr(reserve.ptr);
+    const base = mem.alignForward(u64, start, arena_align);
+    var fixed = private;
+    fixed.FIXED = true;
+    fixed.NORESERVE = false;
+    const bytes = posix.mmap(
+        @ptrFromInt(base),
         len,
         .{ .READ = true, .WRITE = true },
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        fixed,
         -1,
         0,
-    );
+    ) catch |err| {
+        posix.munmap(reserve);
+        return err;
+    };
+    if (base > start) posix.munmap(reserve[0 .. base - start]);
+    const tail = base - start + len;
+    if (tail < reserve.len) posix.munmap(@alignCast(reserve[tail..]));
+    return bytes;
+}
+
+/// Sums AnonHugePages over the mappings of /proc/self/smaps that overlap [start, start+len).
+fn anonHugeBytes(smaps: []const u8, start: u64, len: u64) ?u64 {
+    var total: u64 = 0;
+    var found = false;
+    var inside = false;
+    var lines = mem.splitScalar(u8, smaps, '\n');
+    while (lines.next()) |line| {
+        if (vmaRange(line)) |range| {
+            inside = range[0] < start + len and start < range[1];
+            found = found or inside;
+        } else if (inside) {
+            const rest = mem.cutPrefix(u8, line, "AnonHugePages:") orelse continue;
+            const kib = fmt.parseInt(u64, mem.trim(u8, rest, " kB"), 10) catch return null;
+            total += kib * 1024;
+        }
+    }
+    return if (found) total else null;
+}
+fn vmaRange(line: []const u8) ?[2]u64 {
+    const token = (mem.cutScalar(u8, line, ' ') orelse return null)[0];
+    const low, const high = mem.cutScalar(u8, token, '-') orelse return null;
+    return .{
+        fmt.parseInt(u64, low, 16) catch return null,
+        fmt.parseInt(u64, high, 16) catch return null,
+    };
+}
+
+test "smaps parsing sums huge pages of the overlapping mappings only" {
+    const smaps =
+        \\40000000-40400000 rw-p 00000000 00:00 0 
+        \\Size:               4096 kB
+        \\AnonHugePages:      2048 kB
+        \\VmFlags: rd wr mr mw me ac hg
+        \\40400000-40600000 rw-p 00000000 00:00 0 
+        \\AnonHugePages:      2048 kB
+        \\7f0000000000-7f0000001000 r-xp 00000000 00:00 0    [vdso]
+        \\AnonHugePages:      4096 kB
+    ;
+    try testing.expectEqual(@as(?u64, 4 << 20), anonHugeBytes(smaps, 0x40000000, 6 << 20));
+    try testing.expectEqual(@as(?u64, 2 << 20), anonHugeBytes(smaps, 0x40000000, 4 << 20));
+    try testing.expectEqual(@as(?u64, null), anonHugeBytes(smaps, 0x50000000, 4096));
+}
+
+test "memory regions sit at fixed offsets from an aligned base" {
+    var arena_state: ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const cases = [_]Case{
+        .{ .id = "copy/aligned/8", .op = .copy, .profile = "aligned", .size = 8, .max_len = 8 },
+        .{
+            .id = "move/fwd-half/65536",
+            .op = .move,
+            .profile = "fwd-half",
+            .size = 65536,
+            .max_len = 65536,
+            .src_off = 32768,
+        },
+    };
+    var memory: Memory = try .init(arena_state.allocator(), testing.io, &cases);
+    defer memory.deinit();
+    try testing.expectEqual(@as(u64, 0), @intFromPtr(memory.bytes.ptr) % arena_align);
+    try testing.expectEqual(@as(u64, huge_page_bytes), memory.region_bytes);
+    try testing.expectEqual(@as(u64, 3 * huge_page_bytes), memory.bytes.len);
+    try testing.expect(memory.huge_start != null);
+    const views = memory.buffers(cases[1]);
+    try testing.expectEqual(memory.bytes.ptr, views.src.ptr);
+    try testing.expectEqual(memory.bytes[huge_page_bytes..].ptr, views.dst.ptr);
+    try testing.expectEqual(@as(usize, 65536 + 32769), views.dst.len);
+    try testing.expectEqual(@as(u8, 17 +% 131), views.src[1]);
+    try testing.expectEqual(@as(u8, 0x5a), views.dst[views.dst.len - 1]);
 }
 const Functions = struct { copy: CopyFn, set: SetFn };
 const Result = struct { ns: u64, iters: u64, counters: ?Counts };
@@ -714,7 +973,11 @@ inline fn loopBody(
                 .move => fastmem.move(u8, dst[0..len], src[0..len]),
                 .set => if (has_fastmem_set) fastmem.set(u8, dst[0..len], set_value),
             },
-            .builtin_const => @memcpy(dst[0..len], src[0..len]),
+            .builtin_const => switch (op) {
+                .copy => @memcpy(dst[0..len], src[0..len]),
+                .move => @memmove(dst[0..len], src[0..len]),
+                .set => @memset(dst[0..len], set_value),
+            },
         }
         // A memory clobber preserves the full inline operation, not just the observed byte.
         asm volatile ("" ::: .{ .memory = true });
@@ -777,31 +1040,33 @@ fn runBatch(
             else => @extern(SetFn, .{ .name = "memset" }),
         },
     };
-    if (mem.eql(u8, case.profile, "const")) {
+    if (case.constant()) {
         inline for (const_sizes) |len| {
-            if (case.max_len == len) return switch (impl) {
-                .builtin_const => runLoop(
-                    .copy,
-                    .builtin_const,
-                    len,
-                    io,
-                    perf,
-                    &functions,
-                    case,
-                    buffers,
-                    iters,
-                ),
-                .fastmem_inline => runFastmemInline(
-                    .copy,
-                    len,
-                    io,
-                    perf,
-                    &functions,
-                    case,
-                    buffers,
-                    iters,
-                ),
-                else => unreachable,
+            if (case.max_len == len) return switch (case.op) {
+                inline else => |op| switch (impl) {
+                    .builtin_const => runLoop(
+                        op,
+                        .builtin_const,
+                        len,
+                        io,
+                        perf,
+                        &functions,
+                        case,
+                        buffers,
+                        iters,
+                    ),
+                    .fastmem_inline => runFastmemInline(
+                        op,
+                        len,
+                        io,
+                        perf,
+                        &functions,
+                        case,
+                        buffers,
+                        iters,
+                    ),
+                    else => unreachable,
+                },
             };
         }
         unreachable;
@@ -847,11 +1112,13 @@ fn measureCase(
     cfg: Config,
     symbols: *const Symbols,
     perf: *Perf,
-    case: Case,
+    memory: Memory,
+    listed: Case,
     output: *ArrayList(Sample),
 ) !void {
-    const buffers: Buffers = try .init(case);
-    defer buffers.deinit();
+    var case = listed;
+    if (listed.seq) |seq| case.seq = memory.placeSeq(seq);
+    const buffers = memory.buffers(case);
     var impls: ArrayList(Impl) = .empty;
     for (cfg.impls) |impl| if (case.accepts(impl)) try impls.append(arena, impl);
     var iterations = [_]u64{0} ** 5;
@@ -934,11 +1201,12 @@ fn emitMeta(
     symbols: Symbols,
     perf: Perf,
     codegen: ?Codegen,
+    memory: ?MemoryMeta,
 ) !void {
     var perf_error: [512]u8 = undefined;
     try jsonLine(w, .{
         .type = "meta",
-        .schema = 2,
+        .schema = schema,
         .rev = options.rev,
         .zig = builtin.zig_version_string,
         .target = @tagName(builtin.cpu.arch) ++ "-" ++
@@ -957,6 +1225,7 @@ fn emitMeta(
         .set_value = set_value,
         .fastmem_set = has_fastmem_set,
         .codegen = codegen,
+        .memory = memory,
         .libc_path = symbols.libc_path,
         .libc_base = symbols.libc_base,
         .resolution = .{
@@ -1016,17 +1285,24 @@ fn run(init: process.Init) !void {
     cfg.impls = active.items;
     if (cfg.samples == 0) cfg.samples = balancedSamples(cfg, cases);
     var output: ArrayList(Sample) = .empty;
+    var memory: ?Memory = if (cfg.list) null else try .init(arena, init.io, cases);
+    defer if (memory) |*value| value.deinit();
     const start = Io.Timestamp.now(init.io, .awake);
-    if (!cfg.list) for (cases) |case| {
-        print("bench-fastmem: {s}\n", .{case.id});
-        try measureCase(arena, init.io, cfg, &symbols, &perf, case, &output);
-    };
+    if (memory) |*value| {
+        for (cases) |case| {
+            print("bench-fastmem: {s}\n", .{case.id});
+            try measureCase(arena, init.io, cfg, &symbols, &perf, value.*, case, &output);
+        }
+        // A later collapse by khugepaged changes placement during the run. The meta
+        // record shows it as a difference between the start and end counts.
+        value.huge_end = value.hugeBytes(arena, init.io);
+    }
     const elapsed: u64 = @intCast(start.durationTo(.now(init.io, .awake)).nanoseconds);
     // Delay stdout so the meta record includes errors from any perf ioctl or read.
     var buffer: [8192]u8 = undefined;
     var writer: Io.File.Writer = .init(.stdout(), init.io, &buffer);
     const w = &writer.interface;
-    try emitMeta(w, cfg, symbols, perf, codegen);
+    try emitMeta(w, cfg, symbols, perf, codegen, if (memory) |value| value.meta() else null);
     if (cfg.list) {
         for (cases) |case| try jsonLine(w, .{
             .type = "case",

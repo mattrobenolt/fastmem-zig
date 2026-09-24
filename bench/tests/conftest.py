@@ -1,4 +1,4 @@
-"""Schema-v2 fixtures and project configuration."""
+"""Schema-v2 and v3 fixtures and project configuration."""
 
 import json
 from pathlib import Path
@@ -37,6 +37,23 @@ CODEGEN: dict[str, Any] = {
     "checked_roots": ["fastmem_copy", "fastmem_move", "bench_fastmem.runFastmemInline__test"],
     "delegations": [],
 }
+MEMORY: dict[str, Any] = {
+    "layout": "arena",
+    "arena_bytes": 6 << 20,
+    "region_bytes": 2 << 20,
+    "base_align": 1 << 30,
+    "src_offset": 0,
+    "dst_offset": 2 << 20,
+    "seq_offset": 4 << 20,
+    "hugepage_advice": "SUCCESS",
+    "populate": "SUCCESS",
+    "collapse": "SUCCESS",
+    "thp_enabled": "madvise",
+    "thp_defrag": "madvise",
+    "thp_pmd_bytes": 2 << 20,
+    "anon_huge_bytes_start": 6 << 20,
+    "anon_huge_bytes_end": 6 << 20,
+}
 META_V2 = {
     "codegen": CODEGEN,
     "resolution": RESOLUTION,
@@ -73,12 +90,20 @@ zig_cpu = "neoverse_v2"
     return Config.load(tmp_path)
 
 
-def measurement(path: Path, scale: float = 1.0, *, size: int = 64) -> None:
+def measurement(
+    path: Path,
+    scale: float = 1.0,
+    *,
+    size: int = 64,
+    schema: int = 3,
+    memory: dict[str, Any] | None = None,
+) -> None:
     records: list[dict[str, Any]] = [
         {
             **META_V2,
+            **({"memory": memory or MEMORY} if schema == 3 else {}),
             "type": "meta",
-            "schema": 2,
+            "schema": schema,
             "rev": "fixture",
             "zig": "0.16.0",
             "target": "x86_64-linux-gnu",

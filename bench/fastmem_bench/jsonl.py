@@ -1,4 +1,8 @@
-"""Schema-v2 input and independent libc-probe resolution checks."""
+"""Schema-v2 and v3 input and independent libc-probe resolution checks.
+
+v3 adds the `memory` meta object and const cases for move and set. The parser
+accepts both versions, so that old run directories still analyze.
+"""
 
 import json
 import re
@@ -12,6 +16,8 @@ Implementation = Literal["builtin", "glibc", "fastmem_abi", "fastmem_inline", "b
 Operation = Literal["copy", "move", "set"]
 IMPLEMENTATIONS = ("builtin", "glibc", "fastmem_abi", "fastmem_inline", "builtin_const")
 SYMBOLS = ("memcpy", "memmove", "memset")
+SCHEMAS = (2, 3)
+HUGE_PAGE = 2 << 20
 
 
 class Record(BaseModel):
@@ -82,9 +88,46 @@ class Codegen(Record):
         return self
 
 
+class Memory(Record):
+    """The v3 benchmark memory: one arena at fixed offsets, with its THP state."""
+
+    layout: Literal["arena"]
+    arena_bytes: int = Field(gt=0)
+    region_bytes: int = Field(gt=0)
+    base_align: int = Field(gt=0)
+    src_offset: int = Field(ge=0)
+    dst_offset: int = Field(ge=0)
+    seq_offset: int = Field(ge=0)
+    hugepage_advice: str = Field(min_length=1)
+    populate: str = Field(min_length=1)
+    collapse: str = Field(min_length=1)
+    thp_enabled: str | None
+    thp_defrag: str | None
+    thp_pmd_bytes: int | None = Field(gt=0)
+    anon_huge_bytes_start: int | None = Field(ge=0)
+    anon_huge_bytes_end: int | None = Field(ge=0)
+
+    @model_validator(mode="after")
+    def check_layout(self) -> Memory:
+        region = self.region_bytes
+        if region % HUGE_PAGE or self.base_align % HUGE_PAGE:
+            raise ValueError("Memory regions must be whole 2 MiB pages")
+        if self.base_align & (self.base_align - 1):
+            raise ValueError("Memory alignment must be a power of two")
+        if (self.src_offset, self.dst_offset, self.seq_offset) != (0, region, 2 * region):
+            raise ValueError("Memory regions are not at their fixed offsets")
+        tail = self.arena_bytes - self.seq_offset
+        if tail <= 0 or tail % HUGE_PAGE:
+            raise ValueError("Memory sequence region must be whole 2 MiB pages")
+        for value in (self.anon_huge_bytes_start, self.anon_huge_bytes_end):
+            if value is not None and value > self.arena_bytes:
+                raise ValueError("Huge page bytes exceed the arena")
+        return self
+
+
 class Meta(Record):
     type: Literal["meta"]
-    schema_version: Literal[2] = Field(alias="schema")
+    schema_version: Literal[2, 3] = Field(alias="schema")
     rev: str
     zig: str
     target: str
@@ -106,22 +149,29 @@ class Meta(Record):
     libc_base: int = Field(gt=0)
     resolution: dict[str, Resolution]
     codegen: Codegen | None
+    memory: Memory | None = None
 
     @field_validator("schema_version", mode="before")
     @classmethod
     def strict_schema(cls, value: Any) -> int:
-        if type(value) is not int or value != 2:
-            raise ValueError("Schema must be the integer 2")
+        if type(value) is not int or value not in SCHEMAS:
+            raise ValueError("Schema must be the integer 2 or 3")
         return value
+
+    @model_validator(mode="after")
+    def check_memory(self) -> Meta:
+        if (self.memory is None) != (self.schema_version == 2):
+            raise ValueError("Schema v3 requires memory, and schema v2 has none")
+        return self
 
     @model_validator(mode="after")
     def check_config(self) -> Meta:
         if self.chunk_bytes not in (16, 32):
             raise ValueError("Invalid SIMD chunk size")
         if not self.link_libc:
-            raise ValueError("Schema v2 requires libc")
+            raise ValueError("The schema requires libc")
         if self.target not in {"aarch64-linux-gnu", "x86_64-linux-gnu"}:
-            raise ValueError("Schema v2 requires a Linux GNU target")
+            raise ValueError("The schema requires a Linux GNU target")
         if self.target.startswith("aarch64") and "ref-cycles" in self.perf.events:
             raise ValueError("aarch64 does not report ref-cycles")
         if self.dist_file is not None and self.suite != "dist":
@@ -179,8 +229,6 @@ class Sample(Record):
                 raise ValueError("Perf running time exceeds enabled time")
         elif self.ref_cycles is not None:
             raise ValueError("Ref-cycles without a perf group")
-        if self.profile == "const" and self.op != "copy":
-            raise ValueError("The const profile requires copy")
         if not self.case.startswith(f"{self.op}/{self.profile}/") or self.case.count("/") != 2:
             raise ValueError("Case ID disagrees with operation/profile")
         return self
@@ -221,8 +269,8 @@ def applicable(meta: Meta, sample: Sample) -> list[str]:
         allowed = {"builtin_const", "fastmem_inline"}
     else:
         allowed = {"builtin", "glibc", "fastmem_abi", "fastmem_inline"}
-        if sample.op == "set" and not meta.fastmem_set:
-            allowed -= {"fastmem_abi", "fastmem_inline"}
+    if sample.op == "set" and not meta.fastmem_set:
+        allowed -= {"fastmem_abi", "fastmem_inline"}
     return [impl for impl in meta.impls if impl in allowed]
 
 
@@ -283,6 +331,8 @@ def validate_case(meta: Meta, sample: Sample) -> None:
     if sample.profile == "const":
         if meta.suite not in {"standard", "const"} or sample.size not in CONST_SIZES:
             raise ValueError("Const case is outside the selected suite")
+        if meta.schema_version == 2 and sample.op != "copy":
+            raise ValueError("The schema-v2 const profile requires copy")
     elif meta.suite == "const" or sample.size not in sizes[meta.suite]:
         raise ValueError("Fixed case is outside the selected suite")
     validate_offsets(meta, sample)
@@ -297,8 +347,8 @@ def validate_offsets(meta: Meta, sample: Sample) -> None:
             "page-offset": (0, 2048),
             "const": (0, 0),
         },
-        "set": {"aligned": (0, 0), "misaligned": (1, 3)},
-        "move": {"disjoint": (0, 0)},
+        "set": {"aligned": (0, 0), "misaligned": (1, 3), "const": (0, 0)},
+        "move": {"disjoint": (0, 0), "const": (0, 0)},
     }
     offsets = expected[sample.op].get(sample.profile)
     if offsets is not None:
@@ -341,8 +391,10 @@ def parse_text(text: str) -> Measurement:
     ]
     if any(not isinstance(record, dict) for record in records):
         raise ValueError("JSONL records must be objects")
-    if not records or records[0].get("type") != "meta" or records[0].get("schema") != 2:
-        raise ValueError("Expected schema-v2 meta record")
+    first = records[0] if records else {}
+    schema = first.get("schema")
+    if first.get("type") != "meta" or type(schema) is not int or schema not in SCHEMAS:
+        raise ValueError("Expected a schema-v2 or v3 meta record")
     if records[-1].get("type") != "end":
         raise ValueError("Incomplete measurement: no end record")
     meta = Meta.model_validate(records[0])
