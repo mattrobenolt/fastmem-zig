@@ -709,10 +709,14 @@ The clean-room rule is in `docs/fastmem-plan.md`.
 ## Correctness tests (G1)
 
 `src/tests/main.zig` exercises the public API, not private kernels.
-`zig build install` installs the static Linux binary at `zig-out/bin/fastmem-tests`.
+`zig build install` installs the Linux binary at `zig-out/bin/fastmem-tests`.
 `zig build test-bin` installs only this binary.
 `zig build test-guard -Doptimize=ReleaseFast` executes the full guard suite.
 The separate step keeps the exhaustive matrix outside the short unit-test cycle.
+
+The test binary links glibc, like the benchmark binary.
+This preserves the same kernel policy while the old kernels retain libc delegation.
+Cross builds depend only on glibc components and use the fleet's `nix-ld` interpreter support.
 
 The API contract is:
 
@@ -730,55 +734,113 @@ pub const impl = .{
 Functions can be inline.
 Each `impl` field identifies the selected kernel family at comptime.
 The tests gate `set` with `@hasDecl` until the public function exists.
-A pass with `set_available: false` covers only copy and move, not all of G1.
+The parser requires `impl.set == "unavailable"` exactly when `set_available` is false.
+A pass without set covers only copy and move, not all of G1.
 
 ### Guard coverage
 
 Each mapping has inaccessible pages on both sides of its accessible window.
-The suite reuses two mappings per size class and slides slices inside them.
-The source mapping for disjoint operations is read-only.
+The suite sorts three mappings by address and puts the destination between two read-only sources.
+Disjoint move tests both source address orders.
+The suite reuses mappings per size class and slides slices inside them.
+Small classes retain small windows, irrespective of the target's maximum size.
+
+The source pattern uses a splitmix64 hash of each byte index instead of a repeating 64 KiB block.
 The oracle uses independent byte loops, with intrinsics disabled.
 Every case compares the entire accessible destination window, which includes all canaries outside the destination slice.
+Overlap references read an immutable snapshot, not the mutated source.
 
-| Operation | Lengths | Offsets or gaps | Placement |
-|---|---|---|---|
-| Copy and disjoint move | Every length 0..1024 | Cartesian product of source and destination insets 0..63 | Start and end |
-| Overlap move | Every length 0..1024 | Every gap 0..128, both directions | Union start and union end |
-| Set, when available | Every length 0..1024 | Destination insets 0..63, values 0x00/0x5a/0xff | Start and end |
-| Copy and disjoint move | Large samples through 1 MiB | Source and destination insets 0 and 1 | Start and end |
-| Overlap move | Large samples through 1 MiB | Every gap 0..128, both directions | Union start and union end |
-| Set, when available | Large samples through 1 MiB | Destination insets 0 and 1, values 0x00/0x5a/0xff | Start and end |
+| Runtime path | Lengths | Source/destination insets | Move gaps | Union insets |
+|---|---|---|---|---|
+| Small | Every length 0..1024 | Independent 0..63 | Every gap 0..128 | 0, 1, 17, 63 |
+| Large through 64 KiB | Boundary samples | Independent 0, 1, 15, 16, 31, 32, 33, 63 | 0..128 and wide gaps | 0, 1, 17, 63 |
+| Large through 1 MiB | Boundary samples | Independent 0 and 1 | 0..128 and wide gaps | 0, 1, 17, 63 |
+| Above 1 MiB | Ceiling minus one and ceiling | 0 | 0, 4095, len/2, len-1 | 0 |
 
-Large samples include powers of two from 1024 through 1 MiB, with adjacent lengths that remain within the limit.
-They also include 4095, 4096, and 4097 multiplied by powers of two through the same limit.
-Duplicate lengths remain separate test cases.
+Every row uses both start and end placement, and both overlap directions.
+Wide gaps are 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len/2, and len-1.
+The suite adds wide gaps when the length exceeds 1024.
+Set uses each destination inset with values 0x00, 0x5a, and 0xff.
 Gap zero tests identity moves.
+Duplicate gaps remain separate cases.
+
+Boundary samples include powers of two from 1024 through 1 MiB, with adjacent lengths within the limit.
+They also include 4095, 4096, and 4097 multiplied by powers of two through the same limit.
+Duplicate lengths remain separate cases.
+
+`src/tests/paths.zig` adds two entry paths:
+
+- C-ABI exports `fastmem_copy`, `fastmem_move`, and optional `fastmem_set`, through volatile-loaded function pointers.
+- Specialized public calls with a comptime length for every size 1..256.
+
+Both paths use independent small insets 0, 1, 17, and 63.
+Their overlap probes use union inset zero and gaps 0, 1, 128, 3841, 4000, 4096, 8192, len/2, and len-1.
+The ABI path also repeats every large sample through 1 MiB with independent insets 0 and 1.
+Above 1 MiB, the ABI path repeats the sparse runtime matrix.
+These extra paths supplement the exhaustive runtime path instead of replacing it.
 
 Page protection has page granularity, so arbitrary offsets cannot all touch a guard page exactly.
 Inset zero puts the slice start or end directly against the corresponding guard.
-For every small length, each source has exact adjacency with every destination inset, and each destination has exact adjacency with every source inset.
+Every small source length has exact adjacency with every destination inset, and every destination has exact adjacency with every source inset.
 Both slices use the same placement side in each disjoint case.
 Overlap cases place the union against the guard, so neither valid slice crosses an inaccessible page.
 Canaries detect writes into accessible padding, but cannot detect reads into that padding.
+
+### Size ceilings
+
+The default ceiling depends on the comptime CPU model.
+Each x86 ceiling is at least 1.25 times the largest recorded NT threshold and uses a whole MiB.
+The threshold evidence is in `docs/research/hosts/README.md`.
+
+| CPU family | Ceiling |
+|---|---|
+| znver4, znver5 | 16 MiB |
+| sapphirerapids | 67 MiB |
+| graniterapids | 302 MiB |
+| Graviton and standalone baseline CPUs | 1 MiB |
+
+`--max-size BYTES` overrides the ceiling with a decimal byte count between 1024 and 512 MiB.
+`zig build test-guard -- --max-size BYTES` forwards that option.
+The fleet adapter passes the target family's ceiling to both CPU variants, including the baseline build.
+
+Above 1 MiB, the suite keeps overlap cases as well as NT-relevant disjoint cases.
+A wrong dispatch can send an overlap into an NT loop.
+The maximum window is approximately twice the ceiling, and five windows contain data at peak.
+The 302 MiB ceiling therefore needs approximately 3 GiB of memory.
 
 ### Result protocol
 
 The binary emits one JSON line on stdout and exits nonzero on failure.
 The summary contains:
 
-- `schema: 1` and `status: "pass"` or `"fail"`.
-- `cases`, `elapsed_ns`, `cpu`, and `optimize`.
+- `schema: 2`, `matrix: "g1-v2"`, and `status: "pass"` or `"fail"`.
+- `cases`, per-entry `path_cases`, `elapsed_ns`, `cpu`, `max_size`, `optimize`, and `link_libc`.
 - `set_available` and the three `impl` identifiers.
-- `detail` and the last case's operation, length, offsets, gap, side, and value.
+- `detail` and the last case's operation, path, source order, length, offsets, gap, side, and value.
+- `fault_address`, `fault_region`, and `fault_access`, which are null outside a signal failure.
 
-SIGSEGV and SIGBUS handlers report `guard-page fault` with the current case before exit.
+The parser independently calculates the matrix count for the ceiling and set availability.
+A pass requires exact runtime, ABI, and constant-size counts.
+A failure can report a partial count, but the total must equal the sum of the path counts.
+
+SIGSEGV and SIGBUS handlers use `SA_SIGINFO` and report the fault address, mapping region, current case, and elapsed monotonic time.
+The handlers identify writes into read-only sources.
+Other faults report access type `unknown` because the portable signal data does not identify reads versus writes.
 A fixed buffer and raw write keep the fault path independent of allocation and buffered output.
 Offsets in failure records are relative to the accessible window, not the selected slice.
-A fault can indicate a source write because the disjoint source mapping is read-only.
 
-The existing copy and move differential fuzzers remain in `src/root.zig`.
-The gated set fuzzer in `src/tests/fuzz.zig` compares the entire buffer against a byte-loop reference.
-`just fuzz 1K` runs the fuzzers with the ReleaseSafe workaround for Zig issue 30655.
+### Differential fuzzers
+
+`src/tests/fuzz.zig` contains the copy, move, and gated set fuzzers.
+All three use byte-loop references and full-buffer comparisons with canaries.
+Lengths reach 64 KiB, and copy and move use independent source and destination offsets 0..63.
+Move executes both directions with displacements through 16 KiB.
+The maximum-displacement clamp can constrain one offset at that boundary.
+The old compiler-rt-oracle fuzzers no longer exist in `src/root.zig`.
+
+`just fuzz 1K` runs the fuzz infrastructure with the ReleaseSafe workaround for Zig issue 30655.
+A short global budget can exercise only one fuzzer.
+Separate filtered test builds give each operation its own budget.
 
 ### Fleet adapter
 
@@ -797,6 +859,7 @@ Each target runs its two variants sequentially.
 A failed variant does not prevent the other variant from execution.
 The table reports both statuses and set availability.
 Any failed build, transport, summary, or suite causes a nonzero exit.
+JSON-less deaths retain their exit status in the error message, including exits 132 and 137.
 
 Each `bench-results/<timestamp>-test/` directory contains:
 
@@ -807,3 +870,31 @@ Each `bench-results/<timestamp>-test/` directory contains:
 
 The adapter preserves raw files after test failures and attempts their retrieval after transport failures.
 `bench/tests/test_correctness.py` covers the adapter with fake builds, boxes, and fleet responses.
+
+### Native validation of the framework
+
+These correctness-suite runtimes came from Neoverse V3, not the named x86 hardware.
+The native kernels passed each ceiling through `--max-size`.
+The public set function was absent.
+
+| Ceiling | Mode | Cases | Seconds |
+|---|---|---|---|
+| 1 MiB | ReleaseFast | 27,620,876 | 66.114 |
+| 1 MiB | ReleaseSafe | 27,620,876 | 70.058 |
+| 16 MiB | ReleaseFast | 27,620,964 | 70.590 |
+| 67 MiB | ReleaseFast | 27,620,964 | 75.027 |
+| 302 MiB | ReleaseFast | 27,620,964 | 116.574 |
+
+A temporary builtin-set fixture passed 28,047,836 cases at 1 MiB, including ABI and constant-size paths.
+The exact-count parser accepted its summary.
+The copy and move fuzzers passed separate 10K budgets.
+The set fixture also passed a separate 10K budget.
+
+Fault injection now detects all three reviewed blind spots:
+
+- A repeated 64 KiB source block fails at length 65537.
+- The wrong 4K-alias dispatch fails at length 4095 and gap 3841.
+- A disjoint move with the destination above the source faults on a one-byte source over-read.
+
+All seven configured CPU builds and both baseline builds compile with only glibc dependencies.
+Target-hardware execution remains the fleet acceptance gate.

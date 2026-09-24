@@ -20,7 +20,8 @@ noinline fn kernelMove(dest: [*]u8, source: [*]const u8, len: usize) callconv(.c
 }
 
 noinline fn kernelSet(dest: [*]u8, value: c_int, len: usize) callconv(.c) [*]u8 {
-    if (@hasDecl(fastmem, "set")) fastmem.set(u8, dest[0..len], @truncate(@as(c_uint, @bitCast(value))));
+    if (@hasDecl(fastmem, "set"))
+        fastmem.set(u8, dest[0..len], @truncate(@as(c_uint, @bitCast(value))));
     return dest;
 }
 
@@ -61,7 +62,8 @@ pub fn call(comptime op: Op, path: Path, dest: []u8, source: []const u8, value: 
                 .move => @as(*volatile CopyFn, &move_fn).*(dest.ptr, source.ptr, dest.len),
                 .set => @as(*volatile SetFn, &set_fn).*(dest.ptr, value, dest.len),
             };
-            if (returned != dest.ptr) @panic("The C-ABI return pointer differs from the destination.");
+            if (returned != dest.ptr)
+                @panic("The C-ABI return pointer differs from the destination.");
         },
         .constant => {
             const table = comptime table: {

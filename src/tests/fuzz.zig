@@ -53,7 +53,9 @@ test "fuzz move with wide gaps independent offsets and canaries" {
                 try testing.expectEqualSlices(u8, &expected, &actual);
             }
         }
-    }.run, .{ .corpus = &.{ "", &.{ 0, 0, 1, 0, 0, 64, 0, 0, 63, 17 }, &.{ 255, 255, 0, 0, 160, 15, 0, 0, 1, 63 } } });
+    }.run, .{ .corpus = &.{
+        "", &.{ 0, 0, 1, 0, 0, 64, 0, 0, 63, 17 }, &.{ 255, 255, 0, 0, 160, 15, 0, 0, 1, 63 },
+    } });
 }
 
 test "fuzz set with destination canaries" {

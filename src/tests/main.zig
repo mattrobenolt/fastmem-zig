@@ -170,7 +170,15 @@ fn check(comptime op: Op, src: Guarded, dst: Guarded, expected: []u8, c: Case) !
     path_counts[@intFromEnum(c.path)] += 1;
 }
 
-fn disjoint(src: Guarded, above: Guarded, dst: Guarded, expected: []u8, len: u32, offsets: []const u32, path: Path) !void {
+fn disjoint(
+    src: Guarded,
+    above: Guarded,
+    dst: Guarded,
+    expected: []u8,
+    len: u32,
+    offsets: []const u32,
+    path: Path,
+) !void {
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (offsets) |s| {
             for (offsets) |d| {
@@ -240,19 +248,41 @@ fn overlapOne(
     path_counts[@intFromEnum(c.path)] += 1;
 }
 
-fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets: []const u32, path: Path) !void {
+fn overlap(
+    buf: Guarded,
+    expected: []u8,
+    original: []const u8,
+    len: u32,
+    offsets: []const u32,
+    path: Path,
+) !void {
     var gaps: [139]u32 = undefined;
     for (gaps[0..129], 0..) |*gap, i| gap.* = @intCast(i);
     const extra = [_]u32{ 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len / 2, len -| 1 };
     @memcpy(gaps[129..], &extra);
     const sparse = [_]u32{ 0, 4095, len / 2, len -| 1 };
     const entry_gaps = [_]u32{ 0, 1, 128, 3841, 4000, 4096, 8192, len / 2, len -| 1 };
-    const selected = if (path != .runtime and len <= mib) &entry_gaps else if (len > mib) &sparse else gaps[0..@as(u32, if (len > 1024) 139 else 129)];
+    const selected = if (path != .runtime and len <= mib)
+        &entry_gaps
+    else if (len > mib)
+        &sparse
+    else
+        gaps[0..@as(u32, if (len > 1024) 139 else 129)];
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (selected) |gap| {
             for (offsets) |inset| {
                 inline for (.{ false, true }) |backward| {
-                    try overlapOne(side, backward, buf, expected, original, len, gap, @intCast(inset), path);
+                    try overlapOne(
+                        side,
+                        backward,
+                        buf,
+                        expected,
+                        original,
+                        len,
+                        gap,
+                        inset,
+                        path,
+                    );
                 }
             }
         }
@@ -268,7 +298,11 @@ fn sizeClass(
 ) !void {
     var maximum: u32 = 0;
     for (sizes) |len| maximum = @max(maximum, len);
-    const capacity = maximum + @max(256, if (maximum > 1024 or path != .runtime) @max(8192, maximum - 1) + 64 else 0);
+    const gap_capacity = if (maximum > 1024 or path != .runtime)
+        @max(8192, maximum - 1) + 64
+    else
+        0;
+    const capacity = maximum + @max(256, gap_capacity);
     var windows: [3]Guarded = undefined;
     var initialized: u32 = 0;
     defer for (windows[0..initialized]) |window| window.deinit();
@@ -346,7 +380,8 @@ fn run(allocator: mem.Allocator) !void {
     for ([_]u32{ 4095, 4096, 4097 }) |base| {
         var multiplier: u32 = 1;
         while (base * multiplier <= dense_limit) : (multiplier *= 2) {
-            try sizeClass(allocator, &.{base * multiplier}, offsetsFor(base * multiplier), &.{ 0, 1, 17, 63 }, .runtime);
+            const len = base * multiplier;
+            try sizeClass(allocator, &.{len}, offsetsFor(len), &.{ 0, 1, 17, 63 }, .runtime);
             try sizeClass(allocator, &.{base * multiplier}, &.{ 0, 1 }, &.{0}, .abi);
         }
     }
