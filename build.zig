@@ -86,6 +86,24 @@ pub fn build(b: *std.Build) void {
     const libc_probe_step = b.step("libc-probe", "Build the libc symbol probe");
     libc_probe_step.dependOn(&install_libc_probe.step);
 
+    // Match benchmark libc linkage until the kernels remove libc delegation.
+    const correctness = b.addExecutable(.{
+        .name = "fastmem-tests",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/main.zig"),
+            .target = target,
+            .link_libc = true,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "fastmem", .module = mod }},
+        }),
+    });
+    const install_correctness = b.addInstallArtifact(correctness, .{});
+    b.getInstallStep().dependOn(&install_correctness.step);
+    b.step("test-bin", "Install the guard-page correctness binary").dependOn(&install_correctness.step);
+    const guard_cmd = b.addRunArtifact(correctness);
+    if (b.args) |args| guard_cmd.addArgs(args);
+    b.step("test-guard", "Run the full guard-page matrix").dependOn(&guard_cmd.step);
+
     // Assembly output for codegen inspection.
     addAsmStep(b, target, "asm", "Emit assembly for the current (or -Dtarget) target");
 

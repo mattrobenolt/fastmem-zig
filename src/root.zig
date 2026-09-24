@@ -60,6 +60,10 @@ pub const flags: Flags = .{
     .move = memmove_impl.flags,
 };
 
+test {
+    _ = @import("tests/fuzz.zig");
+}
+
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
     if (comptime on_aarch64) {
         std.debug.assert(dest.len >= source.len);
@@ -713,93 +717,4 @@ test "move: large overlap matrix" {
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Extended fuzz tests (wider input ranges)
-// ---------------------------------------------------------------------------
-
-test "fuzz copy large" {
-    try testing.fuzz({}, struct {
-        fn run(_: void, smith: *testing.Smith) anyerror!void {
-            const len: usize = smith.valueRangeAtMost(u16, 0, 8192);
-            const src_off: usize = smith.valueRangeAtMost(u8, 0, 63);
-            const dst_off: usize = smith.valueRangeAtMost(u8, 0, 63);
-
-            var src_buf: [8192 + 64]u8 = undefined;
-            const seed: u8 = smith.value(u8);
-            for (&src_buf, 0..) |*b, i| b.* = @truncate(i *% 131 +% seed);
-
-            var dst_buf: [8192 + 64]u8 = .{0xAA} ** (8192 + 64);
-
-            const src = src_buf[src_off..][0..len];
-            const dst = dst_buf[dst_off..][0..len];
-
-            copy(u8, dst, src);
-            try testing.expectEqualSlices(u8, src, dst);
-        }
-    }.run, .{
-        // Seeds feed the Smith input stream; exact scenarios are not
-        // guaranteed, only diversity.
-        .corpus = &.{
-            "",
-            &.{ 0, 0, 0, 0 },
-            &.{ 64, 0, 0, 0 },
-            &.{ 64, 0, 1, 3 },
-            &.{ 0, 8, 0, 0 },
-            &.{ 0, 16, 7, 15 },
-            &.{ 0, 32, 0, 0, 0x42 },
-        },
-    });
-}
-
-test "fuzz move large" {
-    try testing.fuzz({}, struct {
-        fn run(_: void, smith: *testing.Smith) anyerror!void {
-            const len: usize = smith.valueRangeAtMost(u16, 0, 8192);
-            const gap: usize = smith.valueRangeAtMost(u8, 0, 128);
-            const Direction = enum { forward, backward };
-            const direction: Direction = smith.value(Direction);
-            if (len == 0) return;
-
-            const buf_size = 8192 + 129;
-            var buf: [buf_size]u8 = undefined;
-            const seed: u8 = smith.value(u8);
-            for (&buf, 0..) |*b, i| b.* = @truncate(i *% 131 +% seed);
-
-            if (len + gap > buf_size) return;
-
-            var expected = buf;
-            switch (direction) {
-                .forward => {
-                    // Forward: dest = buf[0..len], src = buf[gap..][0..len]
-                    @memmove(expected[0..len], expected[gap..][0..len]);
-                    move(u8, buf[0..len], buf[gap..][0..len]);
-                    try testing.expectEqualSlices(u8, expected[0..len], buf[0..len]);
-                },
-                .backward => {
-                    // Backward: dest = buf[gap..][0..len], src = buf[0..len]
-                    @memmove(expected[gap..][0..len], expected[0..len]);
-                    move(u8, buf[gap..][0..len], buf[0..len]);
-                    try testing.expectEqualSlices(
-                        u8,
-                        expected[gap..][0..len],
-                        buf[gap..][0..len],
-                    );
-                },
-            }
-        }
-    }.run, .{
-        // Seeds feed the Smith input stream; exact scenarios are not
-        // guaranteed, only diversity.
-        .corpus = &.{
-            "",
-            &.{ 0, 8, 1, 0, 0x42 },
-            &.{ 0, 8, 1, 1, 0x42 },
-            &.{ 0, 16, 15, 0 },
-            &.{ 0, 16, 15, 1 },
-            &.{ 0, 32, 0, 0 },
-            &.{ 64, 0, 63, 0 },
-        },
-    });
 }
