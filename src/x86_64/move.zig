@@ -2,6 +2,7 @@
 const builtin = @import("builtin");
 const tail_call = if (builtin.zig_backend == .stage2_llvm) .always_tail else .auto;
 const ops = @import("ops.zig");
+const compact = @import("compact.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
 const w = ops.width;
@@ -79,6 +80,7 @@ pub noinline fn kernel(
     n: usize,
 ) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime tuning.reordered and ops.high_available) return reordered(dst, src, n);
     if (n <= 16) {
         if (n == 0) return dst;
         const d: [*]u8 = @ptrCast(dst.?);
@@ -114,6 +116,49 @@ pub noinline fn kernel(
         return dst;
     }
     return @call(tail_call, mediumKernel, .{ dst, src, n });
+}
+
+// These experiments retain the measured large policy and all inline classes.
+inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
+    const short_limit = if (tuning.variant == .compact) 15 else 16;
+    if (n <= short_limit) {
+        if (tuning.variant == .compact) {
+            if (n >= 4) {
+                compact.quad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
+            } else if (n != 0) {
+                compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+            }
+        } else {
+            if (n >= 8) {
+                pair(u64, @ptrCast(dst.?), @ptrCast(src.?), n);
+            } else if (n >= 4) {
+                pair(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
+            } else if (n != 0) {
+                compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+            }
+        }
+        return dst;
+    }
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n < 64) {
+        if (tuning.variant == .compact) {
+            compact.quad(@Vector(16, u8), d, s, n);
+        } else if (n <= 32) {
+            pair(@Vector(16, u8), d, s, n);
+        } else {
+            ops.highMove(32, 2, d, s, n);
+        }
+    } else if (n <= 128) {
+        ops.highMove(64, 2, d, s, n);
+    } else if (n <= 256) {
+        ops.highMove(64, 4, d, s, n);
+    } else if (n <= 512) {
+        ops.highMove(64, 8, d, s, n);
+    } else {
+        return @call(.always_tail, largeKernel, .{ dst, src, n });
+    }
+    return dst;
 }
 
 noinline fn mediumKernel(

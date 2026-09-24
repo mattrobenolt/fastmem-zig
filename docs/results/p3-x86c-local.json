@@ -1,0 +1,508 @@
+{
+  "base": "a29a7cc20028714713166ac38ea4c786a8ad7328",
+  "implementation": "717eddbfab1c2164460e6011145b506a9a6b5862",
+  "guard_runs": 1,
+  "focused_page_edge_runs": 2,
+  "avx512_runtime_tested": false,
+  "fleet_run": null,
+  "codegen": {
+    "high_regs": {
+      "cpus": [
+        "graniterapids",
+        "sapphirerapids",
+        "x86_64_v3",
+        "znver4",
+        "znver5"
+      ],
+      "fixed_cases": 3456,
+      "mutation_tests": 9,
+      "large_paths": {
+        "sapphirerapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        },
+        "znver5": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "graniterapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        },
+        "x86_64_v3": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "znver4": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        }
+      }
+    },
+    "entry": {
+      "cpus": [
+        "graniterapids",
+        "sapphirerapids",
+        "x86_64_v3",
+        "znver4",
+        "znver5"
+      ],
+      "fixed_cases": 3456,
+      "mutation_tests": 9,
+      "large_paths": {
+        "znver5": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "sapphirerapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        },
+        "znver4": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "x86_64_v3": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "graniterapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        }
+      }
+    },
+    "tiered": {
+      "cpus": [
+        "graniterapids",
+        "sapphirerapids",
+        "x86_64_v3",
+        "znver4",
+        "znver5"
+      ],
+      "fixed_cases": 3456,
+      "mutation_tests": 9,
+      "large_paths": {
+        "x86_64_v3": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "znver4": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "graniterapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        },
+        "znver5": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "sapphirerapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        }
+      }
+    },
+    "compact": {
+      "cpus": [
+        "graniterapids",
+        "sapphirerapids",
+        "x86_64_v3",
+        "znver4",
+        "znver5"
+      ],
+      "fixed_cases": 3456,
+      "mutation_tests": 9,
+      "large_paths": {
+        "x86_64_v3": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%ymm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "znver5": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "znver4": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": false
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": false,
+            "rep": false
+          }
+        },
+        "graniterapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        },
+        "sapphirerapids": {
+          "copy": {
+            "symbol": "x86_64.move.copyLarge",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "move": {
+            "symbol": "x86_64.move.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          },
+          "set": {
+            "symbol": "x86_64.set.largeKernel",
+            "vector": "%zmm",
+            "nt": true,
+            "rep": true
+          }
+        }
+      }
+    }
+  },
+  "guard_summary": {
+    "schema": 2,
+    "matrix": "g1-v2",
+    "status": "pass",
+    "cases": 27904572,
+    "path_cases": {
+      "runtime": 27704592,
+      "abi": 160044,
+      "constant": 39936
+    },
+    "elapsed_ns": 163918800077,
+    "cpu": "x86_64_v3",
+    "max_size": 1024,
+    "optimize": "ReleaseFast",
+    "set_available": true,
+    "link_libc": true,
+    "impl": {
+      "copy": "x86-avx2-entry-v2",
+      "move": "x86-avx2-entry-v2",
+      "set": "x86-avx2-entry-v2"
+    },
+    "detail": "",
+    "fault_address": null,
+    "fault_region": null,
+    "fault_access": null,
+    "case": {
+      "op": "move",
+      "path": "abi",
+      "source_order": "shared",
+      "len": 1024,
+      "src": 10241,
+      "dst": 11264,
+      "gap": 1023,
+      "side": "end",
+      "value": 0
+    }
+  },
+  "unit_tests": {
+    "native_Debug": 27,
+    "native_ReleaseFast": 27,
+    "qemu_v3_ReleaseFast_final": 27,
+    "qemu_v3_ReleaseSafe_before_page_test": 26,
+    "qemu_v3_Debug_before_page_test": 26,
+    "compact_overlap_cases": 258048,
+    "compact_page_edge_cases": 252
+  }
+}

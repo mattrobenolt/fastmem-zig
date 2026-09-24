@@ -1,6 +1,9 @@
 //! Focused class, overlap, and dispatch regressions supplement the guard matrix.
 const std = @import("std");
 const testing = std.testing;
+const builtin = @import("builtin");
+const linux = std.os.linux;
+const compact = @import("compact.zig");
 const move = @import("move.zig");
 const set = @import("set.zig");
 
@@ -90,6 +93,28 @@ test "x86: every ABI short length and overlapping vector fragment" {
                 const dest = 1 + if (backward) gap else @as(u32, 0);
                 for (0..n) |i| expected[dest + i] = original[source + i];
                 _ = move.kernel(got[dest..].ptr, got[source..].ptr, n);
+                try testing.expectEqualSlices(u8, &expected, &got);
+            }
+        }
+    }
+}
+
+test "x86: compiler-rt compact fragments cover every short overlap and offset" {
+    var original: [128]u8 = undefined;
+    pattern(&original);
+    for (1..64) |n| {
+        for (0..64) |source| {
+            for (0..64) |dest| {
+                var got = original;
+                var expected = original;
+                for (0..n) |i| expected[dest + i] = original[source + i];
+                if (n < 4) {
+                    compact.bytes(got[dest..].ptr, got[source..].ptr, n);
+                } else if (n < 16) {
+                    compact.quad(u32, got[dest..].ptr, got[source..].ptr, n);
+                } else {
+                    compact.quad(@Vector(16, u8), got[dest..].ptr, got[source..].ptr, n);
+                }
                 try testing.expectEqualSlices(u8, &expected, &got);
             }
         }

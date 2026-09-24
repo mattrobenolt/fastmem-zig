@@ -83,6 +83,24 @@ pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*
         return dst;
     }
     const d: [*]u8 = @ptrCast(dst.?);
+    if (comptime tuning.reordered and ops.high_available) {
+        if (n < 64) {
+            if (n <= 32) {
+                pair(16, d, byte, n);
+            } else {
+                ops.highSet(32, 2, d, value, n);
+            }
+        } else if (n <= 128) {
+            ops.highSet(64, 2, d, value, n);
+        } else if (n <= 256) {
+            ops.highSet(64, 4, d, value, n);
+        } else if (n <= 512) {
+            ops.highSet(64, 8, d, value, n);
+        } else {
+            return @call(.always_tail, largeKernel, .{ dst, value, n });
+        }
+        return dst;
+    }
     if (n <= 32) {
         pair(16, d, byte, n);
         return dst;

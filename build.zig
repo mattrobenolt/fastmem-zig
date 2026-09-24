@@ -1,5 +1,14 @@
 const std = @import("std");
 
+const X86Variant = enum { auto, entry, high_regs, tiered, compact };
+
+// The per-model default of the "auto" variant, from the p3-x86c fleet A/B
+// (docs/results/p3-x86c.md). Keep in sync with src/x86_64/tuning.zig.
+fn resolveX86Variant(cpu: []const u8, variant: X86Variant) X86Variant {
+    if (variant != .auto) return variant;
+    return if (std.mem.eql(u8, cpu, "znver4")) .tiered else .compact;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -17,7 +26,8 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_options = tuningOptions(b);
+    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
+    const x86_options = tuningOptions(b, x86_variant);
     mod.addOptions("fastmem_options", x86_options);
 
     // Benchmark executable — always built ReleaseFast.
@@ -104,7 +114,7 @@ pub fn build(b: *std.Build) void {
         asm_all_step.dependOn(obj);
     }
 
-    addX86Codegen(b, x86_options);
+    addX86Codegen(b, x86_options, x86_variant);
 
     // Tests. The fastmem test module takes an explicit optimize so a
     // release-mode test build can dodge the 0.16.0 self-hosted-backend
@@ -214,7 +224,7 @@ fn addAsmStep(
     step.dependOn(obj_step);
 }
 
-fn tuningOptions(b: *std.Build) *std.Build.Step.Options {
+fn tuningOptions(b: *std.Build, variant: X86Variant) *std.Build.Step.Options {
     const options = b.addOptions();
     inline for (.{ "vec", "inline-max" }) |name| {
         options.addOption(?u32, comptime "x86_" ++ replaceDash(name), b.option(u32, "x86-" ++ name, "Override the x86 tuning default"));
@@ -222,8 +232,7 @@ fn tuningOptions(b: *std.Build) *std.Build.Step.Options {
     inline for (.{ "rep-movsb-min", "nt-min", "rep-stosb-min", "memset-nt-min", "alias-mask", "rep-src-align-mask", "rep-fwd-gap-min" }) |name| {
         options.addOption(?u64, comptime "x86_" ++ replaceDash(name), b.option(u64, "x86-" ++ name, "Override the x86 tuning default"));
     }
-    const Variant = enum { entry, high_regs };
-    options.addOption(Variant, "x86_variant", b.option(Variant, "x86-variant", "Select the x86 small ABI experiment") orelse .high_regs);
+    options.addOption(X86Variant, "x86_variant", variant);
     // aarch64 small-path overrides (src/aarch64/tuning.zig). "auto" keeps
     // the per-CPU-model default; these serve local A/B runs.
     inline for (.{ "copy", "move", "set" }) |op| {
@@ -239,7 +248,7 @@ fn replaceDash(comptime name: []const u8) *const [name.len]u8 {
     return &result;
 }
 
-fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
+fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Variant) void {
     const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
     for ([_][]const u8{ "sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3" }) |cpu| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
@@ -266,8 +275,16 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
         const check = b.addSystemCommand(&.{"python3"});
         check.addFileArg(b.path("src/x86_64/check_codegen.py"));
         check.addArg(cpu);
+        check.addArg(@tagName(resolveX86Variant(cpu, variant)));
         check.addFileArg(obj.getEmittedBin());
         step.dependOn(&check.step);
+        if (std.mem.eql(u8, cpu, "sapphirerapids")) {
+            const mutations = b.addSystemCommand(&.{"python3"});
+            mutations.addFileArg(b.path("src/x86_64/test_check_codegen.py"));
+            mutations.addArg(@tagName(resolveX86Variant(cpu, variant)));
+            mutations.addFileArg(obj.getEmittedBin());
+            step.dependOn(&mutations.step);
+        }
         const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("codegen/{s}.o", .{cpu}));
         step.dependOn(&install.step);
     }
