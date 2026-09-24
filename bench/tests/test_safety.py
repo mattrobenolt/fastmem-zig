@@ -152,3 +152,16 @@ def test_build_race_enotempty(config: Config, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("fastmem_bench.build.inspect_codegen", lambda _: CODEGEN)
     results = build_all(config, [source], ["intel"])
     assert results["v0/intel"].error is None
+
+
+def test_bad_label_fails_before_launch(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    from click.testing import CliRunner
+
+    from fastmem_bench import runner
+
+    launched = Mock()
+    monkeypatch.setattr(runner, "Fleet", launched)
+    result = CliRunner().invoke(runner.run, ["--up", "--label", "baseline-0.16"], obj=config)
+    assert result.exit_code != 0
+    assert "Run label" in result.output
+    launched.assert_not_called()

@@ -12,7 +12,7 @@ from ec2bench.cli import box_for, ensure_up
 from ec2bench.config import Config
 from ec2bench.fleet import Fleet, tags
 from ec2bench.parallel import Outcome, parallel, progress
-from ec2bench.runs import create_run, write_manifest
+from ec2bench.runs import create_run, validate_label, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze, validate_effect
 from fastmem_bench.build import build_all, disassemble, provenance, resolve
 from fastmem_bench.codegen import verify_recorded
@@ -68,6 +68,10 @@ def run(  # noqa: C901, PLR0915 — orchestration keeps the experiment lifecycle
         minimum_effect if minimum_effect is not None else config.project.get("minimum_effect", 0.0)
     )
     validate_effect(effect)
+    try:
+        validate_label(label)
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     if dist_file is not None and suite != "dist":
         raise click.ClickException("--dist-file requires --suite dist")
     binary_args = []

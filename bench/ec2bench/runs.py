@@ -15,6 +15,15 @@ def git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+LABEL = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def validate_label(label: str) -> None:
+    """Fail before any work (for example a launch) that a bad label would waste."""
+    if not LABEL.fullmatch(label):
+        raise ValueError("Run label must contain only letters, numbers, underscores, or hyphens")
+
+
 def create_run(
     root: Path,
     label: str,
@@ -23,8 +32,7 @@ def create_run(
     *,
     results_dir: Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", label):
-        raise ValueError("Run label must contain only letters, numbers, underscores, or hyphens")
+    validate_label(label)
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + label
     path = (results_dir or root / "bench-results") / run_id
     path.mkdir(parents=True)  # Refuse to overwrite another run in the same second.
