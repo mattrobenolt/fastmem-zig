@@ -1,9 +1,8 @@
-# IAM user for the benchmark fleet.
+# IAM user for the fastmem-bench fleet (modules/bench-iam).
 #
 # A human applies this stack once, with an IAM-capable profile
-# (playground-ops). It creates the IAM user, its policy (policy.tf), and one
-# access key. write-credentials.sh then writes the key to the profile that
-# bench.toml names. infra/README.md is the runbook.
+# (playground-ops). write-credentials.sh then writes the access key to the
+# fastmem-bench profile. infra/README.md is the runbook.
 #
 # terraform.tfstate holds the secret access key. It is gitignored. Do not
 # commit it and do not copy it off this machine.
@@ -20,26 +19,17 @@ terraform {
 }
 
 locals {
-  region = "us-west-2"
-
-  # The [project] table of bench.toml at the repository root, up to the next
-  # table header. project.name names the resources, and it is the Project tag
-  # value that the IAM policy requires. The harness tags instances with the
-  # same value. One source keeps them equal, and a copy of infra/ into
-  # another project needs no edits. project.profile names the credentials
-  # profile that write-credentials.sh writes.
-  bench_project = regex(
-    "(?ms)^\\[project\\][^\\n]*\\n(.*?)(?:^\\[|\\z)",
-    file("${path.module}/../../bench.toml"),
-  )[0]
-  project = regex("(?m)^[ \\t]*name[ \\t]*=[ \\t]*\"([^\"]+)\"", local.bench_project)[0]
-  profile = regex("(?m)^[ \\t]*profile[ \\t]*=[ \\t]*\"([^\"]+)\"", local.bench_project)[0]
+  # Keep equal to project.name and project.region in bench.toml. The harness
+  # test suite checks that.
+  project    = "fastmem-bench"
+  region     = "us-west-2"
+  account_id = "396684171460"
 }
 
 # Credentials come from AWS_PROFILE in the environment.
 provider "aws" {
   region              = local.region
-  allowed_account_ids = [var.account_id]
+  allowed_account_ids = [local.account_id]
 
   default_tags {
     tags = {
@@ -49,29 +39,32 @@ provider "aws" {
   }
 }
 
-# The default VPC is the only VPC that the user can create security groups in.
-data "aws_vpc" "default" {
-  default = true
+module "bench" {
+  source = "../modules/bench-iam"
+
+  project           = local.project
+  region            = local.region
+  account_id        = local.account_id
+  instance_families = ["c7i", "c8i", "c7a", "c8a", "c7g", "c8g", "c9g"]
 }
 
-resource "aws_iam_user" "bench" {
-  name = local.project
+# The resources were created at the root before the module existed.
+moved {
+  from = aws_iam_user.bench
+  to   = module.bench.aws_iam_user.bench
 }
 
-# A customer managed policy, not an inline policy: IAM limits the inline
-# policies of a user to 2,048 characters in total, and this policy is larger.
-# A managed policy can have 6,144 characters.
-resource "aws_iam_policy" "bench" {
-  name        = "${local.project}-ec2"
-  description = "EC2 access for the ${local.project} fleet, scoped by the Project tag"
-  policy      = jsonencode(local.policy)
+moved {
+  from = aws_iam_policy.bench
+  to   = module.bench.aws_iam_policy.bench
 }
 
-resource "aws_iam_user_policy_attachment" "bench" {
-  user       = aws_iam_user.bench.name
-  policy_arn = aws_iam_policy.bench.arn
+moved {
+  from = aws_iam_user_policy_attachment.bench
+  to   = module.bench.aws_iam_user_policy_attachment.bench
 }
 
-resource "aws_iam_access_key" "bench" {
-  user = aws_iam_user.bench.name
+moved {
+  from = aws_iam_access_key.bench
+  to   = module.bench.aws_iam_access_key.bench
 }

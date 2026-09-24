@@ -1,10 +1,8 @@
-# Durable fleet resources: the SSH security group, the key pair, and one
-# launch template for each architecture.
+# Durable fleet resources for fastmem-bench (modules/bench-base).
 #
-# The bench profile (fastmem-bench) applies this stack. The harness launches
-# and terminates instances through the EC2 API from these launch templates.
-# It reads the outputs with `tofu -chdir=infra/base output -json`.
-# infra/README.md is the runbook.
+# The bench profile (fastmem-bench) applies this stack. The harness reads the
+# outputs with `tofu -chdir=infra/base output -json`. infra/README.md is the
+# runbook.
 #
 # terraform.tfstate and bench.pem hold the private SSH key. Both are
 # gitignored.
@@ -29,35 +27,19 @@ terraform {
 }
 
 locals {
-  region = "us-west-2"
-
-  # The [project] table of bench.toml at the repository root, up to the next
-  # table header. project.name names the resources, and it is the Project tag
-  # value that the IAM policy requires. The harness tags instances with the
-  # same value. One source keeps them equal, and a copy of infra/ into
-  # another project needs no edits.
-  bench_project = regex(
-    "(?ms)^\\[project\\][^\\n]*\\n(.*?)(?:^\\[|\\z)",
-    file("${path.module}/../../bench.toml"),
-  )[0]
-  project = regex("(?m)^[ \\t]*name[ \\t]*=[ \\t]*\"([^\"]+)\"", local.bench_project)[0]
-
-  # Official NixOS 25.11.12484.b6018f87da91 AMIs in us-west-2, by the
-  # architecture name that EC2 uses. The key is also the launch template
-  # suffix and the `arch` value of a target in bench.toml. A new AMI takes
-  # effect for new instances only.
-  amis = {
-    x86_64 = "ami-0e78db03e0a4e1eb0"
-    arm64  = "ami-0b1109b091092c6fe"
-  }
+  # Keep equal to project.name and project.region in bench.toml. The harness
+  # test suite checks that.
+  project    = "fastmem-bench"
+  region     = "us-west-2"
+  account_id = "396684171460"
 }
 
 # Credentials come from AWS_PROFILE in the environment. default_tags puts
-# Project and ManagedBy on every resource of this stack, in the create
-# request itself. The IAM policy requires that.
+# Project and ManagedBy on every resource, in the create request itself. The
+# bench-iam policy requires that.
 provider "aws" {
   region              = local.region
-  allowed_account_ids = [var.account_id]
+  allowed_account_ids = [local.account_id]
 
   default_tags {
     tags = {
@@ -67,24 +49,46 @@ provider "aws" {
   }
 }
 
-data "aws_vpc" "default" {
-  default = true
+module "bench" {
+  source = "../modules/bench-base"
+
+  project = local.project
+
+  # Official NixOS 25.11.12484.b6018f87da91 AMIs in us-west-2. A new AMI
+  # takes effect for new instances only.
+  amis = {
+    x86_64 = "ami-0e78db03e0a4e1eb0"
+    arm64  = "ami-0b1109b091092c6fe"
+  }
+
+  # Keep equal to project.image_version in bench.toml.
+  image_version = "1"
+  nixos_module  = file("${path.module}/image.nix")
+  key_file      = "${path.module}/bench.pem"
 }
 
-# Look up each pinned AMI. The owner and architecture filters make a wrong
-# or swapped ID fail at plan time, before it reaches a launch template.
-data "aws_ami" "pinned" {
-  for_each = local.amis
+# The resources were created at the root before the module existed.
+moved {
+  from = aws_security_group.ssh
+  to   = module.bench.aws_security_group.ssh
+}
 
-  owners = [var.image_owner]
+moved {
+  from = tls_private_key.ssh
+  to   = module.bench.tls_private_key.ssh
+}
 
-  filter {
-    name   = "image-id"
-    values = [each.value]
-  }
+moved {
+  from = aws_key_pair.bench
+  to   = module.bench.aws_key_pair.bench
+}
 
-  filter {
-    name   = "architecture"
-    values = [each.key]
-  }
+moved {
+  from = local_sensitive_file.ssh_key
+  to   = module.bench.local_sensitive_file.ssh_key
+}
+
+moved {
+  from = aws_launch_template.bench
+  to   = module.bench.aws_launch_template.bench
 }

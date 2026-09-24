@@ -1,7 +1,7 @@
 # The EC2 policy for the bench user.
 #
 # The Project tag is the security boundary. The user can change only the
-# resources that carry Project = local.project, and every resource that it
+# resources that carry Project = var.project, and every resource that it
 # creates must carry that tag. The policy grants no IAM, S3, or other service,
 # so the user cannot escalate its own privileges. It also holds no
 # iam:PassRole, so it cannot launch an instance with an instance profile.
@@ -19,7 +19,7 @@
 locals {
   # ARN prefix for the EC2 resources of this account and region. Image ARNs
   # have no account field, so they do not use this prefix.
-  ec2 = "arn:aws:ec2:${local.region}:${var.account_id}"
+  ec2 = "arn:aws:ec2:${var.region}:${var.account_id}"
 
   launch_templates = "${local.ec2}:launch-template/*"
 
@@ -58,7 +58,7 @@ locals {
         Action   = "ec2:RunInstances"
         Resource = "${local.ec2}:instance/*"
         Condition = {
-          StringEquals         = { "aws:RequestTag/Project" = local.project }
+          StringEquals         = { "aws:RequestTag/Project" = var.project }
           Null                 = { "aws:RequestTag/ExpiresAt" = "false" }
           StringLike           = { "ec2:InstanceType" = [for family in var.instance_families : "${family}.*"] }
           ArnLike              = local.uses_launch_template
@@ -75,7 +75,7 @@ locals {
         Action   = "ec2:RunInstances"
         Resource = "${local.ec2}:volume/*"
         Condition = {
-          StringEquals                  = { "aws:RequestTag/Project" = local.project }
+          StringEquals                  = { "aws:RequestTag/Project" = var.project }
           ArnLike                       = local.uses_launch_template
           StringEqualsIfExists          = { "ec2:VolumeType" = "gp3" }
           NumericLessThanEqualsIfExists = { "ec2:VolumeSize" = tostring(var.max_volume_gib) }
@@ -89,7 +89,7 @@ locals {
         Effect    = "Allow"
         Action    = "ec2:RunInstances"
         Resource  = local.launch_templates
-        Condition = { StringEquals = { "aws:ResourceTag/Project" = local.project } }
+        Condition = { StringEquals = { "aws:ResourceTag/Project" = var.project } }
       },
       {
         # The AMI. ec2:Owner allows only the NixOS publisher, which blocks
@@ -99,7 +99,7 @@ locals {
         Sid      = "RunInstancesImage"
         Effect   = "Allow"
         Action   = "ec2:RunInstances"
-        Resource = "arn:aws:ec2:${local.region}::image/*"
+        Resource = "arn:aws:ec2:${var.region}::image/*"
         Condition = {
           StringEquals = { "ec2:Owner" = var.image_owners }
           Bool         = { "ec2:IsLaunchTemplateResource" = "true" }
@@ -117,7 +117,7 @@ locals {
           "${local.ec2}:key-pair/*",
         ]
         Condition = {
-          StringEquals = { "aws:ResourceTag/Project" = local.project }
+          StringEquals = { "aws:ResourceTag/Project" = var.project }
           Bool         = { "ec2:IsLaunchTemplateResource" = "true" }
           ArnLike      = local.uses_launch_template
         }
@@ -142,7 +142,7 @@ locals {
         # resource that a create action tags, with ec2:CreateAction set to
         # the create action. Without this statement, RunInstances with
         # TagSpecifications (or with tags from the launch template) fails,
-        # and so do the infra/base creates, because the provider sends
+        # and so do the the bench-base module creates, because the provider sends
         # default_tags in the create request. A Project tag, if present,
         # must have the project value.
         Sid      = "TagOnCreate"
@@ -158,7 +158,7 @@ locals {
               "CreateLaunchTemplate",
             ]
           }
-          StringEqualsIfExists = { "aws:RequestTag/Project" = local.project }
+          StringEqualsIfExists = { "aws:RequestTag/Project" = var.project }
         }
       },
       {
@@ -171,8 +171,8 @@ locals {
         Action   = "ec2:CreateTags"
         Resource = "${local.ec2}:*/*"
         Condition = {
-          StringEquals         = { "aws:ResourceTag/Project" = local.project }
-          StringEqualsIfExists = { "aws:RequestTag/Project" = local.project }
+          StringEquals         = { "aws:ResourceTag/Project" = var.project }
+          StringEqualsIfExists = { "aws:RequestTag/Project" = var.project }
         }
       },
       {
@@ -185,7 +185,7 @@ locals {
         Action   = "ec2:DeleteTags"
         Resource = "${local.ec2}:*/*"
         Condition = {
-          StringEquals                   = { "aws:ResourceTag/Project" = local.project }
+          StringEquals                   = { "aws:ResourceTag/Project" = var.project }
           "ForAllValues:StringNotEquals" = { "aws:TagKeys" = ["Project", "ExpiresAt"] }
           Null                           = { "aws:TagKeys" = "false" }
         }
@@ -200,10 +200,10 @@ locals {
           "ec2:StartInstances",
         ]
         Resource  = "${local.ec2}:instance/*"
-        Condition = { StringEquals = { "aws:ResourceTag/Project" = local.project } }
+        Condition = { StringEquals = { "aws:ResourceTag/Project" = var.project } }
       },
       {
-        # infra/base creates: the security group, the key pair, and the
+        # the bench-base module creates: the security group, the key pair, and the
         # launch templates. Each create request must tag the new resource
         # with the project. The key comes from tls_private_key, so the
         # provider uses ImportKeyPair, not CreateKeyPair.
@@ -219,7 +219,7 @@ locals {
           "${local.ec2}:key-pair/*",
           local.launch_templates,
         ]
-        Condition = { StringEquals = { "aws:RequestTag/Project" = local.project } }
+        Condition = { StringEquals = { "aws:RequestTag/Project" = var.project } }
       },
       {
         # CreateSecurityGroup also authorizes the VPC. The VPC has no project
@@ -230,7 +230,7 @@ locals {
         Resource = "${local.ec2}:vpc/${data.aws_vpc.default.id}"
       },
       {
-        # infra/base updates and deletes, on project resources only. The
+        # the bench-base module updates and deletes, on project resources only. The
         # provider revokes the default egress rule of a new security group
         # and then authorizes the rules of the configuration. A launch
         # template change creates a version and makes it the default.
@@ -254,7 +254,7 @@ locals {
           "${local.ec2}:key-pair/*",
           local.launch_templates,
         ]
-        Condition = { StringEquals = { "aws:ResourceTag/Project" = local.project } }
+        Condition = { StringEquals = { "aws:ResourceTag/Project" = var.project } }
       },
       {
         # Authorize* can also authorize the new security-group-rule
@@ -279,7 +279,7 @@ locals {
         Effect    = "Deny"
         NotAction = ["sts:GetCallerIdentity"]
         Resource  = "*"
-        Condition = { StringNotEquals = { "aws:RequestedRegion" = local.region } }
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = var.region } }
       },
     ]
   }

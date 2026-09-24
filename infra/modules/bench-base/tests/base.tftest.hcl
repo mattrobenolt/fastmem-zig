@@ -1,6 +1,17 @@
 # Offline checks of the launch templates. The mock provider needs no AWS
 # credentials, and `command = plan` writes no key file.
-# Run: tofu -chdir=infra/base test
+# Run: tofu -chdir=infra/modules/bench-base test
+
+variables {
+  project = "fastmem-bench"
+  amis = {
+    x86_64 = "ami-0e78db03e0a4e1eb0"
+    arm64  = "ami-0b1109b091092c6fe"
+  }
+  image_version = "7"
+  nixos_module  = "{ pkgs, ... }: { environment.systemPackages = [ pkgs.jq ]; }"
+  key_file      = "/tmp/bench-base-test/bench.pem"
+}
 
 mock_provider "aws" {
   mock_data "aws_vpc" {
@@ -39,7 +50,7 @@ run "launch_templates" {
       && lt.instance_type == null
       && lt.metadata_options[0].http_tokens == "required"
       && lt.metadata_options[0].instance_metadata_tags == "enabled"
-      && lt.user_data == filebase64("${path.module}/../image/configuration.nix")
+      && lt.user_data == base64encode(output.user_data)
     ])
     error_message = "A launch template lost terminate-on-shutdown, IMDSv2, metadata tags, or the user_data."
   }
@@ -69,8 +80,8 @@ run "launch_templates" {
   }
 
   assert {
-    condition     = local_sensitive_file.ssh_key.file_permission == "0600" && endswith(output.key_file, "/bench.pem")
-    error_message = "The key file must be bench.pem with mode 0600."
+    condition     = local_sensitive_file.ssh_key.file_permission == "0600" && output.key_file == "/tmp/bench-base-test/bench.pem"
+    error_message = "The key file must be var.key_file with mode 0600."
   }
 
   # The harness interface: these three outputs, with these shapes.
@@ -91,5 +102,20 @@ run "launch_templates" {
   assert {
     condition     = output.security_group_id == aws_security_group.ssh.id
     error_message = "security_group_id must be the ID of the SSH security group."
+  }
+
+  # The rendered box configuration carries the fleet contract and the
+  # project module, and no unrendered template syntax.
+  assert {
+    condition = (
+      strcontains(output.user_data, "environment.etc.\"bench-image\".text = \"7\\n\";")
+      && strcontains(output.user_data, "pkgs.jq")
+      && strcontains(output.user_data, "programs.nix-ld.enable = true;")
+      && strcontains(output.user_data, "systemd.timers.bench-ttl-guard")
+      && strcontains(output.user_data, "-w '%%{http_code}'")
+      && !startswith(output.user_data, "#!")
+      && length(regexall("(?m)^###", output.user_data)) == 0
+    )
+    error_message = "The rendered user_data lost part of the fleet contract."
   }
 }

@@ -1,5 +1,12 @@
 # Offline checks of the rendered policy. The mock provider needs no AWS
-# credentials. Run: tofu -chdir=infra/iam test
+# credentials. Run: tofu -chdir=infra/modules/bench-iam test
+
+variables {
+  project           = "fastmem-bench"
+  region            = "us-west-2"
+  account_id        = "396684171460"
+  instance_families = ["c7i", "c8i", "c7a", "c8a", "c7g", "c8g", "c9g"]
+}
 
 mock_provider "aws" {
   mock_data "aws_vpc" {

@@ -1,20 +1,21 @@
-# NixOS configuration for every benchmark box.
+# NixOS configuration for every box of the fleet, rendered by the bench-base
+# module into the launch template user_data.
 #
-# infra/base puts this file in the launch template user_data. On boot, the
-# amazon-init service of the official NixOS AMI copies it to
-# /etc/nixos/configuration.nix and runs `nixos-rebuild switch` against the
-# channel that the AMI ships. The file must evaluate against that channel
-# (nixos-25.11 for the pinned AMIs), not against the flake of this repo.
-# amazon-init reads a line that starts with three hash signs as a channel
-# URL, and a file that starts with #! as a shell script. Avoid both.
+# This file is a templatefile() template: a literal dollar-brace or
+# percent-brace must be doubled ($${ or %%{).
 #
-# Bump `imageVersion` when a change here matters to the harness, and bump
-# `image_version` in bench.toml to the same value. The harness waits until
-# /etc/bench-image matches `image_version`.
+# On boot, the amazon-init service of the official NixOS AMI copies the
+# rendered file to /etc/nixos/configuration.nix and runs `nixos-rebuild
+# switch` against the channel that the AMI ships. The file must evaluate
+# against that channel (nixos-25.11 for the pinned AMIs), not against any
+# flake. amazon-init reads a line that starts with three hash signs as a
+# channel URL, and a file that starts with #! as a shell script. Avoid both.
+#
+# The module owns the fleet contract: the TTL guard, nix-ld for shipped
+# binaries, benchmark sysctls, and /etc/bench-image. The project adds its
+# own settings through var.nixos_module, imported below.
 { pkgs, lib, ... }:
 let
-  imageVersion = "1";
-
   # TTL guard: power off after the ExpiresAt instance tag. The launch template
   # sets shutdown behavior to terminate, so poweroff destroys the instance.
   ttlGuard = ''
@@ -31,7 +32,7 @@ let
     code=000
     if token=$(curl -sf -m 2 -X PUT \
       -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' "$imds/api/token"); then
-      code=$(curl -s -m 2 -o "$state/tag" -w '%{http_code}' \
+      code=$(curl -s -m 2 -o "$state/tag" -w '%%{http_code}' \
         -H "X-aws-ec2-metadata-token: $token" \
         "$imds/meta-data/tags/instance/ExpiresAt") || true
     fi
@@ -78,6 +79,10 @@ in
 {
   imports = [
     <nixpkgs/nixos/modules/virtualisation/amazon-image.nix>
+    # The project module (var.nixos_module).
+    (
+${nixos_module}
+    )
   ];
 
   # The release of the pinned AMIs. It controls stateful defaults only.
@@ -112,15 +117,13 @@ in
   systemd.services.systemd-oomd.enable = lib.mkForce false;
   systemd.services."serial-getty@ttyS0".enable = lib.mkForce false;
 
+  # The harness needs rsync for transfers and util-linux for lscpu (facts).
   environment.systemPackages = with pkgs; [
     rsync
-    binutils
     util-linux
-    perf
-    jq
   ];
 
-  environment.etc."bench-image".text = "${imageVersion}\n";
+  environment.etc."bench-image".text = "${image_version}\n";
 
   systemd.services.bench-ttl-guard = {
     description = "Power off the box after its ExpiresAt tag";
