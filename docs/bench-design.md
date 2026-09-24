@@ -292,7 +292,7 @@ bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dis
 - `--up` launches missing targets first, and measures the targets that
   came up.
 - `--filter`, `--impl`, `--samples`, and `--sample-ms` go to the binary.
-  Prefer fewer samples and more rounds: rounds are the bootstrap unit.
+  Prefer fewer samples and more rounds: the round is the unit of independence.
 
 Protocol:
 
@@ -325,30 +325,169 @@ Protocol:
 
 Analysis:
 
-- The unit of measurement is ns per operation. For each (target, case,
-  impl, variant), pool the samples of all rounds and take the median.
-- Report these ratios for each case, as `candidate / baseline` of the
-  medians:
+- The unit of measurement is ns per operation. One round is one process
+  run of one variant. The round is the unit of independence.
+- For each (target, variant, case, impl, round) cell, take the median of
+  the samples of the round: the round median.
+- Report these ratios for each case, as `candidate / reference`:
   - Each fastmem implementation against itself in the baseline revision.
   - `builtin/glibc`, `fastmem_abi/glibc`, and `fastmem_inline/glibc` for each revision.
   - `fastmem_abi/builtin` for each revision.
   - `fastmem_inline/builtin_const` for const cases.
   - `A/A` against the baseline for every implementation.
-- Compute a 95% confidence interval for each ratio with a bootstrap over
-  rounds. Use a fixed seed. Use the Python standard library only.
-- The noise floor is per (target, op, size): the largest A/A departure
-  from 1.0, CI endpoints included, pooled across profiles and all impls.
-  `dist` cases use one floor per (op, size tier).
-- Mark a ratio as significant only if its interval excludes 1.0, its
-  distance from 1.0 is larger than its floor and `minimum_effect`, and
-  the run has at least 5 rounds. With 3 rounds, the bootstrap interval is
-  the per-round range and covers about 78%.
+- Compute every ratio with the same estimator. Use the logarithms of the
+  round medians of the two cells. The ratio is `exp(median(c_i - r_j))`
+  over all pairs of rounds: the two-sample Hodges-Lehmann estimate.
+- Flag an outlier round in each cell with at least 5 rounds. A round is
+  an outlier if its log distance from the median of the other rounds is
+  larger than both of these values:
+  - 5 robust standard deviations of the other rounds (1.4826 times the
+    median absolute deviation, minimum 0.005).
+  - `log(1.05)`.
+- If two or more rounds of a cell meet this condition, flag no round.
+  Such a cell is multimodal, not spiky.
+- Keep an outlier round in the ratio. Remove it from the interval. Report
+  it in `summary.json` (`outliers`), in each row that uses the cell
+  (`outlier_rounds`), and in `report.md`.
+- Compute the 95% interval with the exact Mann-Whitney method on the
+  rounds that are not outliers. The interval is `[d_(k), d_(nm+1-k)]` of the sorted
+  pairwise log differences. `k` is the largest value that gives a
+  coverage of at least 95%.
+- Widen the interval to include the ratio. Record the exact coverage in
+  `ci_level` and the round counts in `ci_rounds`. The analysis has no
+  random component.
+- The coverage is 96.8% for 5 against 5 rounds and for 4 against 5
+  rounds. It is 97.1% for 4 against 4 rounds. With 3 rounds on each side,
+  the interval is the full range and covers 90%.
+- The noise floor is per (target, op, size): the 95th percentile of
+  `|log ratio|` over the A/A rows of the group, pooled across profiles and
+  all impls. Interpolate linearly between order statistics. Report the
+  floor as `exp(q) - 1`. `dist` cases use one floor per (op, size tier).
+  Interval endpoints do not enter the floor.
+- Mark a ratio as significant only if the run has at least 5 rounds and
+  the whole interval is outside `[1/(1+m), 1+m]`. `m` is the larger value
+  of the floor and `minimum_effect`.
 - Revisions with different case sets are compared on their common cases,
   with a warning.
 - Report the geometric mean of the ratios for each (op, size tier). The
   size tiers are 0–16, 17–64, 65–256, 257–1024, 1025–16384, and above
   16384 bytes.
 - `report.md` puts one table for each target and marks significant rows.
+
+### Estimator evidence
+
+The evidence comes from `bench-results/20260924T041207Z-baseline-016/`.
+That run has 7 targets and 5 rounds. Its `aa` variant runs the same binary
+as `v0`, so every A/A difference is noise.
+
+A spike is a round median more than 10% above the median of the 10 runs
+of its cell. These facts describe the spikes:
+
+- They affect 0.06% (c7i) to 3.9% (c8a) of cells. Neither variant has
+  systematically more spikes (v0/aa: 280/277 on c7a, 373/254 on c8a,
+  29/57 on c8i). The count changes more between processes: on c8a, one
+  aa process has 203 and another has 4.
+- In 80% (c7i) to 97% (c8a) of spike cells, at least three of the four
+  samples of the round are high. A spike lasts for the whole case, so
+  the sample median does not remove it.
+- For the 458 spike cells above 25% (c7i, c8i, c7a, c8a, c7g), the cycles
+  per operation rise by the same factor as the time. The instructions per
+  operation do not change. On x86, ref-cycles rise by the same factor.
+- The thread thus runs at the same clock and needs more cycles for the
+  same instructions. Preemption and frequency changes do not explain the
+  spikes. The mechanism is unverified.
+- Spikes are co-located. On six targets, other implementations of the
+  same case and round spike at 4 to 160 times the base rate. Cases within
+  two positions in time spike at 2.7 to 18 times the base rate. c7i has
+  only 10 spike cells, and none of them is co-located.
+- The binary runs the cases in size order. A spike window thus covers
+  all profiles and implementations of one or more sizes: one floor group.
+  The old maximum-based floor gave that group the spike.
+- Some cells are multimodal, not spiky. c7a `builtin` below 64 bytes and
+  c7g size-0 `builtin` take two or three discrete speeds per process.
+  c8g `set/*/3 builtin` is 1.79 ns or 2.26 ns per process. No robust
+  estimator removes this noise at 5 rounds.
+
+The point estimator must be stable on the null. The table gives the 95th
+and 99th percentiles of `|log ratio|` (%) over 16 null splits. Each split
+puts one run of each round slot on each side: 1630 (case, impl) rows.
+
+| Target | Pooled-sample median (old) | Median of paired round ratios | Two-sample Hodges-Lehmann |
+|---|---|---|---|
+| c7i | 1.73 / 4.73 | 1.81 / 4.58 | 1.62 / 3.82 |
+| c8i | 1.43 / 5.83 | 1.44 / 4.63 | 1.19 / 3.74 |
+| c7a | 4.84 / 31.8 | 3.56 / 21.8 | 2.85 / 17.2 |
+| c8a | 4.70 / 13.2 | 3.23 / 11.6 | 2.78 / 10.4 |
+| c7g | 1.06 / 11.6 | 0.91 / 3.46 | 0.79 / 3.05 |
+| c8g | 1.01 / 3.49 | 1.08 / 3.57 | 0.93 / 3.19 |
+| c9g | 1.09 / 4.01 | 1.14 / 3.34 | 0.97 / 3.36 |
+
+Pairs by round index do not help: the paired median is less stable than
+the two-sample estimate on every target. Within one variant, the v0 and
+aa estimates of the same ratio differ by about the same amount with and
+without pairs. The paired rank interval also cannot reach 95% with 5
+rounds (93.75%). The two-sample estimator therefore applies to all
+comparisons.
+
+With 5 rounds, no distribution-free interval can ignore one spiky round.
+The bootstrap and the order-statistic interval of the median both reach
+the extreme round. Outlier rounds therefore leave the interval. In the
+point estimate, the Hodges-Lehmann median already resists one spike. The
+removal of outliers from the estimate made the p90 floor worse on c7a
+(9.9% to 16%) and c8a (7.1% to 14%), so the estimate keeps them.
+
+The table compares the old and new analysis on the null. "Interval
+misses 1" and "lower > 1.00" count all 16 splits. "Marks" use floors from
+the other cases of the group (leave-one-case-out), on the aa-v0 split.
+The floors are the median / p90 / max over the 105 groups (%).
+
+| Target | Interval misses 1 (old, new) | Lower > 1.00 (old, new) | Marks (old, new) | Old floors | New floors |
+|---|---|---|---|---|---|
+| c7i | 13.0%, 3.9% | 6.5%, 2.0% | 0.37%, 0.61% | 3.5 / 14 / 38 | 0.40 / 3.1 / 8.8 |
+| c8i | 12.8%, 3.5% | 6.4%, 1.7% | 0.31%, 0.49% | 3.6 / 12 / 58 | 0.28 / 1.7 / 4.8 |
+| c7a | 12.0%, 3.3% | 5.5%, 1.6% | 0.31%, 0.37% | 14 / 50 / 93 | 0.47 / 9.9 / 21 |
+| c8a | 11.6%, 3.5% | 5.8%, 1.9% | 0.06%, 0.06% | 12 / 173 / 373 | 0.24 / 7.1 / 28 |
+| c7g | 12.7%, 3.2% | 4.0%, 1.0% | 0.25%, 0.25% | 3.2 / 14 / 100 | 0.31 / 1.9 / 13 |
+| c8g | 11.7%, 3.3% | 6.0%, 1.6% | 0.18%, 0.31% | 2.5 / 14 / 27 | 0.25 / 2.2 / 8.8 |
+| c9g | 11.6%, 2.7% | 4.7%, 1.2% | 0.06%, 0.06% | 2.1 / 11 / 18 | 0.23 / 2.0 / 7.0 |
+
+The old bootstrap interval covered only 87% to 88%. A mark rule that only
+requires the interval to exclude 1 and the ratio to pass the floor marked
+0.6% to 2.5% of null rows. The band rule above marks 0.06% to 0.6%.
+
+The new analysis keeps real effects. `builtin/glibc` for memset above 64
+bytes stays marked on 36 of 36 rows on every target. c7i memcpy from 65
+to 256 bytes stays marked on 24 of 24 rows. Some within-variant pairs
+have all 10 round ratios between 1.02 and 1.05, or all between 1/1.05 and
+1/1.02. The old analysis marked 34% to 57% of these pairs. The new
+analysis marks 91% to 100%.
+
+G3 compares 134 copy cases and 233 move cases against 1.00. On the null,
+1.6 to 4.6 fastmem_abi A/A rows per (target, op) have a lower bound above
+1.00 (old: 3.0 to 16). At least one such row occurs in 69% to 100% of the
+null splits. A per-case 95% interval cannot remove this effect of
+multiple comparisons. The goal evidence therefore reports the A/A count
+next to each G2, G3, and G4 const count. For the G2 case threshold of
+1.10, no fastmem_abi A/A row of copy or move has a lower bound above 1.10
+in any null split. The set `builtin` rows of c8g do in 31% of the splits
+(the multimodal `set/*/3` and `set/*/7` cells).
+
+The floor falls as the rounds increase. A whole-run bootstrap from the 10
+runs gives the p90 group floor (%) for n rounds on each side. It is
+optimistic because it repeats runs.
+
+| Target | 5 | 10 | 15 | 20 | Rounds for a p90 floor of 2% |
+|---|---|---|---|---|---|
+| c7i | 2.4 | 1.4 | 1.0 | 0.8 | 7 |
+| c8i | 1.8 | 0.8 | 0.8 | 0.5 | 5 |
+| c7a | 9.1 | 3.0 | 2.3 | 0.6 | 20 |
+| c8a | 10 | 2.8 | 0.9 | 0.8 | 15 |
+| c7g | 1.2 | 0.8 | 0.5 | 0.3 | 5 |
+| c8g | 1.7 | 0.9 | 0.7 | 0.6 | 5 |
+| c9g | 1.9 | 1.0 | 0.7 | 0.5 | 5 |
+
+The maximum group floor stays above 2% at 20 rounds on every target
+(2.3% to 5.0%). The multimodal cells cause it.
 
 ## Measurement binary: bench-fastmem
 
@@ -622,7 +761,7 @@ The schema-v2 adapter reports these comparisons for each common case:
 - Each fastmem implementation against itself in the baseline revision.
 
 Ratios use candidate time divided by reference time.
-The adapter retains the round bootstrap and per-operation, per-size A/A floors described above.
+The adapter uses the round estimator and the per-operation, per-size A/A floors of the Analysis section.
 Significance requires at least five rounds and an available A/A floor.
 Distribution floors remain per operation and size tier.
 
@@ -636,6 +775,9 @@ Its evidence includes the overall geometric mean, tier means, and significant re
 A goal row violates its threshold when the confidence interval lower bound exceeds that threshold.
 The goal check does not add the A/A floor or minimum effect to the threshold.
 The A/A floor and minimum effect apply only to significance marks against 1.0.
+Each G2, G3, and G4 const entry contains an `aa_reference` object.
+It counts the A/A rows of the same implementation and cases with a lower bound above the same threshold.
+That count is the violation count of a null. It does not change the verdict.
 
 G3 requires the standard runtime cases and both synthetic distributions.
 It reports the worst ratio and significant regressions above 1.00.
