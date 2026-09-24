@@ -20,28 +20,6 @@ pub fn build(b: *std.Build) void {
     const x86_options = x86Options(b);
     mod.addOptions("fastmem_options", x86_options);
 
-    const exe = b.addExecutable(.{
-        .name = "fastmem",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "fastmem", .module = mod },
-            },
-        }),
-    });
-    b.installArtifact(exe);
-
-    const run_step = b.step("run", "Run the app");
-
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
-
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    if (b.args) |args| run_cmd.addArgs(args);
-
     // Benchmark executable — always built ReleaseFast.
     const bench_opts = b.addOptions();
     bench_opts.addOption([]const u8, "rev", rev);
@@ -150,15 +128,8 @@ pub fn build(b: *std.Build) void {
     b.step("test-unit-bin", "Install the unit test binary for cross execution").dependOn(&unit_install.step);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
-    });
-
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_exe_tests.step);
 
     const bench_tests = b.addTest(.{ .root_module = bench_exe.root_module });
     bench_tests.bundle_compiler_rt = true;
