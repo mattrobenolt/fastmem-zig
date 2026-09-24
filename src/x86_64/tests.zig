@@ -1,8 +1,6 @@
 //! Focused class, overlap, and dispatch regressions supplement the guard matrix.
 const std = @import("std");
 const testing = std.testing;
-const builtin = @import("builtin");
-const linux = std.os.linux;
 const compact = @import("compact.zig");
 const move = @import("move.zig");
 const set = @import("set.zig");
@@ -19,12 +17,12 @@ fn pattern(bytes: []u8) void {
 
 const lengths = [_]u32{
     // Scalar and vector classes.
-    0,     1,     2,    3,    4,    7,    8,    15,   16,   31,    32,
-    63,    64,    65,   127,  128,  129,  255,  256,  257,
+    0,    1,     2,     3,     4,     7,    8,    15,   16,   31,   32,
+    63,   64,    65,    127,   128,   129,  255,  256,  257,
     // Loop and string thresholds.
-     511,   512,
-    513,   1023,  1024, 1025, 2048, 2049, 4095, 4096, 4097, 16383, 16384,
-    16385, 32768,
+     511,  512,
+    513,  767,   768,   769,   1023,  1024, 1025, 2048, 2049, 4095, 4096,
+    4097, 16383, 16384, 16385, 32768,
 };
 const gaps = [_]u32{
     0,    1,    31,   33,   63,   64,   128,  255,  256,
@@ -81,10 +79,10 @@ test "x86: disjoint alias residues and libc memset byte conversion" {
     try testing.expectEqual(@as(?*anyopaque, null), set.kernel(null, -1, 0));
 }
 
-test "x86: every ABI short length and overlapping vector fragment" {
-    var original: [768]u8 = undefined;
+test "x86: every ABI length through 1 KiB and overlapping vector fragment" {
+    var original: [1280]u8 = undefined;
     pattern(&original);
-    for (0..513) |n| {
+    for (0..1025) |n| {
         for ([_]u32{ 0, 1, 15, 16, 31, 32, 63, 64, 127 }) |gap| {
             for ([_]bool{ false, true }) |backward| {
                 var got = original;

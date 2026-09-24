@@ -8,6 +8,10 @@ pub const available = builtin.cpu.arch == .x86_64 and builtin.cpu.has(.x86, .avx
 pub const avx512 = available and builtin.cpu.has(.x86, .avx512bw);
 pub const Tuning = struct {
     vec: u32 = if (avx512) 64 else 32,
+    medium_vec: u32 = 64,
+    abi_alignment: u32 = 16,
+    medium_first: bool = false,
+    abi_move_max: u32 = 512,
     rep_movsb_min: ?u64 = null,
     // Null preserves the measured vector policy for every forward overlap.
     rep_fwd_gap_min: ?u64 = null,
@@ -41,6 +45,10 @@ const defaults: Tuning = if (builtin.cpu.model == &cpu.sapphirerapids) .{
 
 pub const selected: Tuning = .{
     .vec = options.x86_vec orelse defaults.vec,
+    .medium_vec = if (variant == .ymm_medium) 32 else defaults.medium_vec,
+    .abi_alignment = if (variant == .medium_first) 64 else defaults.abi_alignment,
+    .medium_first = variant == .medium_first,
+    .abi_move_max = if (variant == .straight_1k) 1024 else defaults.abi_move_max,
     .rep_fwd_gap_min = options.x86_rep_fwd_gap_min orelse defaults.rep_fwd_gap_min,
     .rep_movsb_min = options.x86_rep_movsb_min orelse defaults.rep_movsb_min,
     .nt_min = options.x86_nt_min orelse defaults.nt_min,
@@ -51,16 +59,26 @@ pub const selected: Tuning = .{
 };
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
-// The ABI experiment does not alter inline classes or large-loop policy.
-// "auto" picks per model from the p3-x86c fleet A/B (docs/results/p3-x86c.md):
-// tiered on Zen 4, compact elsewhere. build.zig's resolveX86Variant mirrors it.
-pub const variant = if (options.x86_variant == .auto)
-    (if (builtin.cpu.model == &cpu.znver4) .tiered else .compact)
-else
-    options.x86_variant;
+// Model gates also apply to explicit experiments. Other CPUs retain their defaults.
+// Keep the resolver in build.zig consistent with this table.
+const model_variant = if (builtin.cpu.model == &cpu.znver4) .tiered else .compact;
+pub const variant = switch (options.x86_variant) {
+    .auto => model_variant,
+    .medium_first, .ymm_medium => if (builtin.cpu.model == &cpu.graniterapids)
+        options.x86_variant
+    else
+        model_variant,
+    .straight_1k => if (builtin.cpu.model == &cpu.graniterapids or
+        builtin.cpu.model == &cpu.sapphirerapids)
+        options.x86_variant
+    else
+        model_variant,
+    else => options.x86_variant,
+};
 pub const high_regs = variant != .entry and avx512 and
     builtin.cpu.has(.x86, .avx512vl) and vec == 64;
-pub const reordered = high_regs and (variant == .tiered or variant == .compact);
+pub const reordered = high_regs and variant != .high_regs;
+pub const compact_short = variant != .tiered;
 pub const small_masked_set = options.x86_small_masked_set;
 pub const name: []const u8 = if (reordered)
     "x86-avx512-" ++ @tagName(variant) ++ "-v3"

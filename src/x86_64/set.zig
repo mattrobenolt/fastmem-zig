@@ -65,9 +65,19 @@ pub inline fn set(dst: [*]u8, value: u8, n: usize) void {
     if (!small(tuning.inline_max, false, dst, value, n)) _ = kernel(dst, value, n);
 }
 
-pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernel(
+    dst: ?*anyopaque,
+    value: c_int,
+    n: usize,
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
+    if (comptime t.medium_first and ops.high_available) {
+        if (n >= 64) {
+            @branchHint(.likely);
+            return mediumReordered(dst, value, n);
+        }
+    }
     if (n <= 16) {
         if (n == 0) return dst;
         const d: [*]u8 = @ptrCast(dst.?);
@@ -90,14 +100,8 @@ pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*
             } else {
                 ops.highSet(32, 2, d, value, n);
             }
-        } else if (n <= 128) {
-            ops.highSet(64, 2, d, value, n);
-        } else if (n <= 256) {
-            ops.highSet(64, 4, d, value, n);
-        } else if (n <= 512) {
-            ops.highSet(64, 8, d, value, n);
         } else {
-            return @call(.always_tail, largeKernel, .{ dst, value, n });
+            return mediumReordered(dst, value, n);
         }
         return dst;
     }
@@ -119,6 +123,20 @@ pub noinline fn kernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*
         return dst;
     }
     return @call(tail_call, mediumKernel, .{ dst, value, n });
+}
+
+inline fn mediumReordered(dst: ?*anyopaque, value: c_int, n: usize) ?*anyopaque {
+    const d: [*]u8 = @ptrCast(dst.?);
+    if (n <= 128) {
+        ops.highSet(t.medium_vec, 128 / t.medium_vec, d, value, n);
+    } else if (n <= 256) {
+        ops.highSet(t.medium_vec, 256 / t.medium_vec, d, value, n);
+    } else if (n <= 512) {
+        ops.highSet(64, 8, d, value, n);
+    } else {
+        return @call(.always_tail, largeKernel, .{ dst, value, n });
+    }
+    return dst;
 }
 
 noinline fn mediumKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {

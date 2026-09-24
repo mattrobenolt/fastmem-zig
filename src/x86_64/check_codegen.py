@@ -6,10 +6,12 @@ import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cpu")
-parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact"))
+parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"))
 parser.add_argument("artifact")
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
+compact_variants = ("compact", "ymm_medium", "straight_1k")
+reordered_variants = ("tiered", *compact_variants, "medium_first")
 dis = subprocess.check_output(["llvm-objdump", "-dr", "--no-show-raw-insn", artifact], text=True)
 nm = subprocess.check_output(["llvm-nm", "--defined-only", "--format=posix", artifact], text=True)
 syms = {}
@@ -94,6 +96,10 @@ high_regs = wide and variant != "entry"
 for op in ("move", "set"):
     actual_high = "%zmm16" in "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
     require(actual_high == high_regs, f"{op} does not implement requested variant {variant}")
+if wide:
+    move_entry = "\n".join(i for _, i in body("x86_64.move.kernel"))
+    require(("%zmm31" in move_entry) == (variant == "straight_1k"),
+            f"move does not implement requested variant {variant}: 1 KiB class")
 # Required branch fingerprints distinguish every requested implementation.
 if wide and variant != "entry":
     fingerprints = {
@@ -101,33 +107,47 @@ if wide and variant != "entry":
         "tiered": {0: 4, 4: 3, 8: 2, 17: 3, 65: 3, 129: 4},
         "compact": {0: 3, 4: 2, 8: 2, 17: 2, 65: 3, 129: 4},
     }
+    fingerprints["ymm_medium"] = fingerprints["compact"]
+    fingerprints["straight_1k"] = fingerprints["compact"]
+    fingerprints["medium_first"] = {0: 4, 4: 3, 8: 3, 17: 2, 65: 2, 129: 3}
     for n, count in fingerprints[variant].items():
         text = class_path("x86_64.move.kernel", n)
         actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
         require(actual == count, f"move/{n} does not implement requested variant {variant}: {actual} branches")
+if wide and variant == "medium_first":
+    for op in ("move", "set"):
+        require(syms[f"x86_64.{op}.kernel"][0] % 64 == 0, f"{op} entry lacks 64-byte alignment")
+if wide and variant == "straight_1k":
+    for n in (513, 767, 768, 1023, 1024):
+        text = class_path("x86_64.move.kernel", n)
+        require("%zmm31" in text and "vzeroupper" not in text, f"move/{n} lacks the 16-register class")
+        require(not re.search(r"%[yz]mm(?:[0-9]|1[0-5])\b", text), f"move/{n} dirties the low vector bank")
+        require(len(re.findall(r"vmovdqu64", text)) == 32, f"move/{n} has wrong vector count")
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.kernel" if high_regs else f"x86_64.{op}.mediumKernel"
     paths = []
     for n in ((64, 65, 128, 129, 256, 257, 511, 512) if wide else (33, 64, 65, 128, 129, 256)):
         text = class_path(name, n)
-        register = "%zmm" if wide else "%ymm"
+        narrow_medium = variant == "ymm_medium" and n <= 256
+        register = "%zmm" if wide and not narrow_medium else "%ymm"
         require(register in text, f"kernel {op}/{n} lacks {register}")
         if wide:
-            require("%ymm" not in text, f"kernel {op}/{n} splits a vector")
+            forbidden = "%zmm" if narrow_medium else "%ymm"
+            require(forbidden not in text, f"kernel {op}/{n} has wrong medium width")
         require(("vzeroupper" not in text) if high_regs else ("vzeroupper" in text),
                 f"kernel {op}/{n} has wrong vector cleanup")
         if high_regs:
             require(not re.search(r"%[yz]mm(?:[0-9]|1[0-5])\b", text),
                     f"kernel {op}/{n} dirties the low vector bank")
-        if wide and variant in ("tiered", "compact") and n in (65, 128, 129, 256):
+        if wide and variant in reordered_variants and n in (65, 128, 129, 256):
             branches = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
-            require(branches == (3 if n <= 128 else 4), f"kernel {op}/{n} has excess dispatch")
+            require(branches == ((2 if n <= 128 else 3) if variant == "medium_first" else (3 if n <= 128 else 4)), f"kernel {op}/{n} has excess dispatch")
         paths.append(n)
     if high_regs:
         for n in (33, 63):
             text = class_path(name, n)
-            register = "%xmm" if variant == "compact" and op == "move" else "%ymm16"
+            register = "%xmm" if variant in (*compact_variants, "medium_first") and op == "move" else "%ymm16"
             require(register in text and "vzeroupper" not in text,
                     f"kernel {op}/{n} lacks clean high registers")
     kernel_counts[op] = paths
@@ -149,13 +169,15 @@ for op in ("move", "set"):
             # Zen schedules the return-register move before the single-byte store.
             if op == "set" and n == 1 and high_regs and cpu in ("znver4", "znver5"):
                 budget = 12
-            if wide and op == "move" and variant in ("tiered", "compact"):
+            if wide and op == "move" and variant in reordered_variants:
                 budget = ({1: 15, 4: 10, 8: 8, 15: 8} if variant == "tiered" else
                           {1: 13, 4: 15, 8: 15, 15: 15})[n]
-            if high_regs and op == "set" and variant in ("tiered", "compact"):
+            if variant == "medium_first":
+                budget += 2
+            if high_regs and op == "set" and variant in reordered_variants:
                 # The return-register move precedes the stores. Total work stays unchanged.
-                budget = 12
-                require(len(lines) <= 14, f"small set/{n} exceeds total instruction budget")
+                budget = 14 if variant == "medium_first" else 12
+                require(len(lines) <= (16 if variant == "medium_first" else 14), f"small set/{n} exceeds total instruction budget")
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))

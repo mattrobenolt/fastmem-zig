@@ -78,7 +78,7 @@ pub noinline fn kernel(
     dst: ?*anyopaque,
     src: ?*const anyopaque,
     n: usize,
-) callconv(.c) ?*anyopaque {
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (comptime tuning.reordered and ops.high_available) return reordered(dst, src, n);
     if (n <= 16) {
@@ -120,9 +120,15 @@ pub noinline fn kernel(
 
 // These experiments retain the measured large policy and all inline classes.
 inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
-    const short_limit = if (tuning.variant == .compact) 15 else 16;
+    if (comptime t.medium_first) {
+        if (n >= 64) {
+            @branchHint(.likely);
+            return mediumReordered(dst, src, n);
+        }
+    }
+    const short_limit = if (tuning.compact_short) 15 else 16;
     if (n <= short_limit) {
-        if (tuning.variant == .compact) {
+        if (tuning.compact_short) {
             if (n >= 4) {
                 compact.quad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
             } else if (n != 0) {
@@ -142,19 +148,30 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
     if (n < 64) {
-        if (tuning.variant == .compact) {
+        if (tuning.compact_short) {
             compact.quad(@Vector(16, u8), d, s, n);
         } else if (n <= 32) {
             pair(@Vector(16, u8), d, s, n);
         } else {
             ops.highMove(32, 2, d, s, n);
         }
-    } else if (n <= 128) {
-        ops.highMove(64, 2, d, s, n);
+    } else {
+        return mediumReordered(dst, src, n);
+    }
+    return dst;
+}
+
+inline fn mediumReordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n <= 128) {
+        ops.highMove(t.medium_vec, 128 / t.medium_vec, d, s, n);
     } else if (n <= 256) {
-        ops.highMove(64, 4, d, s, n);
+        ops.highMove(t.medium_vec, 256 / t.medium_vec, d, s, n);
     } else if (n <= 512) {
         ops.highMove(64, 8, d, s, n);
+    } else if (t.abi_move_max == 1024 and n <= 1024) {
+        ops.highMove(64, 16, d, s, n);
     } else {
         return @call(.always_tail, largeKernel, .{ dst, src, n });
     }

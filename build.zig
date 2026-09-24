@@ -1,11 +1,18 @@
 const std = @import("std");
 
-const X86Variant = enum { auto, entry, high_regs, tiered, compact };
+const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
 
 // The per-model default of the "auto" variant, from the p3-x86c fleet A/B
 // (docs/results/p3-x86c.md). Keep in sync with src/x86_64/tuning.zig.
 fn resolveX86Variant(cpu: []const u8, variant: X86Variant) X86Variant {
-    if (variant != .auto) return variant;
+    const granite = std.mem.eql(u8, cpu, "graniterapids");
+    const intel = granite or std.mem.eql(u8, cpu, "sapphirerapids");
+    switch (variant) {
+        .medium_first, .ymm_medium => if (granite) return variant,
+        .straight_1k => if (intel) return variant,
+        .auto => {},
+        else => return variant,
+    }
     return if (std.mem.eql(u8, cpu, "znver4")) .tiered else .compact;
 }
 
@@ -322,9 +329,10 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Va
         check.addArg(@tagName(resolveX86Variant(cpu, variant)));
         check.addFileArg(obj.getEmittedBin());
         step.dependOn(&check.step);
-        if (std.mem.eql(u8, cpu, "sapphirerapids")) {
+        if (std.mem.eql(u8, cpu, "sapphirerapids") or std.mem.eql(u8, cpu, "graniterapids")) {
             const mutations = b.addSystemCommand(&.{"python3"});
             mutations.addFileArg(b.path("src/x86_64/test_check_codegen.py"));
+            mutations.addArg(cpu);
             mutations.addArg(@tagName(resolveX86Variant(cpu, variant)));
             mutations.addFileArg(obj.getEmittedBin());
             step.dependOn(&mutations.step);
