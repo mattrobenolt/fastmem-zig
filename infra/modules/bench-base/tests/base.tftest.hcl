@@ -68,10 +68,10 @@ run "launch_templates" {
   assert {
     condition = alltrue([
       for lt in aws_launch_template.bench :
-      toset([for spec in lt.tag_specifications : spec.resource_type]) == toset(["instance", "volume"])
-      && alltrue([for spec in lt.tag_specifications : spec.tags["Project"] == "fastmem-bench"])
+      toset([for spec in lt.tag_specifications : spec.resource_type]) == toset(["instance", "volume", "network-interface"])
+      && alltrue([for spec in lt.tag_specifications : spec.tags == tomap({ Project = "fastmem-bench", ManagedBy = "ec2bench" })])
     ])
-    error_message = "Instances and volumes must get the Project tag from the launch template."
+    error_message = "Instances, volumes, and network interfaces must get Project and ManagedBy from the launch template."
   }
 
   assert {

@@ -96,10 +96,12 @@ resource "local_sensitive_file" "ssh_key" {
 }
 
 locals {
-  # Tags for instances and volumes that a launch template creates. The
-  # harness sends the same Project and ManagedBy tags, plus Name, Target,
-  # ExpiresAt, and Owner, in its RunInstances request. The IAM policy
-  # requires Project and ExpiresAt in that request.
+  # Tags for the instances, volumes, and network interfaces that a launch
+  # template creates. The harness sends the same Project and ManagedBy tags,
+  # plus Name, Target, ExpiresAt, and Owner, in its RunInstances request.
+  # The bench-iam policy requires Project on all three resource types (from
+  # the request or from here) and ExpiresAt on the instance. The reaper
+  # finds orphan volumes and network interfaces by the Project tag.
   box_tags = {
     Project   = var.project
     ManagedBy = "ec2bench"
@@ -155,6 +157,11 @@ resource "aws_launch_template" "bench" {
 
   tag_specifications {
     resource_type = "volume"
+    tags          = local.box_tags
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
     tags          = local.box_tags
   }
 }
