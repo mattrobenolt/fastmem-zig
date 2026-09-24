@@ -45,3 +45,14 @@ export fn probeSetVec4(d: [*]u8, c: u8, n: usize) void {
     if (n < 129 or n > 256) unreachable;
     fastmem.set(u8, d[0..n], c);
 }
+
+// Unbounded lengths retain the complete inline-to-large call graph.
+export fn probeRuntimeCopy(d: [*]u8, s: [*]const u8, n: usize) void {
+    fastmem.copy(u8, d[0..n], s[0..n]);
+}
+export fn probeRuntimeMove(d: [*]u8, s: [*]const u8, n: usize) void {
+    fastmem.move(u8, d[0..n], s[0..n]);
+}
+export fn probeRuntimeSet(d: [*]u8, c: u8, n: usize) void {
+    fastmem.set(u8, d[0..n], c);
+}

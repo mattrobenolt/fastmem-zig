@@ -80,6 +80,11 @@ for op in ("copy", "move", "set"):
             require("%zmm" in text and "%ymm" not in text, f"fixed {op}/{n} splits a vector")
             require("vzeroupper" in text, f"fixed {op}/{n} lacks vzeroupper")
 
+for name in ("probeRuntimeCopy", "probeRuntimeMove", "probeRuntimeSet"):
+    text = "\n".join(i for _, i in body(name))
+    require(re.search(r"\b(?:call\w*|j\w+)\b.*<x86_64\.", text), f"{name} lacks a large-path transfer")
+require(any("copyLarge" in name for name in syms), "runtime copy specialization missing")
+
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.kernel"

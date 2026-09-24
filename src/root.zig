@@ -92,7 +92,12 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
     }
     if (comptime on_x86) {
         std.debug.assert(dest.len >= source.len);
-        x86_move.move(.disjoint, @ptrCast(dest.ptr), @ptrCast(source.ptr), source.len * @sizeOf(T));
+        const bytes = source.len * @sizeOf(T);
+        const d_addr = @intFromPtr(dest.ptr);
+        const s_addr = @intFromPtr(source.ptr);
+        std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
+        std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        x86_move.move(.disjoint, @ptrCast(dest.ptr), @ptrCast(source.ptr), bytes);
         return;
     }
     memcpy_impl.copy(T, dest, source);

@@ -94,8 +94,12 @@ noinline fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: us
     }
     const source_inside = overlap == .may_overlap and @intFromPtr(src) -% @intFromPtr(dst) < n;
     if (t.rep_movsb_min) |threshold| {
-        // Short forward overlap stalls REP on Intel. Keep every forward overlap on vectors.
-        if (!source_inside and n > threshold and (t.nt_min == null or n < t.nt_min.?)) {
+        // The gap override permits H8 without the short-distance REP penalty.
+        const rep_overlap = if (t.rep_fwd_gap_min) |gap|
+            @intFromPtr(src) -% @intFromPtr(dst) >= gap
+        else
+            false;
+        if ((!source_inside or rep_overlap) and n > threshold and (t.nt_min == null or n < t.nt_min.?)) {
             const head = ops.load(V, src);
             const address = if (distance & t.rep_src_align_mask == 0)
                 @intFromPtr(src)
