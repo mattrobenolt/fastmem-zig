@@ -23,6 +23,18 @@ const Case = struct {
 };
 var current: Case = .{};
 var count: u64 = 0;
+const mib = 1024 * 1024;
+const default_max_size: u32 = ceiling: {
+    if (builtin.cpu.arch == .x86_64) {
+        const model = builtin.cpu.model;
+        if (model == &std.Target.x86.cpu.znver4 or model == &std.Target.x86.cpu.znver5)
+            break :ceiling 16 * mib;
+        if (model == &std.Target.x86.cpu.sapphirerapids) break :ceiling 67 * mib;
+        if (model == &std.Target.x86.cpu.graniterapids) break :ceiling 302 * mib;
+    }
+    break :ceiling mib;
+};
+var max_size: u32 = default_max_size;
 
 comptime {
     // Calls below also pin argument types and the void return type.
@@ -42,6 +54,7 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
         .cases = count,
         .elapsed_ns = elapsed_ns,
         .cpu = builtin.cpu.model.name,
+        .max_size = max_size,
         .optimize = @tagName(builtin.mode),
         .set_available = @hasDecl(fastmem, "set"),
         .impl = fastmem.impl,
@@ -67,7 +80,7 @@ pub fn main(init: process.Init) void {
     posix.sigaction(.SEGV, &action, null);
     posix.sigaction(.BUS, &action, null);
     const start = Io.Timestamp.now(init.io, .awake);
-    run(init.gpa) catch |err| {
+    runArgs(init) catch |err| {
         const elapsed = start.durationTo(Io.Timestamp.now(init.io, .awake)).nanoseconds;
         summary("fail", @errorName(err), elapsed);
         process.exit(1);
@@ -191,7 +204,8 @@ fn overlap(buf: Guarded, expected: []u8, original: []const u8, len: u32, offsets
     for (gaps[0..129], 0..) |*gap, i| gap.* = @intCast(i);
     const extra = [_]u32{ 3840, 3841, 3968, 4000, 4095, 4096, 4097, 8192, len / 2, len -| 1 };
     @memcpy(gaps[129..], &extra);
-    const selected = gaps[0..@as(u32, if (len > 1024) 139 else 129)];
+    const sparse = [_]u32{ 0, 4095, len / 2, len -| 1 };
+    const selected = if (len > mib) &sparse else gaps[0..@as(u32, if (len > 1024) 139 else 129)];
     inline for (.{ Guarded.Side.start, Guarded.Side.end }) |side| {
         for (selected) |gap| {
             for (offsets) |inset| {
@@ -249,6 +263,16 @@ fn offsetsFor(len: u32) []const u32 {
     return if (len <= 64 * 1024) &.{ 0, 1, 15, 16, 31, 32, 33, 63 } else &.{ 0, 1 };
 }
 
+fn runArgs(init: process.Init) !void {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len != 1) {
+        if (args.len != 3 or !mem.eql(u8, args[1], "--max-size")) return error.InvalidArguments;
+        max_size = try std.fmt.parseInt(u32, args[2], 10);
+        if (max_size < 1024 or max_size > 512 * mib) return error.InvalidMaxSize;
+    }
+    try run(init.gpa);
+}
+
 fn run(allocator: mem.Allocator) !void {
     var small: [1025]u32 = undefined;
     for (&small, 0..) |*len, i| len.* = @intCast(i);
@@ -256,17 +280,23 @@ fn run(allocator: mem.Allocator) !void {
     for (&offsets, 0..) |*offset, i| offset.* = @intCast(i);
     try sizeClass(allocator, &small, &offsets, &.{ 0, 1, 17, 63 });
     // Each large size gets its own page-rounded window, not a 1 MiB small-case mapping.
+    const dense_limit = @min(max_size, mib);
     var power: u32 = 1024;
-    while (power <= 1024 * 1024) : (power *= 2) {
+    while (power <= dense_limit) : (power *= 2) {
         for ([_]u32{ power - 1, power, power + 1 }) |len| {
-            if (len > 1024 * 1024) continue;
+            if (len > dense_limit) continue;
             try sizeClass(allocator, &.{len}, offsetsFor(len), &.{ 0, 1, 17, 63 });
         }
     }
     for ([_]u32{ 4095, 4096, 4097 }) |base| {
         var multiplier: u32 = 1;
-        while (base * multiplier <= 1024 * 1024) : (multiplier *= 2) {
+        while (base * multiplier <= dense_limit) : (multiplier *= 2) {
             try sizeClass(allocator, &.{base * multiplier}, offsetsFor(base * multiplier), &.{ 0, 1, 17, 63 });
+        }
+    }
+    if (max_size > mib) {
+        for ([_]u32{ max_size - 1, max_size }) |len| {
+            try sizeClass(allocator, &.{len}, &.{0}, &.{0});
         }
     }
 }

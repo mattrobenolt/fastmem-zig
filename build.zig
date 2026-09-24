@@ -94,6 +94,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_correctness.step);
     b.step("test-bin", "Install the guard-page correctness binary").dependOn(&install_correctness.step);
     const guard_cmd = b.addRunArtifact(correctness);
+    if (b.args) |args| guard_cmd.addArgs(args);
     b.step("test-guard", "Run the full guard-page matrix").dependOn(&guard_cmd.step);
 
     // Assembly output for codegen inspection.
