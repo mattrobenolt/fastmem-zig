@@ -17,6 +17,9 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
+    const x86_options = x86Options(b);
+    mod.addOptions("fastmem_options", x86_options);
+
     const exe = b.addExecutable(.{
         .name = "fastmem",
         .root_module = b.createModule(.{
@@ -105,7 +108,7 @@ pub fn build(b: *std.Build) void {
     b.step("test-guard", "Run the full guard-page matrix").dependOn(&guard_cmd.step);
 
     // Assembly output for codegen inspection.
-    addAsmStep(b, target, "asm", "Emit assembly for the current (or -Dtarget) target");
+    addAsmStep(b, x86_options, target, "asm", "Emit assembly for the current (or -Dtarget) target");
 
     const asm_all_step = b.step("asm-all", "Emit assembly for all key targets");
     const asm_targets = [_][]const u8{
@@ -119,9 +122,11 @@ pub fn build(b: *std.Build) void {
         const resolved = b.resolveTargetQuery(std.Target.Query.parse(.{
             .arch_os_abi = triple,
         }) catch unreachable);
-        const obj = addAsmObject(b, resolved, triple);
+        const obj = addAsmObject(b, x86_options, resolved, triple);
         asm_all_step.dependOn(obj);
     }
+
+    addX86Codegen(b, x86_options);
 
     // Tests. The fastmem test module takes an explicit optimize so a
     // release-mode test build can dodge the 0.16.0 self-hosted-backend
@@ -139,6 +144,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    mod_tests.root_module.addOptions("fastmem_options", x86_options);
+
+    const unit_install = b.addInstallArtifact(mod_tests, .{ .dest_sub_path = "fastmem-unit-tests" });
+    b.step("test-unit-bin", "Install the unit test binary for cross execution").dependOn(&unit_install.step);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
@@ -159,6 +168,7 @@ pub fn build(b: *std.Build) void {
 
 fn addAsmObject(
     b: *std.Build,
+    x86_options: *std.Build.Step.Options,
     resolved_target: std.Build.ResolvedTarget,
     name: []const u8,
 ) *std.Build.Step {
@@ -170,6 +180,8 @@ fn addAsmObject(
         .no_builtin = true,
         .omit_frame_pointer = true,
     });
+
+    target_mod.addOptions("fastmem_options", x86_options);
 
     const obj = b.addObject(.{
         .name = "fastmem-probe",
@@ -208,6 +220,7 @@ fn addAsmObject(
 
 fn addAsmStep(
     b: *std.Build,
+    x86_options: *std.Build.Step.Options,
     target: std.Build.ResolvedTarget,
     step_name: []const u8,
     description: []const u8,
@@ -220,7 +233,59 @@ fn addAsmStep(
         @tagName(t.abi),
     }) catch unreachable;
 
-    const obj_step = addAsmObject(b, target, name);
+    const obj_step = addAsmObject(b, x86_options, target, name);
     const step = b.step(step_name, description);
     step.dependOn(obj_step);
+}
+
+fn x86Options(b: *std.Build) *std.Build.Step.Options {
+    const options = b.addOptions();
+    inline for (.{ "vec", "inline-max" }) |name| {
+        options.addOption(?u32, comptime "x86_" ++ replaceDash(name), b.option(u32, "x86-" ++ name, "Override the x86 tuning default"));
+    }
+    inline for (.{ "rep-movsb-min", "nt-min", "rep-stosb-min", "memset-nt-min", "alias-mask", "rep-src-align-mask" }) |name| {
+        options.addOption(?u64, comptime "x86_" ++ replaceDash(name), b.option(u64, "x86-" ++ name, "Override the x86 tuning default"));
+    }
+    options.addOption(bool, "x86_small_masked_set", b.option(bool, "x86-small-masked-set", "Use masked small memset in LLVM builds") orelse true);
+    return options;
+}
+
+fn replaceDash(comptime name: []const u8) *const [name.len]u8 {
+    comptime var result: [name.len]u8 = undefined;
+    inline for (name, 0..) |c, i| result[i] = if (c == '-') '_' else c;
+    return &result;
+}
+
+fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options) void {
+    const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
+    for ([_][]const u8{ "sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3" }) |cpu| {
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = "x86_64-linux-gnu",
+            .cpu_features = cpu,
+        }) catch unreachable);
+        const kernel = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .no_builtin = true,
+            .omit_frame_pointer = true,
+        });
+        kernel.addOptions("fastmem_options", options);
+        const obj = b.addObject(.{
+            .name = b.fmt("probe-{s}", .{cpu}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/x86_64/codegen.zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+                .omit_frame_pointer = true,
+                .imports = &.{.{ .name = "fastmem", .module = kernel }},
+            }),
+        });
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/x86_64/check_codegen.py"));
+        check.addArg(cpu);
+        check.addFileArg(obj.getEmittedBin());
+        step.dependOn(&check.step);
+        const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("codegen/{s}.o", .{cpu}));
+        step.dependOn(&install.step);
+    }
 }

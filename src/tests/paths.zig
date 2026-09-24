@@ -10,19 +10,15 @@ var move_fn: CopyFn = &kernelMove;
 var set_fn: SetFn = &kernelSet;
 
 noinline fn kernelCopy(dest: [*]u8, source: [*]const u8, len: usize) callconv(.c) [*]u8 {
-    fastmem.copy(u8, dest[0..len], source[0..len]);
-    return dest;
+    return @ptrCast(fastmem.abi.memcpy(dest, source, len).?);
 }
 
 noinline fn kernelMove(dest: [*]u8, source: [*]const u8, len: usize) callconv(.c) [*]u8 {
-    fastmem.move(u8, dest[0..len], source[0..len]);
-    return dest;
+    return @ptrCast(fastmem.abi.memmove(dest, source, len).?);
 }
 
 noinline fn kernelSet(dest: [*]u8, value: c_int, len: usize) callconv(.c) [*]u8 {
-    if (@hasDecl(fastmem, "set"))
-        fastmem.set(u8, dest[0..len], @truncate(@as(c_uint, @bitCast(value))));
-    return dest;
+    return @ptrCast(fastmem.abi.memset(dest, value, len).?);
 }
 
 comptime {

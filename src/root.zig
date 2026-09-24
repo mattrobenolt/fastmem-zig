@@ -28,16 +28,23 @@ const aarch64_memset_advsimd = @import("aarch64/memset_advsimd.zig");
 // The kernel ports carry ELF-only directives (.type/.hidden/.size), so
 // non-ELF aarch64 (e.g. macOS) keeps the generic Zig kernels.
 const on_aarch64 = builtin.cpu.arch == .aarch64 and builtin.target.ofmt == .elf;
+const x86_tuning = @import("x86_64/tuning.zig");
+const x86_move = @import("x86_64/move.zig");
+const x86_set = @import("x86_64/set.zig");
+const on_x86 = x86_tuning.available;
+
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
 const copy_impl_name: []const u8 = if (on_aarch64_sve)
     "aor-sve-5e20a93"
 else if (on_aarch64)
     "aor-advsimd-5e20a93"
+else if (on_x86)
+    x86_tuning.name
 else
     "zig-simd";
 
-const set_impl_name: []const u8 = if (on_aarch64)
+const set_impl_name: []const u8 = if (on_aarch64 or on_x86)
     copy_impl_name
 else
     "zig-vector";
@@ -62,6 +69,7 @@ pub const flags: Flags = .{
 
 test {
     _ = @import("tests/fuzz.zig");
+    if (on_x86) _ = @import("x86_64/tests.zig");
 }
 
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
@@ -82,6 +90,11 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         }
         return;
     }
+    if (comptime on_x86) {
+        std.debug.assert(dest.len >= source.len);
+        x86_move.move(.disjoint, @ptrCast(dest.ptr), @ptrCast(source.ptr), source.len * @sizeOf(T));
+        return;
+    }
     memcpy_impl.copy(T, dest, source);
 }
 
@@ -96,6 +109,16 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         } else {
             aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
         }
+        return;
+    }
+    if (comptime on_x86) {
+        std.debug.assert(dest.len >= source.len);
+        x86_move.move(
+            .may_overlap,
+            @ptrCast(dest.ptr),
+            @ptrCast(source.ptr),
+            source.len * @sizeOf(T),
+        );
         return;
     }
     memmove_impl.move(T, dest, source);
@@ -119,6 +142,13 @@ pub inline fn set(comptime T: type, dest: []T, value: T) void {
             } else {
                 aarch64_memset_advsimd.fastmem_advsimd_set(d, bytes[0], len);
             }
+            return;
+        }
+    }
+    if (comptime on_x86 and (T == u8 or std.meta.hasUniqueRepresentation(T))) {
+        const bytes = std.mem.asBytes(&value);
+        if (T == u8 or allBytesEqual(bytes)) {
+            x86_set.set(@ptrCast(dest.ptr), bytes[0], dest.len * @sizeOf(T));
             return;
         }
     }
@@ -166,6 +196,7 @@ else
 /// fastmem_abi.
 pub const abi = struct {
     pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_x86) return @call(.never_inline, x86_move.kernel, .{ dest, src, n });
         if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
@@ -175,6 +206,7 @@ pub const abi = struct {
     }
 
     pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_x86) return @call(.never_inline, x86_move.kernel, .{ dest, src, n });
         if (comptime on_aarch64) return libc_move_fn(dest, src, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
@@ -184,6 +216,7 @@ pub const abi = struct {
     }
 
     pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_x86) return @call(.never_inline, x86_set.kernel, .{ dest, c, n });
         if (comptime on_aarch64) return libc_set_fn(dest, c, n);
         if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
