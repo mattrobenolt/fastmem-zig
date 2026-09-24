@@ -103,7 +103,7 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
 /// any T with a unique in-memory representation whose value bytes are
 /// all equal (checked at runtime; comptime-known for u8). Every other
 /// type takes the element-wise fallback loop.
-pub fn set(comptime T: type, dest: []T, value: T) void {
+pub inline fn set(comptime T: type, dest: []T, value: T) void {
     if (comptime @sizeOf(T) == 0) return;
     if (comptime on_aarch64 and (T == u8 or std.meta.hasUniqueRepresentation(T))) {
         const bytes = std.mem.asBytes(&value);
