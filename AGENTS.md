@@ -90,3 +90,10 @@ toolchain. Nothing has been benchmarked on 0.16 yet.
 - Vector width: `std.simd.suggestVectorLength(u8)` — 16 on NEON, 32 on AVX2.
 - Run `ziglint src/` before completion. Existing warnings remain in the kernels
   and `src/asm_probe.zig`. Modified benchmark files must pass lint.
+
+## Git
+
+- Never `git add -A` or `git add .`. Stage tracked changes with `git add -u` and
+  add new files by explicit path after reading `git status --short`. Untracked
+  files here can hold secrets: qemu-user core dumps (`*.core`) contain the whole
+  process environment.
