@@ -1,5 +1,6 @@
-"""Round-cluster bootstrap ratios and target-specific noise floors."""
+"""Round-cluster bootstrap ratios and pooled operation/size noise floors."""
 
+import logging
 import math
 import random
 import statistics
@@ -65,15 +66,19 @@ def geomean(values: list[float]) -> float:
     return math.exp(statistics.fmean(math.log(value) for value in values))
 
 
-def load_rounds(
-    raw: Path, variants: list[str]
-) -> tuple[dict[tuple[str, str, str], dict[int, list[float]]], dict[str, dict[str, Any]]]:
-    # Each key retains round clusters, not flattened independent samples.
+def load_rounds(  # noqa: C901 — validate clusters before case intersection
+    raw: Path,
+    variants: list[str],
+    *,
+    expected_round_count: int | None = None,
+) -> tuple[
+    dict[tuple[str, str, str], dict[int, list[float]]], dict[str, dict[str, Any]], list[str]
+]:
     data: dict[tuple[str, str, str], dict[int, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     details: dict[str, dict[str, Any]] = {}
-    expected_cases: set[tuple[str, str]] | None = None
+    variant_cases: dict[str, set[tuple[str, str]]] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -82,30 +87,69 @@ def load_rounds(
         rounds = {int(path.stem[1:]) for path in paths}
         if expected_rounds is not None and rounds != expected_rounds:
             raise ValueError("Variants have different round sets")
+        if rounds != set(range(expected_round_count or len(rounds))):
+            raise ValueError(f"Incomplete round set for {variant}: {sorted(rounds)}")
         expected_rounds = rounds
         for path in paths:
             measurement = parse(path)
             cases = {(sample["case"], sample["impl"]) for sample in measurement.samples}
-            if expected_cases is not None and cases != expected_cases:
-                raise ValueError("Rounds have different case/implementation sets")
-            expected_cases = cases
+            if variant in variant_cases and cases != variant_cases[variant]:
+                raise ValueError(f"Rounds have different case/implementation sets within {variant}")
+            variant_cases[variant] = cases
             for sample in measurement.samples:
                 case = sample["case"]
-                details[case] = {"op": sample["op"], "size": sample["size"]}
+                detail = {key: sample[key] for key in ("op", "size", "profile")}
+                if case in details and detail != details[case]:
+                    raise ValueError(f"Case metadata changed for {case}")
+                details[case] = detail
                 data[variant, case, sample["impl"]][int(path.stem[1:])].append(
                     sample["ns"] / sample["iters"]
                 )
+    common = set.intersection(*variant_cases.values())
+    warnings = []
+    for variant, cases in variant_cases.items():
+        if excluded := cases - common:
+            warning = (
+                f"{variant}: excluded {len(excluded)} unmatched case/implementation pairs: "
+                + ", ".join(f"{case}:{impl}" for case, impl in sorted(excluded))
+            )
+            warnings.append(warning)
+            logging.getLogger(__name__).warning("%s", warning)
+    if not common:
+        raise ValueError("Variants have no common case/implementation pairs")
+    data = {key: rounds for key, rounds in data.items() if (key[1], key[2]) in common}
+    common_cases = {case for case, _impl in common}
+    details = {case: detail for case, detail in details.items() if case in common_cases}
+    return data, details, warnings
 
-    return data, details
+
+def floor_group(detail: dict[str, Any]) -> str:
+    if detail["profile"] == "dist":
+        return f"{detail['op']}/tier/{tier(detail['size'])}"
+    return f"{detail['op']}/size/{detail['size']:g}"
+
+
+def validate_effect(minimum_effect: float) -> None:
+    if not math.isfinite(minimum_effect) or minimum_effect < 0:
+        raise ValueError("The minimum effect must be a finite nonnegative fraction")
 
 
 def analyze(
-    raw: Path, variants: list[str], baseline: str, *, aa: str | None = "aa"
+    raw: Path,
+    variants: list[str],
+    baseline: str,
+    *,
+    aa: str | None = "aa",
+    minimum_effect: float = 0.0,
+    expected_round_count: int | None = None,
 ) -> dict[str, Any]:
-    data, details = load_rounds(raw, [*variants, *([aa] if aa else [])])
+    validate_effect(minimum_effect)
+    data, details, warnings = load_rounds(
+        raw, [*variants, *([aa] if aa else [])], expected_round_count=expected_round_count
+    )
 
     def clusters(variant: str, case: str, impl: str) -> list[list[float]]:
-        rounds = data[variant, case, impl]
+        rounds = data.get((variant, case, impl), {})
         return [rounds[index] for index in sorted(rounds)]
 
     rows: list[dict[str, Any]] = []
@@ -140,12 +184,15 @@ def analyze(
                 "baseline_ns": median(right),
                 "ratio": value,
                 "ci95": list(interval),
+                "rounds": len(left),
+                "floor_group": floor_group(details[case]),
             }
         )
 
     for case in sorted(details):
         if aa:
-            compare(case, "A/A", aa, "fastmem", baseline, "fastmem")
+            for implementation in ("fastmem", "libc", "builtin"):
+                compare(case, "A/A", aa, implementation, baseline, implementation)
         for variant in variants:
             if variant != baseline:
                 compare(case, "revision", variant, "fastmem", baseline, "fastmem")
@@ -153,30 +200,52 @@ def analyze(
                 compare(
                     case, f"fastmem/{implementation}", variant, "fastmem", variant, implementation
                 )
-    # Conservative target floor: the largest observed A/A departure or CI endpoint departure.
-    noise_floor = max(
-        (
-            max(abs(row["ratio"] - 1), *(abs(bound - 1) for bound in row["ci95"]))
-            for row in rows
-            if row["comparison"] == "A/A"
-        ),
-        default=None,
-    )
-    groups: dict[tuple[str, str, str, str], list[float]] = defaultdict(list)
+    return summarize(rows, warnings, minimum_effect)
+
+
+def summarize(
+    rows: list[dict[str, Any]], warnings: list[str], minimum_effect: float
+) -> dict[str, Any]:
+    noise_floors: dict[str, float] = {}
     for row in rows:
-        row["significant"] = row["comparison"] != "A/A" and significant(
-            row["ratio"], tuple(row["ci95"]), noise_floor
+        if row["comparison"] == "A/A":
+            departure = max(abs(row["ratio"] - 1), *(abs(bound - 1) for bound in row["ci95"]))
+            key = row["floor_group"]
+            noise_floors[key] = max(noise_floors.get(key, 0), departure)
+    if any(row["rounds"] < 5 for row in rows):
+        warnings.append("Fewer than five rounds: significance marks are disabled.")
+    groups: dict[tuple[str, str, str, str, str], list[float]] = defaultdict(list)
+    for row in rows:
+        floor = noise_floors.get(row["floor_group"])
+        row["noise_floor"] = floor
+        row["significant"] = (
+            row["comparison"] != "A/A"
+            and row["rounds"] >= 5
+            and significant(
+                row["ratio"],
+                tuple(row["ci95"]),
+                max(floor, minimum_effect) if floor is not None else None,
+            )
         )
-        groups[row["comparison"], row["variant"], row["op"], row["tier"]].append(row["ratio"])
+        groups[
+            row["comparison"], row["variant"], row["op"], row["tier"], row["candidate_impl"]
+        ].append(row["ratio"])
     tiers = [
         {
             "comparison": key[0],
             "variant": key[1],
             "op": key[2],
             "tier": key[3],
+            "candidate_impl": key[4],
             "geomean": geomean(values),
             "cases": len(values),
         }
         for key, values in sorted(groups.items())
     ]
-    return {"noise_floor": noise_floor, "rows": rows, "tiers": tiers}
+    return {
+        "noise_floors": noise_floors,
+        "minimum_effect": minimum_effect,
+        "rows": rows,
+        "tiers": tiers,
+        "warnings": warnings,
+    }

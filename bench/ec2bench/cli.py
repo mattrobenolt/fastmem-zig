@@ -15,7 +15,7 @@ from ec2bench.box import Box
 from ec2bench.config import Config
 from ec2bench.facts import collect
 from ec2bench.fleet import Fleet, expiry, tags
-from ec2bench.parallel import parallel, progress
+from ec2bench.parallel import Outcome, parallel, progress
 
 console = Console()
 
@@ -28,26 +28,30 @@ def box_for(fleet: Fleet, instance: dict[str, Any], outputs: dict[str, Any]) -> 
         instance["InstanceId"],
         host,
         fleet.key_path(outputs),
-        fleet.config.root / ".bench-cache/ssh",
+        fleet.config.cache_dir / "ssh",
+        user=fleet.config.project.get("ssh_user", "root"),
     )
 
 
 def ensure_up(
     fleet: Fleet, names: list[str], ttl: str | None = None, size: str | None = None
-) -> None:
+) -> dict[str, Outcome[str]]:
+    fleet.config.ttl(ttl or fleet.config.fleet["default_ttl"])
     outputs = fleet.outputs()
 
     def launch(name: str) -> str:
         instance = fleet.launch(name, ttl or fleet.config.fleet["default_ttl"], size, outputs)
-        progress("wait for EC2")
-        instance = fleet.wait_running(instance["InstanceId"])
-        progress("wait for SSH and image")
-        box_for(fleet, instance, outputs).ready(fleet.config.project["image_version"])
+        try:
+            progress("wait for EC2")
+            instance = fleet.wait_running(instance["InstanceId"])
+            progress("wait for SSH and image")
+            box_for(fleet, instance, outputs).ready(fleet.config.project["image_version"])
+        except BaseException:
+            fleet.terminate([instance["InstanceId"]])
+            raise
         return instance["InstanceId"]
 
-    results = parallel(names, launch)
-    if any(result.error for result in results.values()):
-        raise click.ClickException("Some targets failed to start. Their TTL tags remain active.")
+    return parallel(names, launch)
 
 
 @click.group()
@@ -64,7 +68,14 @@ def cli(ctx: click.Context) -> None:
 @click.pass_obj
 def up(config: Config, targets: tuple[str, ...], ttl: str | None, size: str | None) -> None:
     """Launch missing targets and wait for the image marker."""
-    ensure_up(Fleet(config), config.select(targets), ttl, size)
+    fleet = Fleet(config)
+    config.ttl(ttl or config.fleet["default_ttl"])
+    fleet.reap()
+    results = ensure_up(fleet, config.select(targets), ttl, size)
+    if any(result.error for result in results.values()):
+        raise click.ClickException(
+            "Some targets failed to start. Failed instances were terminated."
+        )
 
 
 @cli.command(name="ls")
@@ -140,7 +151,7 @@ def facts(config: Config, targets: tuple[str, ...]) -> None:
     outputs = fleet.outputs()
     results = parallel(
         config.select(targets),
-        lambda name: collect(box_for(fleet, fleet.one(name), outputs), config.root),
+        lambda name: collect(box_for(fleet, fleet.one(name), outputs), config.results_dir),
     )
     for name, result in results.items():
         if result.error is None:

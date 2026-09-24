@@ -8,6 +8,10 @@ from rich.console import Console
 from rich.table import Table
 
 
+def comparison(row: dict[str, Any]) -> str:
+    return f"A/A ({row['candidate_impl']})" if row["comparison"] == "A/A" else row["comparison"]
+
+
 def write(path: Path, summary: dict[str, Any]) -> None:
     (path / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     text = [
@@ -16,8 +20,11 @@ def write(path: Path, summary: dict[str, Any]) -> None:
         "Ratios below 1 indicate a faster candidate.",
         "",
         "The confidence interval uses a paired bootstrap over rounds.",
-        "The target noise floor is the largest A/A ratio or interval departure from 1.",
-        "An asterisk marks an interval outside 1 and a ratio beyond that floor.",
+        "Each operation/size floor pools A/A departures across profiles and implementations.",
+        "The floor includes confidence interval endpoints.",
+        "Distribution cases use operation/tier floors.",
+        "An asterisk requires at least five rounds and an interval outside 1.",
+        "The ratio must also exceed the noise floor and the configured minimum effect.",
         "",
     ]
     text += ["| Variant | Revision |", "|---|---|"]
@@ -32,11 +39,14 @@ def write(path: Path, summary: dict[str, Any]) -> None:
             continue
         for warning in result.get("warnings", []):
             text += [f"Warning: {warning}", ""]
-        floor = result["noise_floor"]
+        text += [f"Minimum effect: {result['minimum_effect']:.4%}.", ""]
+        if result["noise_floors"]:
+            text += ["| A/A floor group | Noise floor |", "|---|---:|"]
+            for group, floor in sorted(result["noise_floors"].items()):
+                text.append(f"| {group} | {floor:.4%} |")
+        else:
+            text.append("A/A is disabled. The report does not mark significance.")
         text += [
-            f"A/A noise floor: {floor:.4%}."
-            if floor is not None
-            else "A/A is disabled. The report does not mark significance.",
             "",
             "| Case | Comparison | Variant | Ratio | 95% CI |",
             "|---|---|---|---:|---|",
@@ -45,7 +55,7 @@ def write(path: Path, summary: dict[str, Any]) -> None:
             mark = " *" if row["significant"] else ""
             lo, hi = row["ci95"]
             text.append(
-                f"| {row['case']} | {row['comparison']} | {row['variant']} | "
+                f"| {row['case']} | {comparison(row)} | {row['variant']} | "
                 f"{row['ratio']:.4f}{mark} | {lo:.4f}-{hi:.4f} |"
             )
         text += [
@@ -57,7 +67,7 @@ def write(path: Path, summary: dict[str, Any]) -> None:
         ]
         for row in result["tiers"]:
             values = [
-                row["comparison"],
+                comparison(row),
                 row["variant"],
                 row["op"],
                 row["tier"],

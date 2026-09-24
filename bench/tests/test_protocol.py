@@ -47,7 +47,12 @@ class FakeBox:
         self.downloaded = True
         for variant in ("v0", "aa"):
             for index in range(2):
-                measurement(destination / "raw" / variant / f"r{index}.jsonl")
+                folder = (
+                    destination
+                    if destination.name in {"v0", "aa"}
+                    else destination / "raw" / variant
+                )
+                measurement(folder / f"r{index}.jsonl")
 
 
 def setup(config: Config) -> tuple[Path, Build]:
@@ -88,7 +93,7 @@ def test_protocol(config: Config) -> None:
     )
     assert len([command for command in box.commands if "AllowedCPUs=0-3" in command]) == 3
     assert box.downloaded
-    assert analyze(path / "intel/raw", ["v0"], "v0")["noise_floor"] == 0
+    assert analyze(path / "intel/raw", ["v0"], "v0")["noise_floors"]["copy/size/64"] == 0
 
 
 def test_protocol_restores_and_downloads_after_failure(config: Config) -> None:

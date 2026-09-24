@@ -1,5 +1,6 @@
 """Source resolution and content-addressed cross builds."""
 
+import errno
 import hashlib
 import json
 import logging
@@ -63,7 +64,7 @@ def resolve(config: Config, revisions: tuple[str, ...]) -> list[Source]:
             digest = source_hash(path)
         else:
             sha = git(config.root, "rev-parse", "--verify", f"{revision}^{{commit}}")
-            path = config.root / ".bench-cache/src" / sha
+            path = config.cache_dir / "src" / sha
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 git(config.root, "worktree", "add", "--detach", str(path), sha)
@@ -100,7 +101,7 @@ def build_all(
             True,
         ]
         key = hashlib.sha256(json.dumps(key_data).encode()).hexdigest()
-        prefix = config.root / ".bench-cache/build" / key
+        prefix = config.cache_dir / "build" / key
         if not (prefix / "complete.json").exists():
             prefix.parent.mkdir(parents=True, exist_ok=True)
             temporary = Path(tempfile.mkdtemp(prefix="build-", dir=prefix.parent))
@@ -135,8 +136,11 @@ def build_all(
                 )
                 try:
                     temporary.rename(prefix)
-                except FileExistsError:
-                    if not (prefix / "complete.json").exists():
+                except OSError as error:
+                    if (
+                        error.errno not in {errno.EEXIST, errno.ENOTEMPTY}
+                        or not (prefix / "complete.json").exists()
+                    ):
                         raise
             finally:
                 if temporary.exists():

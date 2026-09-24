@@ -82,10 +82,10 @@ def test_tiers(size: int, expected: str) -> None:
 
 def test_analysis(tmp_path: Path) -> None:
     for variant, scale in (("v0", 1), ("v1", 0.8), ("aa", 1.01)):
-        for index in range(3):
+        for index in range(5):
             measurement(tmp_path / variant / f"r{index}.jsonl", scale)
     result = analyze(tmp_path, ["v0", "v1"], "v0")
-    assert result["noise_floor"] == pytest.approx(0.01)
+    assert result["noise_floors"]["copy/size/64"] == pytest.approx(0.01)
     revision = next(row for row in result["rows"] if row["comparison"] == "revision")
     assert revision["ratio"] == pytest.approx(0.8)
     assert revision["significant"]
@@ -94,7 +94,7 @@ def test_analysis(tmp_path: Path) -> None:
         "geomean"
     ] == pytest.approx(0.8)
     no_aa = analyze(tmp_path, ["v0", "v1"], "v0", aa=None)
-    assert no_aa["noise_floor"] is None
+    assert no_aa["noise_floors"] == {}
     assert not any(row["significant"] for row in no_aa["rows"])
 
 

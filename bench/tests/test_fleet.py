@@ -1,7 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import patch
 
 import boto3
+import pytest
 from moto import mock_aws
 
 from ec2bench.config import Config
@@ -41,7 +43,25 @@ def test_fleet(config: Config) -> None:
     outputs = {"launch_template_ids": {"x86_64": template_id, "arm64": template_id}}
     fleet = Fleet(config, client)
     assert fleet.instances() == []
-    launched = fleet.launch("intel", "4h", "2xlarge", outputs)
+    with patch.object(client, "run_instances", wraps=client.run_instances) as request:
+        launched = fleet.launch("intel", "4h", "2xlarge", outputs)
+    specs = {
+        spec["ResourceType"]: spec["Tags"] for spec in request.call_args.kwargs["TagSpecifications"]
+    }
+    assert set(specs) == {"instance", "volume", "network-interface"}
+    for resource, resource_tags in specs.items():
+        values = {tag["Key"]: tag["Value"] for tag in resource_tags}
+        assert values["Project"] == "test-bench"
+        assert values["ManagedBy"] == "ec2bench"
+        if resource == "instance":
+            assert set(values) == {"Project", "ManagedBy", "Name", "Target", "ExpiresAt", "Owner"}
+            assert values["ExpiresAt"].endswith("Z")
+    for operation in (
+        lambda: fleet.launch("intel", "30d", None, outputs),
+        lambda: fleet.extend(["intel"], "30d"),
+    ):
+        with pytest.raises(ValueError, match=r"exceeds fleet\.max_ttl"):
+            operation()
     assert launched["InstanceType"] == "c7i.2xlarge"
     assert tags(launched)["Project"] == "test-bench"
     assert tags(launched)["ManagedBy"] == "ec2bench"
