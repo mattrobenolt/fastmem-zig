@@ -278,10 +278,10 @@ Library responsibilities:
 Command: `bench run`.
 
 ```
-bench run [--rev REV]... [--target T]... [--suite quick|standard|dist]
+bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dist]
           [--rounds N] [--no-aa] [--up] [--label L]
           [--filter S] [--impl a,b] [--samples N] [--sample-ms M]
-          [--minimum-effect F]
+          [--minimum-effect F] [--dist-file PATH]
 ```
 
 - `--rev` names a git revision. `WORKTREE` names the current working
@@ -309,7 +309,7 @@ Protocol:
 4. For each target, in parallel:
    1. Upload the binaries and `libc-probe` to `<remote_dir>/<run-id>/`.
    2. Collect host facts (cached). Run `libc-probe`. Disassemble the
-      resolved glibc `memcpy` and `memmove` implementations on the box.
+      three resolved glibc memory implementations on the box.
    3. Isolate the benchmark CPU.
    4. Build the variant list: one variant for each revision, plus an
       `A/A` variant that runs the baseline binary a second time. `--no-aa`
