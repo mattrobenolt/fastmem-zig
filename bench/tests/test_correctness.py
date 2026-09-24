@@ -218,3 +218,16 @@ def test_unknown_target_stops_before_work(config: Config, monkeypatch: pytest.Mo
     result = CliRunner().invoke(c.test_fleet, ["--target", "typo"], obj=config)
     assert result.exit_code != 0
     builder.assert_not_called()
+
+
+@pytest.mark.parametrize("exit_status", [132, 137])
+def test_jsonless_death_keeps_exit_status(tmp_path: Path, exit_status: int) -> None:
+    box = Mock()
+
+    def download(_remote: str, path: Path) -> None:
+        (path / "exit-status.txt").write_text(str(exit_status))
+        (path / "summary.json").write_text("")
+
+    box.download.side_effect = download
+    with pytest.raises(ValueError, match=f"exit={exit_status}"):
+        c.execute_binary(box, tmp_path / "binary", "/root/test", tmp_path, "sapphirerapids")

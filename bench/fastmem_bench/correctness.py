@@ -100,7 +100,10 @@ def execute_binary(box: Box, binary: Path, remote: str, path: Path, cpu: str) ->
     finally:
         box.download(remote, path)
     status = int((path / "exit-status.txt").read_text().strip())
-    summary = parse_summary((path / "summary.json").read_text(), cpu)
+    try:
+        summary = parse_summary((path / "summary.json").read_text(), cpu)
+    except (ValueError, OSError) as error:
+        raise ValueError(f"Suite exit={status}: {error}") from error
     summary["exit_status"] = status
     if status != 0 or summary["status"] != "pass":
         summary["error"] = f"Suite failed: exit={status}, detail={summary.get('detail', '')}"

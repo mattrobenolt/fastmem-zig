@@ -23,6 +23,19 @@ const Case = struct {
 };
 var current: Case = .{};
 var count: u64 = 0;
+var started_ns: i96 = 0;
+var fault_address: ?u64 = null;
+var fault_region: ?[]const u8 = null;
+var fault_access: ?[]const u8 = null;
+const Region = struct { first: u64 = 0, last: u64 = 0 };
+var regions: [3]Region = @splat(.{});
+
+fn clockNanos() i96 {
+    var now: linux.timespec = undefined;
+    if (linux.clock_gettime(.MONOTONIC, &now) != 0) return started_ns;
+    return @as(i96, now.sec) * 1_000_000_000 + now.nsec;
+}
+
 const mib = 1024 * 1024;
 const default_max_size: u32 = ceiling: {
     if (builtin.cpu.arch == .x86_64) {
@@ -59,6 +72,9 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
         .set_available = @hasDecl(fastmem, "set"),
         .impl = fastmem.impl,
         .detail = detail,
+        .fault_address = fault_address,
+        .fault_region = fault_region,
+        .fault_access = fault_access,
         .case = c,
     }, .{}, &writer) catch return;
     writer.writeByte('\n') catch return;
@@ -66,26 +82,43 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
     _ = linux.write(1, line.ptr, line.len);
 }
 
-fn fault(_: posix.SIG) callconv(.c) void {
-    summary("fail", "guard-page fault", 0);
+fn fault(_: posix.SIG, info: *const posix.siginfo_t, _: ?*anyopaque) callconv(.c) void {
+    const address = @intFromPtr(info.fields.sigfault.addr);
+    fault_address = address;
+    fault_region = "unknown";
+    fault_access = "unknown";
+    const page = std.heap.pageSize();
+    for (&regions, 0..) |*entry, i| {
+        const region = @as(*volatile Region, entry).*;
+        if (region.first == 0) continue;
+        if (address >= region.first - page and address < region.first) {
+            fault_region = if (i == 1) "destination_before" else "source_before";
+        } else if (address >= region.last and address < region.last + page) {
+            fault_region = if (i == 1) "destination_after" else "source_after";
+        } else if (address >= region.first and address < region.last) {
+            fault_region = if (i == 1) "destination" else "source_readonly";
+            if (i != 1) fault_access = "write";
+        }
+    }
+    summary("fail", "guard-page fault", clockNanos() - started_ns);
     linux.exit_group(1);
 }
 
 pub fn main(init: process.Init) void {
     const action: posix.Sigaction = .{
-        .handler = .{ .handler = fault },
+        .handler = .{ .sigaction = fault },
         .mask = posix.sigemptyset(),
-        .flags = 0,
+        .flags = posix.SA.SIGINFO,
     };
     posix.sigaction(.SEGV, &action, null);
     posix.sigaction(.BUS, &action, null);
-    const start = Io.Timestamp.now(init.io, .awake);
+    started_ns = clockNanos();
     runArgs(init) catch |err| {
-        const elapsed = start.durationTo(Io.Timestamp.now(init.io, .awake)).nanoseconds;
+        const elapsed = clockNanos() - started_ns;
         summary("fail", @errorName(err), elapsed);
         process.exit(1);
     };
-    summary("pass", "", start.durationTo(Io.Timestamp.now(init.io, .awake)).nanoseconds);
+    summary("pass", "", clockNanos() - started_ns);
 }
 
 // A byte-loop oracle stays independent of the kernel and compiler-rt exports.
@@ -239,6 +272,15 @@ fn sizeClass(
             return @intFromPtr(a.bytes.ptr) < @intFromPtr(b.bytes.ptr);
         }
     }.less);
+    for (windows, &regions) |window, *region| {
+        @as(*volatile Region, region).* = .{
+            .first = @intFromPtr(window.bytes.ptr),
+            .last = @intFromPtr(window.bytes.ptr) + window.bytes.len,
+        };
+    }
+    defer for (&regions) |*region| {
+        @as(*volatile Region, region).* = .{};
+    };
     const src = windows[0];
     const dst = windows[1];
     const above = windows[2];
