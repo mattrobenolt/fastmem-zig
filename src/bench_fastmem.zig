@@ -754,7 +754,10 @@ fn runBatch(
     const functions: Functions = .{
         .copy = switch (impl) {
             .glibc => if (case.op == .move) symbols.move else symbols.copy,
-            .fastmem_abi => if (case.op == .move) &fastmemMove else &fastmemCopy,
+            .fastmem_abi => if (case.op == .move)
+                @as(CopyFn, @ptrCast(&fastmem.abi.memmove))
+            else
+                @as(CopyFn, @ptrCast(&fastmem.abi.memcpy)),
             else => if (case.op == .move)
                 @extern(CopyFn, .{ .name = "memmove" })
             else
@@ -762,7 +765,7 @@ fn runBatch(
         },
         .set = switch (impl) {
             .glibc => symbols.set,
-            .fastmem_abi => &fastmemSet,
+            .fastmem_abi => @as(SetFn, @ptrCast(&fastmem.abi.memset)),
             else => @extern(SetFn, .{ .name = "memset" }),
         },
     };

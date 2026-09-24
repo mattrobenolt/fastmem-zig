@@ -126,6 +126,64 @@ fn allBytesEqual(bytes: []const u8) bool {
     return true;
 }
 
+const LibcCopyFn = *const fn (dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque;
+const LibcSetFn = *const fn (dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque;
+
+// The AOR kernel symbols already carry the libc signatures and, like
+// the libc originals, return dest in x0 (the kernels never write x0).
+// The abi wrappers below therefore compile to a single direct branch.
+const libc_copy_fn: LibcCopyFn = if (on_aarch64_sve)
+    @extern(LibcCopyFn, .{ .name = "fastmem_sve_copy" })
+else if (on_aarch64)
+    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_copy" })
+else
+    undefined;
+
+const libc_move_fn: LibcCopyFn = if (on_aarch64_sve)
+    @extern(LibcCopyFn, .{ .name = "fastmem_sve_move" })
+else if (on_aarch64)
+    @extern(LibcCopyFn, .{ .name = "fastmem_advsimd_move" })
+else
+    undefined;
+
+const libc_set_fn: LibcSetFn = if (on_aarch64_sve)
+    @extern(LibcSetFn, .{ .name = "fastmem_sve_set" })
+else if (on_aarch64)
+    @extern(LibcSetFn, .{ .name = "fastmem_advsimd_set" })
+else
+    undefined;
+
+/// C-ABI entry points with the libc signatures, each returning dest.
+/// Not exported (P6 owns the export layer); the bench measures these as
+/// fastmem_abi.
+pub const abi = struct {
+    pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_copy_fn(dest, src, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        const s: [*]const u8 = @ptrCast(src.?);
+        copy(u8, d[0..n], s[0..n]);
+        return dest;
+    }
+
+    pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_move_fn(dest, src, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        const s: [*]const u8 = @ptrCast(src.?);
+        move(u8, d[0..n], s[0..n]);
+        return dest;
+    }
+
+    pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+        if (comptime on_aarch64) return libc_set_fn(dest, c, n);
+        if (n == 0) return dest;
+        const d: [*]u8 = @ptrCast(dest.?);
+        set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
+        return dest;
+    }
+};
+
 // Portable fallback for targets without a dedicated kernel and for
 // non-uniform fill values. The loops live in a non-inline function of
 // this no_builtin module so LLVM cannot idiom-recognize them into a
@@ -293,6 +351,38 @@ test "move: backward overlapping (dest > src)" {
 // non-uniform byte patterns, aggregates, optionals, and zero-size types.
 // want[] is built with a plain element loop; both buffers start from
 // zeroes so writes outside the requested range show up in the compare.
+test "abi: libc-signature entry points return dest and do the work" {
+    var src: [600]u8 = undefined;
+    for (&src, 0..) |*b, i| b.* = @truncate(i *% 31 +% 7);
+
+    for ([_]usize{ 0, 1, 7, 32, 65, 128, 200, 511 }) |len| {
+        var dest: [600]u8 = .{0} ** 600;
+        const r = abi.memcpy(@ptrCast(&dest), @ptrCast(&src), len);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&dest)), r);
+        try testing.expectEqualSlices(u8, src[0..len], dest[0..len]);
+
+        @memset(&dest, 0);
+        const r3 = abi.memset(@ptrCast(&dest), 0xAB, len);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&dest)), r3);
+        var want: [600]u8 = @splat(0xAB);
+        try testing.expectEqualSlices(u8, want[0..len], dest[0..len]);
+        if (len < 600) try testing.expectEqual(@as(u8, 0), dest[len]);
+    }
+
+    // memmove both overlap directions, and the dest return value.
+    for ([_]usize{ 1, 31, 100 }) |gap| {
+        var fwd = src;
+        const r1 = abi.memmove(@ptrCast(&fwd), @ptrCast(&fwd[gap]), 400);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&fwd)), r1);
+        try testing.expectEqualSlices(u8, src[gap..][0..400], fwd[0..400]);
+
+        var bwd = src;
+        const r2 = abi.memmove(@ptrCast(&bwd[gap]), @ptrCast(&bwd), 400);
+        try testing.expectEqual(@as(?*anyopaque, @ptrCast(&bwd[gap])), r2);
+        try testing.expectEqualSlices(u8, src[0..400], bwd[gap..][0..400]);
+    }
+}
+
 test "set: typed elements, uniform and non-uniform byte patterns" {
     const Enum = enum(u8) { a, b, c };
     const Struct = struct { a: u8, b: u32 }; // padding, no unique repr
