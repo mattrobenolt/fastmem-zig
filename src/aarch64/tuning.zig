@@ -46,11 +46,36 @@ pub const SetSmall = enum { sve, neon };
 
 const aarch64_cpu = std.Target.aarch64.cpu;
 
+const on_neoverse_v1 = builtin.cpu.model == &aarch64_cpu.neoverse_v1;
+const on_neoverse_v2 = builtin.cpu.model == &aarch64_cpu.neoverse_v2;
 const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 
-const default_copy_small: CopySmall = if (on_neoverse_v3) .neon else .sve;
-const default_move_small: CopySmall = if (on_neoverse_v3) .hybrid else .sve;
-const default_set_small: SetSmall = if (on_neoverse_v3) .neon else .sve;
+// V1 (c7g): the SVE small paths lose to the tree there. The predicated
+// pair costs 2.05-2.45x compiler-rt on the gap1 1..3 B move cases
+// (wide masked stores do not forward to the next iteration's narrow
+// loads) and ~2x at n == 0 across all three ops (empty-predicate SVE
+// memory ops still cost the chain), and the predicated set store
+// measures 1.26x glibc at 0-16 B while the inlined tree beats glibc
+// 2-3x on the same rows (run 20260924T102308Z-p3-arm-small). Move
+// keeps the SVE pair at 16..2*VL (64 on V1): it beats compiler-rt's
+// stack-spilling 16..63 class there (fwd-gap1/16: 0.61x builtin).
+// V2 (c8g): the tree below 16 fixes the gap1 1..3 B move stalls
+// (3.86x compiler-rt with the SVE pair) and the flat 1.02-1.05x at
+// copy 1..3 B; hybrid also swaps the 33..64 mid block for the 4x16 B
+// chunk block, which loses to compiler-rt on V2 as the SVE ldp/stp
+// block (copy/aligned/48: 1.15x). V2 set stays sve: 1.000 vs both
+// references at every size.
+const default_copy_small: CopySmall = if (on_neoverse_v3)
+    .neon
+else if (on_neoverse_v1 or on_neoverse_v2)
+    .hybrid
+else
+    .sve;
+const default_move_small: CopySmall = if (on_neoverse_v3 or on_neoverse_v1 or on_neoverse_v2)
+    .hybrid
+else
+    .sve;
+const default_set_small: SetSmall = if (on_neoverse_v3 or on_neoverse_v1) .neon else .sve;
 
 pub const copy_small: CopySmall = blk: {
     if (std.mem.eql(u8, options.small_copy, "auto")) break :blk default_copy_small;

@@ -72,8 +72,13 @@ const body_sve =
 // pinned commit), inverted so 1..3 bytes fall through. The >= 16
 // blocks are upstream, reordered so the > 64 check comes first and
 // keeps its single taken branch. Every store is sized to the count, so
-// guard-page tails stay safe.
+// guard-page tails stay safe. The n == 0 test sits at the top: this
+// body is the Neoverse V1 default, and V1 needs n == 0 cheap (the .sve
+// body's empty-predicate SVE store measured 1.91x compiler-rt there,
+// run 20260924T102308Z-p3-arm-small). Every other class pays one
+// not-taken cbz; per-class branch counts are unchanged.
 const body_neon =
+    \\    cbz    x2, .Lfm_sve_set_ret0
     \\    dup    v0.16B, w1
     \\    cmp    x2, 64
     \\    b.hi    .Lfm_sve_set_128
@@ -83,7 +88,6 @@ const body_neon =
     \\    add    x4, x0, x2
     \\    cmp    x2, 4
     \\    b.hs    .Lfm_sve_set_ge4
-    \\    cbz    x2, .Lfm_sve_set_ret0
     \\    lsr    x3, x2, 1
     \\    strb    w1, [x0]
     \\    strb    w1, [x0, x3]
