@@ -591,8 +591,6 @@ noinline fn runLoop(
     else
         @as(*const volatile CopyFn, &functions.copy).*;
     const dest_buffer = if (case.shared) buffers.src else buffers.dst;
-    var checksum: u64 = 0;
-    var index: u32 = 0;
     if (perf) |p| p.begin();
     const start = Io.Timestamp.now(io, .awake);
     for (0..iters) |iteration| {
@@ -617,15 +615,10 @@ noinline fn runLoop(
         }
         // A memory clobber preserves the full inline operation, not just the observed byte.
         asm volatile ("" ::: .{ .memory = true });
-        if (len != 0) {
-            if (index >= len) index = 0;
-            checksum +%= @as(*volatile u8, &dst[index]).*;
-            index += 1;
-        }
+        if (len != 0) _ = @as(*volatile u8, &dst[0]).*;
     }
     const ns: u64 = @intCast(start.durationTo(.now(io, .awake)).nanoseconds);
     const counters = if (perf) |p| p.end() else null;
-    mem.doNotOptimizeAway(checksum);
     return .{ .ns = ns, .iters = iters, .counters = counters };
 }
 fn runBatch(

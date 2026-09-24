@@ -465,6 +465,7 @@ The loop does not mutate source bytes between operations.
 Copy and move read a destination byte after each operation.
 Set writes the nonzero byte 165 and reads a destination byte.
 A memory clobber preserves the entire inline operation, not only the observed byte.
+There is no accumulated checksum or checksum dependency between iterations.
 
 ### Distributions
 
