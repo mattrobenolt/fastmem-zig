@@ -11,7 +11,7 @@ from typing import Any
 from ec2bench.box import Box
 from ec2bench.config import Config
 from ec2bench.facts import collect
-from ec2bench.isolation import isolate, run_isolated
+from ec2bench.isolation import isolate, run_isolated, stop_isolated
 from ec2bench.parallel import progress
 from fastmem_bench.build import Build
 from fastmem_bench.jsonl import parse
@@ -110,14 +110,14 @@ def execute(
                             box,
                             cpu,
                             [binary, "--suite", suite, "--seed", str(seed), *(binary_args or [])],
-                            unit=f"bench-{path.name}-{variant}-r{round_index}",
+                            unit=f"{path.name}-{variant}-r{round_index}",
                             output=output,
                             error=error,
                         )
                         box.download(f"{remote}/raw/{variant}", destination / "raw" / variant)
                         parse(destination / "raw" / variant / f"r{round_index}.jsonl")
             finally:
-                box.run(f"systemctl stop {shlex.quote('bench-' + path.name + '-*')}", timeout=60)
+                stop_isolated(box, path.name)
     finally:
         box.download(remote, destination)
     return {"cpu": cpu, "schedule": schedule, "instance_id": box.instance_id, "warnings": warnings}

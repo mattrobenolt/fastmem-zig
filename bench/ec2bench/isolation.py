@@ -22,6 +22,16 @@ def select_cpu(topology: list[dict[str, Any]]) -> tuple[int, list[int]]:
     return min(reserved), housekeeping
 
 
+# Every isolated command runs as a transient unit with this prefix, so the busy
+# check and the cleanup never match unrelated units on the box.
+UNIT_PREFIX = "ec2bench-run-"
+
+
+def stop_isolated(box: Box, group: str) -> None:
+    """Stop the isolated units of one group, for example after an interrupt."""
+    box.run(f"systemctl stop {shlex.quote(UNIT_PREFIX + group + '-*')}", timeout=60)
+
+
 def run_isolated(
     box: Box,
     cpu: int,
@@ -32,7 +42,11 @@ def run_isolated(
     error: str,
     timeout: int = 600,
 ) -> None:
-    """Execute a command outside the restricted SSH slice."""
+    """Execute a command outside the restricted SSH slice.
+
+    The unit name is UNIT_PREFIX + unit. Name units "<group>-<rest>" so that
+    stop_isolated(box, group) can stop them all.
+    """
     check_cancelled()
     args = [
         "systemd-run",
@@ -40,7 +54,7 @@ def run_isolated(
         "--wait",
         "--pipe",
         "--collect",
-        f"--unit={unit}",
+        f"--unit={UNIT_PREFIX}{unit}",
         "--slice=bench.slice",
         f"--property=AllowedCPUs={cpu}",
         f"--property=RuntimeMaxSec={timeout - 60}",
@@ -64,7 +78,9 @@ def isolate(box: Box, topology: list[dict[str, Any]]) -> Iterator[int]:
     # The directory is an atomic claim across harness processes. A stale claim fails closed.
     box.run("mkdir /run/ec2bench-isolation.lock 2>/dev/null || { echo 'box busy' >&2; exit 1; }")
     try:
-        active = box.run("systemctl list-units --state=active --no-legend 'bench-*'").strip()
+        active = box.run(
+            f"systemctl list-units --state=active --no-legend {shlex.quote(UNIT_PREFIX + '*')}"
+        ).strip()
         if active:
             raise RuntimeError(f"box busy: {active}")
         old = {

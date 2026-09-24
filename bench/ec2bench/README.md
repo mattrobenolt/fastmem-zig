@@ -94,7 +94,7 @@ The SSH user must have permission to manage system units and `/run/`.
 The library does not add `sudo` automatically.
 
 ```python
-from ec2bench.isolation import isolate, run_isolated
+from ec2bench.isolation import isolate, run_isolated, stop_isolated
 
 with isolate(box, facts["topology"]) as cpu:
     try:
@@ -102,12 +102,12 @@ with isolate(box, facts["topology"]) as cpu:
             box,
             cpu,
             ["/opt/benchmark", "--samples", "5"],
-            unit=f"bench-{run_id}-r0",
+            unit=f"{run_id}-r0",
             output=f"/tmp/{run_id}.out",
             error=f"/tmp/{run_id}.stderr",
         )
     finally:
-        box.run(f"systemctl stop 'bench-{run_id}-*'", timeout=60)
+        stop_isolated(box, run_id)
 ```
 
 The execution helper forwards remote stderr on command failure.
@@ -146,14 +146,14 @@ A failed EC2 or image readiness wait triggers termination of that instance.
 A failed target does not prevent measurements on other targets with `run --up`.
 
 An atomic directory claim prevents concurrent CPU isolation on one box.
-Active `bench-*` units also cause a busy-box error.
+Active `ec2bench-run-*` units also cause a busy-box error.
 A hard controller failure can leave `/run/ec2bench-isolation.lock` behind.
 The next run refuses that box. It does not share its CPU.
 
 ### Stale claim recovery
 
 1. Check that no other harness process owns the box.
-2. Stop the abandoned `bench-*` services.
+2. Stop the abandoned `ec2bench-run-*` services.
 3. Restore the original cpuset properties, or reboot the instance.
 4. Remove `/run/ec2bench-isolation.lock` if it remains after recovery.
 

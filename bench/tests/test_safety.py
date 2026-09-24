@@ -84,7 +84,7 @@ def test_optional_facts(config: Config) -> None:
 
 def test_busy_box_does_not_change_cpuset() -> None:
     box: Any = Mock()
-    box.run.side_effect = ["", "bench-other.service loaded active running", ""]
+    box.run.side_effect = ["", "ec2bench-run-other.service loaded active running", ""]
     with (
         pytest.raises(RuntimeError, match="box busy"),
         isolate(
@@ -97,6 +97,10 @@ def test_busy_box_does_not_change_cpuset() -> None:
     ):
         pytest.fail("busy box acquired")
     assert not any("set-property" in call.args[0] for call in box.run.call_args_list)
+    # Only harness units count as busy: the box also runs bench-ttl-guard.timer.
+    listing = next(c.args[0] for c in box.run.call_args_list if "list-units" in c.args[0])
+    assert "ec2bench-run-*" in listing
+    assert "'bench-*'" not in listing
 
 
 def test_stop_before_restore_on_interrupt(config: Config) -> None:
