@@ -67,7 +67,7 @@ pub inline fn small(comptime max: u32, dst: [*]u8, src: [*]const u8, n: usize) b
 pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
     // The ABI short classes avoid the vector ladder for runtime tiny copies.
     if (comptime tuning.inline_short_first) {
-        if (n < 16) {
+        if (n < 16 and n <= tuning.inline_max) {
             if (n >= 4) {
                 compact.quad(u32, dst, src, n);
             } else if (n != 0) {

@@ -41,18 +41,21 @@ def require(condition, message):
         raise SystemExit(f"{cpu}: {message}")
 
 
-def class_path(name, n):
+def class_path(name, n, stats=None):
     """Follow the kernel's size dispatch with concrete RDX and unknown pointers."""
     code = body(name)
     next_pc = {a: b for (a, _), (b, _) in zip(code, code[1:])}
     pc = code[0][0]
     flags = None
     visited = []
+    taken_branches = 0
     for _ in range(100):
         insn = instructions[pc]
         visited.append(insn)
         op = insn.split()[0]
         if op.startswith("ret"):
+            if stats is not None:
+                stats["taken_branches"] = taken_branches
             return "\n".join(visited)
         cmp = re.fullmatch(r"cmp[ql]\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
         if cmp:
@@ -73,6 +76,8 @@ def class_path(name, n):
                 require(op in choices, f"unsupported branch: {insn}")
                 take = choices[op]
             if take:
+                if op != "jmp":
+                    taken_branches += 1
                 pc = target
                 continue
         require(not op.startswith("call"), f"class {n} calls out: {insn}")
@@ -134,6 +139,14 @@ if wide and variant == "straight_1k":
 if wide and args.experiment in ("medium_layout", "medium_entry") and cpu == "graniterapids":
     for op in ("move", "set"):
         require(syms[f"x86_64.{op}.kernel"][0] % 16 == 0, f"{op} entry lacks 16-byte alignment")
+if cpu == "graniterapids" and args.experiment == "medium_layout":
+    for op in ("move", "set"):
+        stats = {}
+        class_path(f"x86_64.{op}.kernel", 65, stats)
+        require(stats["taken_branches"] == 1, f"{op}/65 lacks medium fallthrough")
+if short_scalar:
+    text = class_path("x86_64.move.kernel", 1)
+    require(len(text.splitlines()) == 14, "move/1 lacks the scalar byte path")
 if inline_short_first:
     for op in ("Copy", "Move"):
         for n, count in ((1, 3), (4, 2), (8, 2), (15, 2)):
