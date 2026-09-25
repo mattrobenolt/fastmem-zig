@@ -45,7 +45,7 @@ def targets(lines):
     return result
 
 
-def audit_recursion(functions, symbols, entries):
+def audit_recursion(functions, symbols, entries, roots=()):
     names = {v[0]: k for k, v in symbols.items() if v[2] & 15 == 2}
     panic = {v[0] for k, v in symbols.items() if PANIC.fullmatch(k)}
     # Every instruction maps to its complete body. A branch into the middle
@@ -57,7 +57,7 @@ def audit_recursion(functions, symbols, entries):
             if inst:
                 owners[int(inst[1], 16)] = addr
     seen = set()
-    pending = [(entry, []) for entry in entries]
+    pending = [(entry, []) for entry in (*entries, *roots)]
     while pending:
         addr, path = pending.pop()
         assert addr in owners, (hex(addr), "missing direct-target disassembly", path)
