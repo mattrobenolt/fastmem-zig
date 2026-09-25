@@ -8,6 +8,7 @@
 
 Each definition has the address of the corresponding `fastmem.abi` entry.
 The export adds no wrapper or trampoline.
+In an x86_64 dispatch build, the `fastmem.abi` entries are the dispatch stubs (`docs/runtime-dispatch.md`).
 An import alone does not replace these symbols.
 
 ## Enable the exports
@@ -57,6 +58,7 @@ Compiler-rt inside the same Zig compilation receives a collision error.
 The exported kernel bodies contain no branch to any memory entry.
 The binary tests follow every direct branch target, including common helpers and standard-library functions.
 They exclude only named panic handlers for invalid inputs.
+The dispatch stubs jump through pointers, so the audit also starts at every `fastmem_x86_*` function.
 An unresolved direct target fails the audit.
 A compiled negative fixture proves that the audit detects recursion through `std.mem.replace`.
 
@@ -78,8 +80,9 @@ The API accepts aarch64 and x86_64 ELF targets with the LLVM backend.
 The binary suite tests Linux with Zig 0.16.0.
 Other object formats and non-LLVM backends receive a compile error.
 
-The target CPU selects the kernel at compile time.
-The export does not add runtime CPU dispatch.
+The target CPU selects the kernel at compile time, with one exception.
+An x86_64 Linux build without AVX2 selects its kernels at run time (`docs/runtime-dispatch.md`).
+There the exported symbols are the dispatch stubs: a pointer load and an indirect jump.
 The executable must run on a CPU that supports its target features.
 
 Small or constant-size builtins can remain inline.
@@ -182,6 +185,7 @@ The binary matrix covers these cases:
 - Competing exports and compiler-rt inside the same compilation.
 - Original aarch64 instruction bytes and fallback kernels without module-level intrinsic suppression.
 - Generic aarch64, Neoverse V1/V2/V3, x86_64 baseline, and x86_64_v3.
+- An `x86_64-dispatch` row: x86_64 baseline with runtime dispatch, in every link mode above.
 
 The libc-free consumer tests execute every length from 0 through 8192 bytes.
 They check copy, fill, and both move directions against byte-level expectations.

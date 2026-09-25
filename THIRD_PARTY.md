@@ -104,3 +104,14 @@ The MIT copyright notice also appears in the source header.
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 > THE SOFTWARE.
+
+## Zig standard library (facts only)
+
+Upstream: https://github.com/ziglang/zig, `lib/std/zig/system/x86.zig`
+(Zig 0.16.0). License: MIT.
+
+`src/x86_64/cpuid.zig` uses the Intel and AMD family and model numbers of
+the Zig host detection for the models that fastmem tunes. It contains no
+Zig standard library code. The feature bit positions come from the Intel
+SDM and the AMD APM.
+
