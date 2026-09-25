@@ -718,7 +718,8 @@ test "thp policy parsing selects the bracketed value" {
 /// pre-faulted once, before any timing. Each case uses the same fixed offsets in it, so
 /// physical placement does not change between cases, and virtual placement does not
 /// change between processes. With THP, the physical address bits below 21 equal the
-/// virtual bits: the cache set of every byte is then the same in every round.
+/// virtual bits: cache indexes that use only those bits are then the same in every
+/// round. Indexes that use higher physical bits can still differ between processes.
 ///
 /// Layout: [src region][dst region][seq region]. Every region is a multiple of 2 MiB.
 /// The destination view starts `dst_stagger` bytes into its region.
@@ -1211,7 +1212,7 @@ fn emitMeta(
     try jsonLine(w, .{
         .type = "meta",
         .schema = schema,
-        .rev = options.rev,
+        .rev = std.mem.sliceTo(&options.rev_padded, 0),
         .zig = builtin.zig_version_string,
         .target = @tagName(builtin.cpu.arch) ++ "-" ++
             @tagName(builtin.os.tag) ++ "-" ++ @tagName(builtin.abi),

@@ -36,7 +36,12 @@ pub fn build(b: *std.Build) void {
 
     // Benchmark executable — always built ReleaseFast.
     const bench_opts = b.addOptions();
-    bench_opts.addOption([]const u8, "rev", rev);
+    // A fixed-size label: the binary layout (and so the code alignment of every
+    // kernel) must not depend on the revision name (p3-x86d review P1).
+    if (rev.len > 64) @panic("-Drev must be at most 64 bytes");
+    var rev_buf: [64]u8 = @splat(0);
+    @memcpy(rev_buf[0..rev.len], rev);
+    bench_opts.addOption([64]u8, "rev_padded", rev_buf);
 
     const bench_exe = b.addExecutable(.{
         .name = "bench-fastmem",

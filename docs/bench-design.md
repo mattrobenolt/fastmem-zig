@@ -729,7 +729,9 @@ Pre-fault writes `0x5a` to the whole arena.
 Source byte `i` is `i * 131 + 17` modulo 256, and destination bytes are `0x5a`.
 
 With THP, the physical address bits below 21 equal the virtual address bits.
-The cache set of every byte is then the same in every round.
+Cache indexes that depend only on those bits are then the same in every round.
+Indexes that use higher physical bits (for example large L2 or L3 slices
+and hashed LLC sets) can still differ between processes.
 Without THP, the physical pages still stay fixed for all cases of one process.
 The meta record gives the THP state (see the `memory` table below).
 

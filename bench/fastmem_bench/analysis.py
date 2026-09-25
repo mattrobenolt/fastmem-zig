@@ -238,7 +238,12 @@ def add_samples(  # noqa: PLR0917 — one round's destinations
         key = (variant, case, sample["impl"])
         data[key][index].append(sample["ns"] / sample["iters"])
         # Multiplexed samples have scaled-down counts. Keep only fully counted batches.
-        if sample["cycles"] is not None and sample["time_running"] == sample["time_enabled"]:
+        if (
+            sample["cycles"] is not None
+            and sample["cycles"] > 0
+            and sample["time_running"] > 0
+            and sample["time_running"] == sample["time_enabled"]
+        ):
             cycles[key][index].append(sample["cycles"] / sample["iters"])
 
 
