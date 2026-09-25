@@ -14,7 +14,15 @@ from ec2bench.fleet import Fleet, tags
 from ec2bench.parallel import Outcome, parallel, progress
 from ec2bench.runs import create_run, validate_label, write_manifest
 from fastmem_bench.analysis import BOOTSTRAP_SEED, analyze, validate_effect
-from fastmem_bench.build import CPU_MODES, build_all, build_cpu, disassemble, provenance, resolve
+from fastmem_bench.build import (
+    CPU_MODES,
+    build_all,
+    build_cpu,
+    disassemble,
+    expected_dispatch,
+    provenance,
+    resolve,
+)
 from fastmem_bench.codegen import verify_recorded
 from fastmem_bench.protocol import execute, orders
 from fastmem_bench.report import stability_line, write
@@ -113,6 +121,7 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
         raise click.ClickException("No running targets. Use --up or select a target.")
     try:
         cpus = {name: build_cpu(config.targets[name], cpu_mode) for name in names}
+        levels = {name: expected_dispatch(config.targets[name], cpu_mode) for name in names}
     except ValueError as error:
         raise click.ClickException(str(error)) from error
     instances = {name: fleet.one(name) for name in names}
@@ -135,6 +144,7 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
             "suite": suite,
             "cpu_mode": cpu_mode,
             "cpus": cpus,
+            "dispatch_levels": levels,
             "aa": not no_aa,
             "schedule": schedule,
             "schedule_method": "seeded-balanced-latin-square",
@@ -213,6 +223,7 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
             probe=protocol["libc_probe"],
             cpu_mode=cpu_mode,
             expected_cpu=cpus[name],
+            expected_dispatch=levels[name],
         )
         if result["codegen"] != protocol["codegen"]:
             raise ValueError("Analysis codegen evidence disagrees with the build")
@@ -276,6 +287,7 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
                 # Runs before G6 builds have neither field: they are target-CPU builds.
                 cpu_mode=manifest.get("cpu_mode", "target"),
                 expected_cpu=manifest.get("cpus", {}).get(target),
+                expected_dispatch=manifest.get("dispatch_levels", {}).get(target),
             )
             expected = manifest.get("codegen", {}).get(target)
             if expected is not None:
@@ -302,6 +314,9 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
 
 
 def echo_result(target: str, result: dict[str, Any]) -> None:
+    for variant, record in sorted((result.get("dispatch") or {}).items()):
+        if record:
+            click.echo(f"{target} {variant} dispatch: {record['level']} ({record['kernel']})")
     for group, floor in sorted(result.get("noise_floors", {}).items()):
         click.echo(f"{target} {group}: {floor:.4%}")
     stability = result.get("stability", {})

@@ -17,6 +17,17 @@ def comparison(row: dict[str, Any]) -> str:
     )
 
 
+def dispatch_lines(dispatch: dict[str, dict[str, Any] | None]) -> list[str]:
+    """The runtime-dispatch level of each variant (baseline x86_64 builds only)."""
+    lines = [
+        f"Runtime dispatch, {variant}: {record['level']} ({record['kernel']}),"
+        f" {record['vendor']} family {record['family']} model {record['model']}."
+        for variant, record in sorted(dispatch.items())
+        if record
+    ]
+    return [*lines, ""] if lines else []
+
+
 def write(path: Path, summary: dict[str, Any]) -> None:
     (path / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     text = [
@@ -52,6 +63,7 @@ def write(path: Path, summary: dict[str, Any]) -> None:
             continue
         for warning in result.get("warnings", []):
             text += [f"Warning: {warning}", ""]
+        text += dispatch_lines(result.get("dispatch", {}))
         text += goal_table(result.get("goals", []))
         text += stability_table(result)
         text += [f"Minimum effect: {result['minimum_effect']:.4%}.", ""]

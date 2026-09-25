@@ -17,7 +17,7 @@ from ec2bench.config import Config
 from ec2bench.fleet import Fleet, tags
 from ec2bench.parallel import parallel
 from ec2bench.runs import create_run, write_manifest
-from fastmem_bench.build import baseline_cpu, source_hash
+from fastmem_bench.build import baseline_cpu, expected_dispatch, source_hash
 
 
 def cpus(settings: dict[str, Any]) -> dict[str, str]:
@@ -226,9 +226,18 @@ def run_variant(
                 optimize=optimize,
             )
         )
+        check_dispatch(result, config.targets[target], variant)
     except Exception as error:  # noqa: BLE001 — preserve the other variant's evidence
         result["error"] = str(error)
     return result
+
+
+def check_dispatch(result: dict[str, Any], settings: dict[str, Any], variant: str) -> None:
+    """A baseline x86_64 binary must dispatch to the kernel of the box's model."""
+    expected = expected_dispatch(settings, variant.split("-", maxsplit=1)[0])
+    actual = (result.get("dispatch") or {}).get("level")
+    if expected is not None and actual != expected:
+        raise ValueError(f"Runtime dispatch selected {actual}, expected {expected}")
 
 
 def variant_key(variant: str, optimize: str) -> str:

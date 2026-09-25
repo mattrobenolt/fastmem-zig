@@ -1200,6 +1200,27 @@ const Codegen = struct {
     }
 };
 
+/// The runtime-dispatch level of a baseline x86_64 build
+/// (docs/runtime-dispatch.md), or null in a comptime-selected build. The
+/// timed calls resolved it before the meta record.
+fn dispatchMeta() ?struct {
+    level: []const u8,
+    kernel: []const u8,
+    vendor: []const u8,
+    family: u32,
+    model: u32,
+} {
+    const level = fastmem.dispatch.level() orelse return null;
+    const info = fastmem.dispatch.detect().?;
+    return .{
+        .level = @tagName(level),
+        .kernel = fastmem.dispatch.kernelName().?,
+        .vendor = @tagName(info.vendor),
+        .family = info.family,
+        .model = info.model,
+    };
+}
+
 fn emitMeta(
     w: *Io.Writer,
     cfg: Config,
@@ -1229,6 +1250,7 @@ fn emitMeta(
         .dist_file = cfg.dist_file,
         .set_value = set_value,
         .fastmem_set = has_fastmem_set,
+        .dispatch = dispatchMeta(),
         .codegen = codegen,
         .memory = memory,
         .libc_path = symbols.libc_path,

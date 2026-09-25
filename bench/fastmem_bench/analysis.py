@@ -218,6 +218,8 @@ class Rounds:
     # The meta memory object of each process, keyed "<variant>/r<round>". None for v2.
     memory: dict[str, dict[str, Any] | None]
     cpus: set[str]
+    # The runtime-dispatch meta of each variant (None when it selects at comptime).
+    dispatch: dict[str, dict[str, Any] | None]
 
 
 def add_samples(  # noqa: PLR0917 — one round's destinations
@@ -247,6 +249,23 @@ def add_samples(  # noqa: PLR0917 — one round's destinations
             cycles[key][index].append(sample["cycles"] / sample["iters"])
 
 
+def record_dispatch(
+    path: Path,
+    meta: dict[str, Any],
+    variant: str,
+    dispatch: dict[str, dict[str, Any] | None],
+    expected: str | None,
+) -> None:
+    """Keep one runtime-dispatch record per variant, and check the level."""
+    level = meta.get("dispatch")
+    # A revision before P7 has no dispatch meta: it runs the generic kernels.
+    if expected is not None and level and level["level"] != expected:
+        raise ValueError(f"{path}: the dispatched level is {level['level']}, not {expected}")
+    if variant in dispatch and dispatch[variant] != level:
+        raise ValueError(f"Dispatch level changed within {variant}")
+    dispatch[variant] = level
+
+
 def load_rounds(  # noqa: C901 — validate clusters before case intersection
     raw: Path,
     variants: list[str],
@@ -254,6 +273,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     expected_round_count: int | None = None,
     probe: dict[str, Any] | None = None,
     expected_cpu: str | None = None,
+    expected_dispatch: str | None = None,
 ) -> Rounds:
     data: Series = defaultdict(lambda: defaultdict(list))
     cycles: Series = defaultdict(lambda: defaultdict(list))
@@ -262,6 +282,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     codegen: dict[str, Any] = {}
     memory: dict[str, dict[str, Any] | None] = {}
     cpus: set[str] = set()
+    dispatch: dict[str, dict[str, Any] | None] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -279,6 +300,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
             if expected_cpu is not None and cpu != expected_cpu:
                 raise ValueError(f"{path}: the build CPU is {cpu}, not {expected_cpu}")
             cpus.add(cpu)
+            record_dispatch(path, measurement.meta, variant, dispatch, expected_dispatch)
             memory[f"{variant}/{path.stem}"] = measurement.meta["memory"]
             evidence = measurement.meta["codegen"]
             if variant in codegen and codegen[variant] != evidence:
@@ -311,7 +333,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     }
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return Rounds(data, cycles, details, warnings, codegen, memory, cpus)
+    return Rounds(data, cycles, details, warnings, codegen, memory, cpus, dispatch)
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -336,6 +358,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     probe: dict[str, Any] | None = None,
     cpu_mode: str = "target",
     expected_cpu: str | None = None,
+    expected_dispatch: str | None = None,
 ) -> dict[str, Any]:
     validate_effect(minimum_effect)
     loaded = load_rounds(
@@ -344,6 +367,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
         expected_round_count=expected_round_count,
         probe=probe,
         expected_cpu=expected_cpu,
+        expected_dispatch=expected_dispatch,
     )
     data, details, warnings, codegen = loaded.data, loaded.details, loaded.warnings, loaded.codegen
     cells: dict[tuple[str, str, str], tuple[list[float], list[int]]] = {}
@@ -424,6 +448,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     result["outliers"] = outliers
     result["codegen"] = codegen
     result["cpu"] = {"mode": cpu_mode, "models": sorted(loaded.cpus)}
+    result["dispatch"] = loaded.dispatch
     result["memory"] = memory
     cycle_cells: Cells = {
         key: (round_medians([rounds[index] for index in sorted(rounds)]), [])

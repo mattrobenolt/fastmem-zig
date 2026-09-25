@@ -298,6 +298,11 @@ bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dis
   builds every revision with `baseline_cpu`, for G6. The manifest records
   `cpu_mode` and the CPU of each target (`cpus`). Analysis rejects a raw
   file whose `meta.cpu` differs from that CPU.
+- An x86_64 `--cpu baseline` build selects its kernels at run time
+  (`docs/runtime-dispatch.md`). The manifest records the expected level of
+  each target in `dispatch_levels`: the `zig_cpu` of the target. Analysis
+  rejects a raw file whose `meta.dispatch.level` differs from it. A raw file
+  without dispatch meta (a revision before P7) passes this check.
 - `--up` launches missing targets first, and measures the targets that
   came up.
 - `--filter`, `--impl`, `--samples`, and `--sample-ms` go to the binary.
@@ -840,6 +845,15 @@ Meta fields:
 | `codegen` | Binary inspection evidence, or null without `--codegen-file` |
 | `memory` | The arena object (v3). Null in `--list` output. |
 | `perf` | Object with `available`, `events`, and `error` |
+| `dispatch` | The runtime-dispatch object of an x86_64 build without AVX2, or null. Absent before P7. |
+
+The `dispatch` object has these fields (`docs/runtime-dispatch.md`):
+
+| Field | Type and meaning |
+|---|---|
+| `level` | The selected level: `generic`, `x86_64_v3`, `x86_64_v4`, `sapphirerapids`, `graniterapids`, `znver4`, or `znver5` |
+| `kernel` | The kernel name of the level, as `fastmem.impl` names it in a comptime build |
+| `vendor`, `family`, `model` | The CPUID vendor (`intel`, `amd`, `other`) and the display family and model |
 
 The `memory` object has these fields:
 
@@ -1131,6 +1145,7 @@ The summary contains:
 - `schema: 2`, `matrix: "g1-v2"`, and `status: "pass"` or `"fail"`.
 - `cases`, per-entry `path_cases`, `elapsed_ns`, `cpu`, `max_size`, `optimize`, and `link_libc`.
 - `set_available` and the three `impl` identifiers.
+- `dispatch`: the runtime-dispatch `level` and `kernel` of an x86_64 build without AVX2, or null (`docs/runtime-dispatch.md`).
 - `detail` and the last case's operation, path, source order, length, offsets, gap, side, and value.
 - `fault_address`, `fault_region`, and `fault_access`, which are null outside a signal failure.
 
@@ -1167,7 +1182,11 @@ Without `--up`, the command neither launches nor terminates instances.
 The adapter builds two ReleaseFast binaries per target:
 
 - The `zig_target` and `zig_cpu` from `bench.toml`.
-- The same target with `x86_64_v3` on x86 or `generic` on aarch64.
+- The same target with `baseline_cpu`: `x86_64` on x86 and `generic` on aarch64.
+
+The x86 baseline binary selects its kernels at run time.
+The adapter fails the baseline variant when `dispatch.level` differs from the target `zig_cpu`.
+`fastmem-tests --x86-level LEVEL` tests one level instead of the detected level.
 
 Targets run in parallel without CPU isolation.
 Each target runs its two variants sequentially.

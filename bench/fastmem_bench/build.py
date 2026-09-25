@@ -91,6 +91,26 @@ def baseline_cpu(settings: dict[str, Any]) -> str:
     return cpu
 
 
+DISPATCH_LEVELS = ("sapphirerapids", "graniterapids", "znver4", "znver5")
+
+
+def expected_dispatch(settings: dict[str, Any], mode: str) -> str | None:
+    """The runtime-dispatch level of a G6 x86_64 build: the kernel of zig_cpu.
+
+    A baseline x86_64 build without AVX2 selects its kernels at run time
+    (docs/runtime-dispatch.md). On a fleet box the selection must equal the
+    comptime kernel of the target model. Other builds do not dispatch.
+    """
+    cpu = build_cpu(settings, mode)
+    arch = settings.get("zig_target", "").split("-")[0] or settings.get("arch")
+    if mode != "baseline" or arch != "x86_64":
+        return None
+    if cpu not in ("x86_64", "baseline", "x86_64_v2"):
+        return None
+    zig_cpu = settings["zig_cpu"]
+    return zig_cpu if zig_cpu in DISPATCH_LEVELS else None
+
+
 def build_cpu(settings: dict[str, Any], mode: str) -> str:
     """The -Dcpu of a build: zig_cpu for target builds, baseline_cpu for G6 builds."""
     if mode not in CPU_MODES:

@@ -128,9 +128,7 @@ def test_early_parse_failure_stops_remaining_rounds(config: Config) -> None:
     assert any(cmd.startswith("systemctl stop") for cmd in box.commands)
 
 
-@pytest.mark.parametrize(
-    ("cpu", "model"), [("baseline", "x86_64"), ("target", "sapphirerapids")]
-)
+@pytest.mark.parametrize(("cpu", "model"), [("baseline", "x86_64"), ("target", "sapphirerapids")])
 def test_run_cpu_mode_reaches_build_manifest_and_goals(
     config: Config, monkeypatch: pytest.MonkeyPatch, cpu: str, model: str
 ) -> None:
@@ -164,6 +162,8 @@ def test_run_cpu_mode_reaches_build_manifest_and_goals(
     manifest = json.loads((path / "manifest.json").read_text())
     assert manifest["cpu_mode"] == cpu
     assert manifest["cpus"] == {"intel": model}
+    level = "sapphirerapids" if cpu == "baseline" else None
+    assert manifest["dispatch_levels"] == {"intel": level}
     summary = json.loads((path / "summary.json").read_text())
     goals = summary["targets"]["intel"]["goals"]
     assert summary["targets"]["intel"]["cpu"] == {"mode": cpu, "models": [model]}

@@ -98,11 +98,13 @@ def measurement(
     schema: int = 3,
     memory: dict[str, Any] | None = None,
     cpu: str = "sapphirerapids",
+    dispatch: dict[str, Any] | None = None,
 ) -> None:
     records: list[dict[str, Any]] = [
         {
             **META_V2,
             **({"memory": memory or MEMORY} if schema == 3 else {}),
+            **({"dispatch": dispatch} if dispatch is not None else {}),
             "type": "meta",
             "schema": schema,
             "rev": "fixture",
