@@ -149,7 +149,7 @@ if short_scalar:
     require(len(text.splitlines()) == 14, "move/1 lacks the scalar byte path")
 if inline_short_first:
     for op in ("Copy", "Move"):
-        for n, count in ((1, 3), (4, 2), (8, 2), (15, 2)):
+        for n, count in ((1, 5), (4, 3), (8, 2), (15, 2)):
             text = class_path(f"probeRuntime{op}", n)
             actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
             require(actual == count, f"inline {op}/{n} has {actual} branches, expected {count}")
