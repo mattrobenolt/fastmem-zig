@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const X86Experiment = enum { auto, none, medium_layout, medium_entry, small_paths };
+
 const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
 
 // The per-model default of the "auto" variant, from the p3-x86c fleet A/B
@@ -139,7 +141,8 @@ pub fn build(b: *std.Build) void {
         "x86-dispatch",
         "Select the x86 kernels at run time in x86_64 Linux builds without AVX2 (default true)",
     ) orelse true;
-    const fm = Fastmem.create(b, readTuning(b, x86_variant), x86_dispatch);
+    const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 small/medium selection (auto = per-model winners)") orelse .auto;
+    const fm = Fastmem.create(b, readTuning(b, x86_variant, x86_experiment), x86_dispatch);
     fm.configure(mod);
     const x86_options = fm.plain;
 
@@ -235,7 +238,7 @@ pub fn build(b: *std.Build) void {
 
     // Private cross probes must not replace the public dependency module.
     std.debug.assert(b.modules.get("fastmem").? == mod);
-    const probes = addX86Codegen(b, fm, x86_variant);
+    const probes = addX86Codegen(b, fm, x86_variant, x86_experiment);
     addStdExportTests(b, x86_options);
 
     // Tests. The fastmem test module takes an explicit optimize so a
@@ -354,14 +357,22 @@ const small_ops = .{ "copy", "move", "set" };
 /// The tuning build options, read once. Each fastmem_options step writes them.
 const Tuning = struct {
     variant: X86Variant,
+    experiment: X86Experiment,
     u32s: [tuning_u32.len]?u32,
     u64s: [tuning_u64.len]?u64,
     small: [small_ops.len][]const u8,
     masked_set: bool,
 };
 
-fn readTuning(b: *std.Build, variant: X86Variant) Tuning {
-    var t: Tuning = .{ .variant = variant, .u32s = undefined, .u64s = undefined, .small = undefined, .masked_set = undefined };
+fn readTuning(b: *std.Build, variant: X86Variant, experiment: X86Experiment) Tuning {
+    var t: Tuning = .{
+        .variant = variant,
+        .experiment = experiment,
+        .u32s = undefined,
+        .u64s = undefined,
+        .small = undefined,
+        .masked_set = undefined,
+    };
     inline for (tuning_u32, &t.u32s) |name, *value| {
         value.* = b.option(u32, "x86-" ++ name, "Override the x86 tuning default");
     }
@@ -387,6 +398,7 @@ fn readTuning(b: *std.Build, variant: X86Variant) Tuning {
 
 fn tuningOptions(b: *std.Build, t: Tuning, dispatch: bool) *std.Build.Step.Options {
     const options = b.addOptions();
+    options.addOption(X86Experiment, "x86_experiment", t.experiment);
     inline for (tuning_u32, t.u32s) |name, value| {
         options.addOption(?u32, comptime "x86_" ++ replaceDash(name), value);
     }
@@ -432,7 +444,12 @@ fn codegenProbe(b: *std.Build, fm: *Fastmem, cpu: []const u8) *std.Build.Step.Co
     });
 }
 
-fn addX86Codegen(b: *std.Build, fm: *Fastmem, variant: X86Variant) [codegen_cpus.len]*std.Build.Step.Compile {
+fn addX86Codegen(
+    b: *std.Build,
+    fm: *Fastmem,
+    variant: X86Variant,
+    experiment: X86Experiment,
+) [codegen_cpus.len]*std.Build.Step.Compile {
     const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
     var probes: [codegen_cpus.len]*std.Build.Step.Compile = undefined;
     for (codegen_cpus, &probes) |cpu, *probe| {
@@ -443,6 +460,7 @@ fn addX86Codegen(b: *std.Build, fm: *Fastmem, variant: X86Variant) [codegen_cpus
         check.addArg(cpu);
         check.addArg(@tagName(resolveX86Variant(cpu, variant)));
         check.addFileArg(obj.getEmittedBin());
+        check.addArgs(&.{ "--experiment", @tagName(experiment) });
         step.dependOn(&check.step);
         if (std.mem.eql(u8, cpu, "sapphirerapids") or std.mem.eql(u8, cpu, "graniterapids")) {
             const mutations = b.addSystemCommand(&.{"python3"});
@@ -450,6 +468,7 @@ fn addX86Codegen(b: *std.Build, fm: *Fastmem, variant: X86Variant) [codegen_cpus
             mutations.addArg(cpu);
             mutations.addArg(@tagName(resolveX86Variant(cpu, variant)));
             mutations.addFileArg(obj.getEmittedBin());
+            mutations.addArgs(&.{ "--experiment", @tagName(experiment) });
             step.dependOn(&mutations.step);
         }
         const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("codegen/{s}.o", .{cpu}));

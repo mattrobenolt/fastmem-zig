@@ -65,6 +65,13 @@ pub inline fn small(comptime max: u32, dst: [*]u8, src: [*]const u8, n: usize) b
 }
 
 pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
+    // A short-first decision skips the vector ladder without new scalar classes.
+    if (comptime tuning.inline_short_first) {
+        if (n < 16 and n <= tuning.inline_max) {
+            _ = small(16, dst, src, n);
+            return;
+        }
+    }
     if (small(tuning.inline_max, dst, src, n)) return;
     if (overlap == .disjoint) {
         // The disjoint specialization omits the direction test, but retains alias dispatch.
@@ -120,7 +127,7 @@ pub noinline fn kernel(
 
 // These experiments retain the measured large policy and all inline classes.
 inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
-    if (comptime t.medium_first) {
+    if (comptime t.medium_first or tuning.medium_entry) {
         if (n >= 64) {
             @branchHint(.likely);
             return mediumReordered(dst, src, n);
@@ -139,6 +146,14 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
                 pair(u64, @ptrCast(dst.?), @ptrCast(src.?), n);
             } else if (n >= 4) {
                 pair(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
+            } else if (comptime tuning.short_scalar) {
+                if (n == 1) {
+                    const d: [*]u8 = @ptrCast(dst.?);
+                    const s: [*]const u8 = @ptrCast(src.?);
+                    d[0] = s[0];
+                } else if (n != 0) {
+                    pair(u16, @ptrCast(dst.?), @ptrCast(src.?), n);
+                }
             } else if (n != 0) {
                 compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
             }
@@ -148,7 +163,8 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
     if (n < 64) {
-        if (tuning.compact_short) {
+        @branchHint(if (tuning.medium_layout) .unlikely else .none);
+        if (tuning.compact_short or tuning.short_scalar) {
             compact.quad(@Vector(16, u8), d, s, n);
         } else if (n <= 32) {
             pair(@Vector(16, u8), d, s, n);

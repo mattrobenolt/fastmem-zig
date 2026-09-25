@@ -8,7 +8,7 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-cpu, variant, artifact = sys.argv[1:]
+cpu, variant, artifact, *extra = sys.argv[1:]
 checker = Path(__file__).with_name("check_codegen.py")
 dis = subprocess.check_output(["llvm-objdump", "-dr", "--no-show-raw-insn", artifact], text=True)
 nm = subprocess.check_output(["llvm-nm", "--defined-only", "--format=posix", artifact], text=True)
@@ -20,7 +20,7 @@ checks = 0
 def check(text, requested, failure=None):
     global checks
     checks += 1
-    argv = [str(checker), cpu, *requested, artifact]
+    argv = [str(checker), cpu, *requested, artifact, *extra]
     with patch.object(sys, "argv", argv), patch("subprocess.check_output", side_effect=[text, nm]):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:

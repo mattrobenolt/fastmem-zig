@@ -57,6 +57,20 @@ pub const selected: Tuning = .{
     .alias_mask = options.x86_alias_mask orelse defaults.alias_mask,
     .rep_src_align_mask = options.x86_rep_src_align_mask orelse defaults.rep_src_align_mask,
 };
+// Per-model small/medium selections from the p3-x86e fleet A/B
+// (docs/results/p3-x86e.md). `auto` takes the measured winners: medium-entry
+// on Granite Rapids, the short-first inline dispatch on Sapphire Rapids. The
+// Zen 4 short classes lost at 17-256 B and stay opt-in.
+const experiment = options.x86_experiment;
+const auto_experiment = experiment == .auto;
+pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
+    experiment == .medium_layout;
+pub const medium_entry = builtin.cpu.model == &cpu.graniterapids and
+    (auto_experiment or experiment == .medium_entry);
+pub const short_scalar = builtin.cpu.model == &cpu.znver4 and
+    experiment == .small_paths;
+pub const inline_short_first = builtin.cpu.model == &cpu.sapphirerapids and
+    (auto_experiment or experiment == .small_paths);
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
 // Model gates also apply to explicit experiments. Other CPUs retain their defaults.
