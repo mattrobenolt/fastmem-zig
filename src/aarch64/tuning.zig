@@ -87,6 +87,23 @@ pub const move_small: CopySmall = blk: {
         @compileError("unknown -Dsmall-move value: " ++ options.small_move);
 };
 
+// Mid-entry alias for the inline layer's > 64 byte copy/move calls
+// (fastmem_sve_copy_gt64 in memcpy_sve.zig): enter the shared mid block
+// directly, skipping the head's small-size dispatch. The skipped branches
+// are predicted-taken on every > 64 call; a predicted-taken branch is
+// measurable on Neoverse V2 at benchmark loop scale (the abi trampoline
+// cost 1.283x on c8g set 0-16, docs/results/small-path-aarch64b.md).
+// Neutral on V3 locally; the fleet decides V1/V2. -Dmid-entry overrides
+// for local runs.
+pub const mid_entry: bool = blk: {
+    if (std.mem.eql(u8, options.mid_entry, "auto")) break :blk default_mid_entry;
+    if (std.mem.eql(u8, options.mid_entry, "on")) break :blk true;
+    if (std.mem.eql(u8, options.mid_entry, "off")) break :blk false;
+    @compileError("unknown -Dmid-entry value: " ++ options.mid_entry);
+};
+
+const default_mid_entry = false;
+
 pub const set_small: SetSmall = blk: {
     if (std.mem.eql(u8, options.small_set, "auto")) break :blk default_set_small;
     break :blk std.meta.stringToEnum(SetSmall, options.small_set) orelse

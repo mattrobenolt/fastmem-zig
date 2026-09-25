@@ -87,15 +87,20 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         const s_addr = @intFromPtr(s);
         std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
         std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
-        if (bytes <= aarch64_small.max_inline) {
-            aarch64_small.copyMove(d, s, bytes);
+        if (bytes > aarch64_small.max_inline) {
+            @branchHint(.unlikely);
+            if (comptime on_aarch64_sve) {
+                if (comptime arm_tuning.mid_entry and aarch64_memcpy_sve.has_gt64_entry) {
+                    aarch64_memcpy_sve.fastmem_sve_copy_gt64(d, s, bytes);
+                } else {
+                    aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
+                }
+            } else {
+                aarch64_memcpy_advsimd.fastmem_advsimd_copy(d, s, bytes);
+            }
             return;
         }
-        if (comptime on_aarch64_sve) {
-            aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
-        } else {
-            aarch64_memcpy_advsimd.fastmem_advsimd_copy(d, s, bytes);
-        }
+        aarch64_small.copyMove(d, s, bytes);
         return;
     }
     if (comptime on_x86) {
@@ -117,17 +122,22 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         const bytes = source.len * @sizeOf(T);
         const d: [*]u8 = @ptrCast(dest.ptr);
         const s: [*]const u8 = @ptrCast(source.ptr);
-        if (bytes <= aarch64_small.max_inline) {
-            // The small classes are overlap-safe (all loads precede all
-            // stores), so copy and move share them.
-            aarch64_small.copyMove(d, s, bytes);
+        if (bytes > aarch64_small.max_inline) {
+            @branchHint(.unlikely);
+            if (comptime on_aarch64_sve) {
+                if (comptime arm_tuning.mid_entry and aarch64_memcpy_sve.has_gt64_entry) {
+                    aarch64_memcpy_sve.fastmem_sve_copy_gt64(d, s, bytes);
+                } else {
+                    aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
+                }
+            } else {
+                aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
+            }
             return;
         }
-        if (comptime on_aarch64_sve) {
-            aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
-        } else {
-            aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
-        }
+        // The small classes are overlap-safe (all loads precede all
+        // stores), so copy and move share them.
+        aarch64_small.copyMove(d, s, bytes);
         return;
     }
     if (comptime on_x86) {
@@ -156,15 +166,16 @@ pub inline fn set(comptime T: type, dest: []T, value: T) void {
         if (T == u8 or allBytesEqual(bytes)) {
             const len = dest.len * @sizeOf(T);
             const d: [*]u8 = @ptrCast(dest.ptr);
-            if (len <= aarch64_small.max_inline) {
-                aarch64_small.set(d, bytes[0], len);
+            if (len > aarch64_small.max_inline) {
+                @branchHint(.unlikely);
+                if (comptime on_aarch64_sve) {
+                    aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
+                } else {
+                    aarch64_memset_advsimd.fastmem_advsimd_set(d, bytes[0], len);
+                }
                 return;
             }
-            if (comptime on_aarch64_sve) {
-                aarch64_memset_sve.fastmem_sve_set(d, bytes[0], len);
-            } else {
-                aarch64_memset_advsimd.fastmem_advsimd_set(d, bytes[0], len);
-            }
+            aarch64_small.set(d, bytes[0], len);
             return;
         }
     }
