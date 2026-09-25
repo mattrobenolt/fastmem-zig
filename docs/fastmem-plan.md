@@ -154,8 +154,11 @@ G5. The export layer.
 - The Zig standard library tests and one real project (handoff) pass
   with the export layer active.
 
-G6. Portable builds. A baseline build (`-Dcpu=x86_64_v3` and
-`-Dcpu=generic` on aarch64) is not slower than compiler-rt.
+G6. Portable builds. A baseline build (`-Dcpu=x86_64` (= baseline) on x86_64, which
+has no AVX2, and `-Dcpu=generic` on aarch64) is not slower than
+compiler-rt. No length of the generic memset reaches a byte-store loop
+(`zig build test-generic-set`, issue #1). The x86_64 baseline is the
+configuration that handoff ships.
 
 ## Design decisions
 
@@ -204,7 +207,7 @@ in `docs/bench-design.md`.
 | P4 | Inline layer | Opus design, K3 or Astra writes | G4 |
 | P5 | memset, same method | lanes | G1-G4 for set |
 | P6 | Export layer and ecosystem validation | Astra writes, Opus reviews | G5 |
-| P7 | Portable builds, runtime dispatch (optional) | lanes | G6 |
+| P7 | Runtime dispatch: a baseline x86_64 build selects the AVX2 or AVX-512 kernels on hosts that have them (issue #1) | lanes | G6 |
 
 ## Working rules for lanes
 

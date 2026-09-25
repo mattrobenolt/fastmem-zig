@@ -129,7 +129,7 @@ def test_early_parse_failure_stops_remaining_rounds(config: Config) -> None:
 
 
 @pytest.mark.parametrize(
-    ("cpu", "model"), [("baseline", "x86_64_v3"), ("target", "sapphirerapids")]
+    ("cpu", "model"), [("baseline", "x86_64"), ("target", "sapphirerapids")]
 )
 def test_run_cpu_mode_reaches_build_manifest_and_goals(
     config: Config, monkeypatch: pytest.MonkeyPatch, cpu: str, model: str

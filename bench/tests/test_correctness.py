@@ -69,7 +69,7 @@ def test_zero_cases_failure_is_valid() -> None:
 def test_cpu_contract() -> None:
     assert c.cpus({"zig_target": "x86_64-linux-gnu", "zig_cpu": "znver5"}) == {
         "target": "znver5",
-        "baseline": "x86_64_v3",
+        "baseline": "x86_64",
     }
     assert c.cpus({"zig_target": "aarch64-linux-gnu", "zig_cpu": "neoverse_v3"}) == {
         "target": "neoverse_v3",

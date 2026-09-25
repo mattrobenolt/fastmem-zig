@@ -348,6 +348,7 @@ fn addExportTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Ste
     const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
     step.dependOn(addExportCollisionTests(b, tuning));
     step.dependOn(addArmByteTests(b));
+    step.dependOn(addGenericSetTests(b, tuning));
     inline for (.{ "test_runtime.py", "test_audit.py" }) |script| {
         const check = b.addSystemCommand(&.{"python3"});
         check.addFileArg(b.path("src/export/" ++ script));
@@ -559,6 +560,37 @@ fn addExportCollisionTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.
                 step.dependOn(&obj.step);
             }
         }
+    }
+    return step;
+}
+
+fn addGenericSetTests(b: *std.Build, tuning: *std.Build.Step.Options) *std.Build.Step {
+    const step = b.step("test-generic-set", "The generic memset has no byte-store loop (issue #1)");
+    for ([_][]const u8{"x86_64-linux-gnu"}) |triple| {
+        const target = b.resolveTargetQuery(std.Target.Query.parse(.{
+            .arch_os_abi = triple,
+            .cpu_features = "baseline",
+        }) catch unreachable);
+        const kernel = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .no_builtin = true,
+            .omit_frame_pointer = true,
+        });
+        kernel.addOptions("fastmem_options", tuning);
+        const obj = b.addObject(.{
+            .name = b.fmt("generic-set-{s}", .{triple}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/export/kernel_bytes.zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+                .imports = &.{.{ .name = "fastmem", .module = kernel }},
+            }),
+        });
+        const check = b.addSystemCommand(&.{"python3"});
+        check.addFileArg(b.path("src/export/check_generic_set.py"));
+        check.addFileArg(obj.getEmittedBin());
+        step.dependOn(&check.step);
     }
     return step;
 }

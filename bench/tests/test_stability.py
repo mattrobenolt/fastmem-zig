@@ -84,11 +84,11 @@ def test_old_schema_rounds_still_analyze(tmp_path: Path) -> None:
 def test_baseline_cpu_comes_from_bench_toml_or_the_arch() -> None:
     x86 = {"arch": "x86_64", "zig_target": "x86_64-linux-gnu", "zig_cpu": "znver5"}
     arm = {"arch": "arm64", "zig_target": "aarch64-linux-gnu", "zig_cpu": "neoverse_v2"}
-    assert baseline_cpu(x86) == "x86_64_v3"
+    assert baseline_cpu(x86) == "x86_64"
     assert baseline_cpu(arm) == "generic"
     assert baseline_cpu({**arm, "baseline_cpu": "neoverse_n1"}) == "neoverse_n1"
     assert build_cpu(x86, "target") == "znver5"
-    assert build_cpu(x86, "baseline") == "x86_64_v3"
+    assert build_cpu(x86, "baseline") == "x86_64"
     with pytest.raises(ValueError, match="baseline_cpu"):
         baseline_cpu({**arm, "baseline_cpu": "native"})
     with pytest.raises(ValueError, match="Unknown CPU mode"):
@@ -102,7 +102,7 @@ def test_bench_toml_baseline_cpus() -> None:
 
     targets = tomllib.loads((Path(__file__).parents[2] / "bench.toml").read_text())["targets"]
     for settings in targets.values():
-        expected = "x86_64_v3" if settings["arch"] == "x86_64" else "generic"
+        expected = "x86_64" if settings["arch"] == "x86_64" else "generic"
         assert settings["baseline_cpu"] == expected
 
 

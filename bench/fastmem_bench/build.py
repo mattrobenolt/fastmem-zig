@@ -85,7 +85,7 @@ CPU_MODES = ("target", "baseline")
 def baseline_cpu(settings: dict[str, Any]) -> str:
     """The G6 portable CPU: bench.toml baseline_cpu, or the plan default for the arch."""
     arch = settings.get("zig_target", "").split("-")[0] or settings.get("arch")
-    cpu = settings.get("baseline_cpu") or ("x86_64_v3" if arch == "x86_64" else "generic")
+    cpu = settings.get("baseline_cpu") or ("x86_64" if arch == "x86_64" else "generic")
     if not isinstance(cpu, str) or cpu == "native":
         raise ValueError(f"Invalid baseline_cpu: {cpu!r}")
     return cpu
