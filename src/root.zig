@@ -302,8 +302,9 @@ else if (on_aarch64)
 else
     undefined;
 
-/// Replace the memory symbols in this link with strong, hidden kernel aliases.
-/// Call once from the root comptime block. See docs/export-layer.md.
+/// Replace the memory symbols in this link with strong, hidden aliases of
+/// the `abi` entries. Call once from the root comptime block. See
+/// docs/export-layer.md.
 pub fn exportSymbols() void {
     if (builtin.target.ofmt != .elf or
         (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64))
@@ -319,7 +320,8 @@ pub fn exportSymbols() void {
 /// C-ABI entry points with the libc signatures, each returning dest.
 /// The entries receive libc names only after exportSymbols. The benchmark
 /// measures these as fastmem_abi. Dedicated kernels handle aarch64 and AVX2.
-/// Other targets use generic Zig wrappers.
+/// x86_64 Linux builds without AVX2 get the runtime-dispatch stubs
+/// (docs/runtime-dispatch.md). Other targets use generic Zig wrappers.
 pub const abi = struct {
     comptime {
         // A consumer can use only ABI pointers, without copy/move/set.
