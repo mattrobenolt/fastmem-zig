@@ -186,6 +186,7 @@ The binary matrix covers these cases:
 - Original aarch64 instruction bytes and fallback kernels without module-level intrinsic suppression.
 - Generic aarch64, Neoverse V1/V2/V3, x86_64 baseline, and x86_64_v3.
 - An `x86_64-dispatch` row: x86_64 baseline with runtime dispatch, in every link mode above.
+- Two fastmem package copies in one baseline link, and the absence of the dispatch test hook from the public module (`test-export-packages`).
 
 The libc-free consumer tests execute every length from 0 through 8192 bytes.
 They check copy, fill, and both move directions against byte-level expectations.

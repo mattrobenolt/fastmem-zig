@@ -75,9 +75,24 @@ Thus `build.zig` compiles each level as a separate object.
 
 - The root of each object is `src/x86_64/level.zig`.
 - The object compiles with `-Dcpu=<level>`, ReleaseFast, LLVM, PIC, `no_builtin`, and `omit_frame_pointer`.
-- The object exports `fastmem_x86_<level>_memmove`, `fastmem_x86_<level>_memset`, and `fastmem_x86_<level>_name`.
+- The object exports `fastmem_x86_<id>_<level>_memmove`, `_memset`, and `_name`.
 - All three symbols have hidden visibility. They never reach `.dynsym`.
 - The fastmem module receives the six objects through `Module.addObject`.
+- The level objects get the `fastmem_options` of the public module.
+  Thus `tuning.zig` applies the same per-model variant and experiment selection as in a comptime build for that CPU.
+
+### Symbol names
+
+`<id>` is a 16-digit hex id of the package instance (`instanceId` in `build.zig`).
+Zig creates one `std.Build` for each pair of build root and user options.
+The id hashes the same pair.
+A fetched package uses its build root relative to the global cache, so its id does not depend on the cache location.
+The resolvers and the generic entries also carry the id: `fastmem_x86_<id>_resolve_memcpy`, `fastmem_x86_<id>_generic_memcpy`.
+
+Hidden visibility does not prevent collisions inside one link.
+Two fastmem package copies in one executable therefore need different names.
+The id also makes the generated `fastmem_options` files of two copies differ.
+Without that, two identical options files share one cache path, and Zig rejects the compilation: "file exists in modules 'fastmem_options' and 'fastmem_options0'".
 
 `Module.addObject` propagates in Zig 0.16.
 `std.Build.Step.Compile` collects the link objects of every module in its module graph.
@@ -87,7 +102,7 @@ A static library adds them as archive members.
 A compiled consumer package proved the dependency path (see "Local evidence").
 
 `Fastmem.configure` in `build.zig` applies the rule to every module of `src/root.zig`.
-It sets the `fastmem_options` flag `x86_dispatch`.
+It sets the `fastmem_options` flags `x86_dispatch` and `x86_test_hooks`, and the `x86_instance` id.
 `src/x86_64/dispatch.zig` applies the same rule at comptime, with that flag as the last condition.
 Thus a module without the objects never references their symbols.
 
@@ -130,7 +145,7 @@ The generic kernels call the generic implementations directly, not the public AP
 
 The export audit (`src/export/check.py`) follows direct branches only.
 The stubs jump through pointers, so the audit also starts at every `fastmem_x86_*` function.
-`dispatch.zig` exports the resolvers and the generic entries with hidden `fastmem_x86_*` names for this purpose.
+`dispatch.zig` exports the resolvers and the generic entries with hidden `fastmem_x86_<id>_*` names for this purpose.
 The audit found one real recursion during development.
 In a Debug build without module `no_builtin`, `Info.select` called `memcpy` for a struct copy.
 
@@ -143,13 +158,23 @@ The ladder compiles for the consumer CPU: SSE2 on baseline.
 Larger sizes call through the pointer directly, without the stub.
 A comptime size of 128 bytes or less makes no call.
 
-## Test hooks
+## Introspection and test hooks
 
 - `fastmem.dispatch.level()` returns the selected level, or null without dispatch.
 - `fastmem.dispatch.kernelName()` returns the kernel name of the level.
 - `fastmem.dispatch.detect()` returns the CPUID facts.
 - `fastmem.dispatch.force(level)` selects a level. The CPU must support it.
 - `fastmem-tests --x86-level LEVEL` runs the guard suite at one level.
+
+`force` is a test hook. It compiles only when `fastmem_options.x86_test_hooks` is true.
+Only fastmem's own test modules set it: the unit tests, the `test-dispatch` unit tests, and `fastmem-tests`.
+`fastmem-tests` gets a private copy of the public module with the hooks. Its kernels are the same.
+The public module never sets the flag.
+A consumer that calls `force` gets this compile error:
+
+```text
+error: fastmem.dispatch.force is a test hook; the public fastmem module does not provide it
+```
 
 ## Tests
 
@@ -169,15 +194,29 @@ That step does these checks:
 
 The export matrix adds an `x86_64-dispatch` row: baseline x86_64 in every link mode.
 The collision tests add a baseline x86_64 row.
+
+`zig build test-export-packages` (part of `test-export`) checks the package boundary:
+
+1. Two compile-fail fixtures call `force` through a public module: the public module of the build, and a ReleaseFast baseline x86_64 consumer. Both must fail with the test-hook error.
+2. `src/export/two_packages.py` copies the package twice and builds `src/export/two_packages/`.
+   The consumer depends on both copies by path. Copy a exports the memory symbols, and copy b serves explicit calls.
+   The script checks that the link contains two instance ids with eight dispatch entries each, and it runs the executable.
 `src/x86_64/cpuid.zig` tests the selection with synthetic CPUID values of the four fleet hosts and of other models.
 
 ## Harness
 
-- `bench-fastmem` records the `dispatch` meta object: level, kernel, vendor, family, and model.
+- A dispatching `bench-fastmem` records the `dispatch` meta object: level, kernel, vendor, family, and model.
+  A comptime-selected build emits no `dispatch` field.
+  Its meta code is the code of the build before P7, so that the `.text` of the target-CPU binaries does not change.
+- The capability comes from the binary. A dispatching binary exports its resolvers, and the codegen evidence in `meta.codegen` names them.
+  Analysis requires the `dispatch` object exactly when the evidence names a resolver.
+  Analysis rejects a meta record without codegen evidence when a level is expected.
 - `bench run --cpu baseline` records the expected level of each x86 target in `dispatch_levels`.
   The expected level is the `zig_cpu` of the target.
   Analysis rejects a raw file with a different level.
-- `report.md` prints the dispatched level of each variant.
+- The build step rejects a revision with runtime dispatch (its `build.zig` declares `x86-dispatch`) whose G6 x86 binary has no resolvers.
+  A revision without the feature builds a binary without resolvers. No level applies to it, and the report says so.
+- `report.md` prints the dispatch state of each variant.
 - `bench test` fails the baseline variant when the guard summary names a different level.
 - `bench.toml` keeps `baseline_cpu = "x86_64"` on the x86 targets.
 
@@ -198,7 +237,6 @@ Each item comes from a compiled experiment.
 ## Limits
 
 - Only x86_64 Linux ELF targets dispatch. Other x86_64 targets keep the generic kernels.
-- Two fastmem packages in one link export the same hidden symbols. The link fails with a duplicate-symbol error.
 - The tuning overrides (`-Dx86-vec` and others) apply to every level object.
   For example, `-Dx86-vec=64` fails the `x86_64_v3` object.
 - The dispatch inline limit is fixed at 128 bytes. `-Dx86-inline-max` does not change it.
@@ -210,10 +248,20 @@ Each item comes from a compiled experiment.
 ## Local evidence, 2026-09-25
 
 The host is launchpad (aarch64). qemu-x86_64 11.1.1 runs the x86 binaries.
+The first table is the state after the review fixes, merged with main 8d43448 (`-Dx86-experiment=auto`).
 
 | Check | Result |
 |---|---|
-| `zig build test` | 312 of 312 steps, 35 of 35 unit tests |
+| `zig build test` | 318 of 318 steps, 36 of 36 unit tests |
+| `bench-fastmem` `.text`, main 8d43448 and P7, `-Drev=cmp` | identical for sapphirerapids, graniterapids, znver4, znver5, and x86_64_v3 |
+| Codegen probe `.text`, main 8d43448 and P7 | identical for the same five CPUs |
+| `test-export-packages` | both hook fixtures fail to compile; two instances link and run (`x86_64_v3` under qemu) |
+| Harness | 232 passed, 11 skipped |
+
+The earlier evidence, before the review fixes:
+
+| Check | Result |
+|---|---|
 | `check_dispatch.py` | stubs two instructions, 9 bytes each. Six level objects identical to the comptime kernels. |
 | Codegen probe `.text`, before and after P7 | identical for sapphirerapids, graniterapids, znver4, znver5, and x86_64_v3 |
 | aarch64 `asm-all` instructions, Linux | identical. macOS: only the `setFallback` symbol name differs. |
@@ -234,6 +282,7 @@ The maximum size is 1 MiB, the default of a baseline build.
 
 | qemu CPU | Level | Build options | Cases | Result | Time |
 |---|---|---|---:|---|---:|
+| `max` | `x86_64_v3`, detected | none, after the review fixes and the main merge | 28,047,836 | pass | 352 s |
 | `max` | `x86_64_v3`, detected | none | 28,047,836 | pass | 435 s |
 | `max` | `generic`, `--x86-level generic` | none | 28,047,836 | pass | 432 s |
 | `Westmere` | `generic`, detected | none | 28,047,836 | pass | 389 s |
@@ -253,10 +302,10 @@ They do not launch boxes. Launch the four x86 targets first with `just bench-up 
 just bench-test --target c7i --target c8i --target c7a --target c8a --optimize ReleaseFast --optimize ReleaseSafe --optimize Debug
 ```
 
-2. Measure G6 with the dispatched kernels. The first revision is the build before P7.
+2. Measure G6 with the dispatched kernels. The first revision is main before P7. Its baseline binary has no dispatch, and the report says so.
 
 ```sh
-just bench-run --rev 11cd5ed --rev WORKTREE --cpu baseline --target c7i --target c8i --target c7a --target c8a --suite standard --rounds 5 --label p7-dispatch-g6
+just bench-run --rev 8d43448 --rev WORKTREE --cpu baseline --target c7i --target c8i --target c7a --target c8a --suite standard --rounds 5 --label p7-dispatch-g6
 ```
 
 3. Measure the large sizes, which reach the REP and NT paths.
@@ -271,5 +320,5 @@ just bench-run --rev WORKTREE --cpu baseline --target c7i --target c8i --target 
 just b analyze <run-dir>
 ```
 
-`report.md` prints the dispatched level of each variant.
+`report.md` prints the dispatch state of each variant.
 The expected levels are `sapphirerapids` on c7i, `graniterapids` on c8i, `znver4` on c7a, and `znver5` on c8a.
