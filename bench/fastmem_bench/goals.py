@@ -275,7 +275,11 @@ def evaluate(
 
 
 def scope(cpu_mode: str, **goals: dict[str, Any]) -> None:
-    """Keep the evidence of goals outside the build's CPU mode, but give no verdict."""
+    """Keep the evidence of goals outside the build's CPU mode, but give no verdict.
+
+    A goal outside the mode describes another build, so it is NA even when this build
+    delegates. The delegation evidence stays in the goal.
+    """
     outside = ("g6",) if cpu_mode == "target" else ("g2", "g3", "g4")
     reason = (
         "G6 requires a baseline CPU build (bench run --cpu baseline)."
@@ -283,9 +287,7 @@ def scope(cpu_mode: str, **goals: dict[str, Any]) -> None:
         else "G2-G4 require the bench.toml zig_cpu build. This run used the baseline CPU."
     )
     for name in outside:
-        goal = goals[name]
-        if goal["status"] != "INVALID":
-            goal.update(status="NA", reason=reason)
+        goals[name].update(status="NA", reason=reason)
 
 
 def na_reason(evidence: dict[str, Any], cases: str) -> str:

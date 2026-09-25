@@ -111,6 +111,10 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
         )
     if not names and not startup:
         raise click.ClickException("No running targets. Use --up or select a target.")
+    try:
+        cpus = {name: build_cpu(config.targets[name], cpu_mode) for name in names}
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
     instances = {name: fleet.one(name) for name in names}
     path, manifest = create_run(
         config.root,
@@ -120,10 +124,6 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
         results_dir=config.results_dir,
     )
     seed = secrets.randbits(32)
-    try:
-        cpus = {name: build_cpu(config.targets[name], cpu_mode) for name in names}
-    except ValueError as error:
-        raise click.ClickException(str(error)) from error
     sources = resolve(config, revisions)
     variants = [source.variant for source in sources]
     schedule = orders([*variants, *([] if no_aa else ["aa"])], rounds, seed)

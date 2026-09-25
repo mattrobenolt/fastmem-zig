@@ -414,16 +414,22 @@ Stability (`bench/fastmem_bench/stability.py`):
 - A spike is a round median more than 10% above the median of all rounds
   of its (case, impl) in the group. The definition is the one of
   "Estimator evidence" below.
-- For each group, `summary.json` (`stability.groups`) has the spike
-  count, the spike rate over all round cells, the count per variant and
-  per process, and the share of the worst process. Spikes that cluster
-  by process give that process a large share.
+- For each group and metric (`ns` and `cycles` per operation),
+  `summary.json` (`stability.groups`) has these values: the spike count,
+  the spike rate over all round cells, and the count per variant and per
+  process. It also gives the share of the worst process. Spikes that
+  cluster by process give that process a large share.
+- The `cycles` metric uses only samples that the PMU counted for the
+  whole batch. Cycles exclude the time when the thread is not scheduled.
+  A cycles spike is therefore an effect inside the core, for example of
+  placement. A spike in `ns` only is time outside the thread, for example
+  preemption.
 - A group with two or more variants also has a null floor: the A/A floor
   computation on its first two variants. The report gives the median,
   p90, and maximum over the floor groups.
 - `memory` gives the THP coverage of the schema-v3 arena for each
-  process. A warning names the processes that did not get THP for the
-  whole arena.
+  process. A warning gives the number of processes that did not get THP
+  for the whole arena, and the lowest coverage.
 - These numbers describe the measurement. They do not enter a ratio, an
   interval, a floor, or a goal.
 
@@ -691,7 +697,8 @@ These counts follow the construction in `buildCases` and the native coverage tes
 Schema v2 mapped fresh source and destination buffers for each case.
 Physical placement then changed from case to case and from process to process.
 The baseline run showed spikes with more cycles at a constant instruction count (see "Estimator evidence").
-The stats-lane characterization adds that on AMD, 3% to 4% of cells spike, the spikes cluster by process, and they hit the separate-buffer profiles with equal page offsets.
+The stats-lane characterization adds these facts for AMD: 3% to 4% of cells spike, and the spikes cluster by process.
+They hit the separate-buffer profiles with equal page offsets.
 The mechanism is unverified.
 Placement that changes with each mapping is a candidate cause.
 

@@ -328,4 +328,8 @@ def test_g6_margin_and_delegation() -> None:
     }
     goal = evaluate_goals(rows, ["v0"], codegen={"v0": delegating}, cpu_mode="baseline")[0]
     assert goal["G6"]["status"] == "INVALID"
-    assert goal["G3"]["status"] == "INVALID"
+    # G3 describes the target-CPU build: out of scope here, with the evidence kept.
+    assert goal["G3"]["status"] == "NA"
+    assert goal["G3"]["delegations"] == delegating["delegations"]
+    goal = evaluate_goals(rows, ["v0"], codegen={"v0": delegating})[0]
+    assert (goal["G3"]["status"], goal["G6"]["status"]) == ("INVALID", "NA")
