@@ -7,6 +7,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const testing = std.testing;
+const options = @import("fastmem_options");
 
 const common = @import("common.zig");
 const chunk_bytes = common.chunk_bytes;
@@ -106,11 +107,17 @@ pub const dispatch = struct {
     }
 
     /// Use `l` instead of the detected level: a test hook. The CPU must
-    /// support the level.
+    /// support the level. It compiles only in fastmem's own test modules:
+    /// the public module never sets the `x86_test_hooks` option.
     pub fn force(l: Level) error{Unsupported}!void {
+        if (comptime !test_hooks) @compileError(
+            "fastmem.dispatch.force is a test hook; the public fastmem module does not provide it",
+        );
         if (comptime !enabled) return error.Unsupported;
         return x86_dispatch.force(l);
     }
+
+    const test_hooks = @hasDecl(options, "x86_test_hooks") and options.x86_test_hooks;
 };
 
 /// Sizes up to this bound stay inline in a dispatch build. The classes are

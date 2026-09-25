@@ -7,9 +7,9 @@
 //! The pointers start at resolver functions, like a lazy PLT entry. The
 //! first call through any pointer selects the level, stores all three
 //! pointers, and tail-calls the selected kernel. Every later call loads
-//! the pointer and makes one indirect jump. There is no global constructor. Concurrent first calls
-//! store the same values, so the race is benign; the atomics only make it
-//! defined.
+//! the pointer and makes one indirect jump. There is no global constructor.
+//! Concurrent first calls store the same values, so the race is benign; the
+//! atomics only make it defined.
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("fastmem_options");
@@ -26,6 +26,12 @@ pub const enabled = builtin.cpu.arch == .x86_64 and
     builtin.target.ofmt == .elf and
     !builtin.cpu.has(.x86, .avx2) and
     @hasDecl(options, "x86_dispatch") and options.x86_dispatch;
+
+/// All dispatch symbols start with this prefix. The instance id is unique
+/// per package instance (build.zig `instanceId`), so that two fastmem
+/// packages in one link do not collide.
+pub const symbol_prefix = "fastmem_x86_" ++
+    (if (@hasDecl(options, "x86_instance")) options.x86_instance else "none") ++ "_";
 
 const tail: std.builtin.CallModifier = if (builtin.zig_backend == .stage2_llvm)
     .always_tail
@@ -50,7 +56,7 @@ fn kernels(comptime l: Level) Kernels {
         .set = &generic.memset,
         .name = &genericName,
     };
-    const prefix = "fastmem_x86_" ++ @tagName(l) ++ "_";
+    const prefix = symbol_prefix ++ @tagName(l) ++ "_";
     // x86 memcpy is the memmove kernel, as in the comptime builds.
     const move = @extern(CopyFn, .{ .name = prefix ++ "memmove", .visibility = .hidden });
     return .{
@@ -78,12 +84,13 @@ comptime {
         // the recursion audit (src/export/check.py) and to the benchmark
         // codegen evidence. They never reach .dynsym.
         const hidden: std.builtin.SymbolVisibility = .hidden;
-        @export(&resolveCopy, .{ .name = "fastmem_x86_resolve_memcpy", .visibility = hidden });
-        @export(&resolveMove, .{ .name = "fastmem_x86_resolve_memmove", .visibility = hidden });
-        @export(&resolveSet, .{ .name = "fastmem_x86_resolve_memset", .visibility = hidden });
-        @export(&generic.memcpy, .{ .name = "fastmem_x86_generic_memcpy", .visibility = hidden });
-        @export(&generic.memmove, .{ .name = "fastmem_x86_generic_memmove", .visibility = hidden });
-        @export(&generic.memset, .{ .name = "fastmem_x86_generic_memset", .visibility = hidden });
+        const p = symbol_prefix;
+        @export(&resolveCopy, .{ .name = p ++ "resolve_memcpy", .visibility = hidden });
+        @export(&resolveMove, .{ .name = p ++ "resolve_memmove", .visibility = hidden });
+        @export(&resolveSet, .{ .name = p ++ "resolve_memset", .visibility = hidden });
+        @export(&generic.memcpy, .{ .name = p ++ "generic_memcpy", .visibility = hidden });
+        @export(&generic.memmove, .{ .name = p ++ "generic_memmove", .visibility = hidden });
+        @export(&generic.memset, .{ .name = p ++ "generic_memset", .visibility = hidden });
     }
 }
 

@@ -1,12 +1,13 @@
 """Check the x86_64 runtime dispatch of a baseline build (docs/runtime-dispatch.md).
 
-Arguments: the baseline codegen probe object, then one triple per level:
-LEVEL LEVEL_OBJECT COMPTIME_PROBE_OBJECT.
+Arguments: the symbol prefix (fastmem_x86_<instance>_), the baseline codegen
+probe object, then one triple per level: LEVEL LEVEL_OBJECT COMPTIME_PROBE_OBJECT.
 
 1. Each C-ABI entry is the stub: one pointer load and one indirect jump.
 2. The inline classes stay inline up to 128 bytes; larger sizes jump or call
    through the pointer of the same operation.
-3. Every level, resolver, and generic entry is a GLOBAL HIDDEN function.
+3. Every level, resolver, and generic entry is a GLOBAL HIDDEN function whose
+   name carries the package instance id.
 4. The kernels of each level object are instruction-identical to the kernels
    of the comptime build for the same CPU (src/x86_64/codegen.zig probes).
 """
@@ -139,18 +140,20 @@ def check_probe(obj):
         code = obj.body(f"probeRuntime{op.capitalize()}")
         indirect, direct = transfers(obj, code)
         require(indirect == [f"x86_64.dispatch.{pointer}"], f"runtime {op} large path: {indirect}")
-    names = [f"fastmem_x86_{level}_{op}" for level in LEVELS for op in ("memmove", "memset", "name")]
-    names += [f"fastmem_x86_{kind}_{op}" for kind in ("resolve", "generic") for op in ("memcpy", "memmove", "memset")]
+    names = [f"{PREFIX}{level}_{op}" for level in LEVELS for op in ("memmove", "memset", "name")]
+    names += [f"{PREFIX}{kind}_{op}" for kind in ("resolve", "generic") for op in ("memcpy", "memmove", "memset")]
     for name in names:
         require(obj.binding.get(name) == ("GLOBAL", "HIDDEN"), f"{name} is not GLOBAL HIDDEN: {obj.binding.get(name)}")
     for op in ("memcpy", "memmove", "memset"):
-        text = "\n".join(instructions(obj.body(f"fastmem_x86_resolve_{op}")))
+        text = "\n".join(instructions(obj.body(f"{PREFIX}resolve_{op}")))
         require("cpuid" in text and "xgetbv" in text, f"resolver {op} does not read CPUID and XCR0")
+    unexpected = sorted(n for n in obj.functions if n.startswith("fastmem_x86_") and n not in names)
+    require(not unexpected, f"dispatch symbols without the instance prefix: {unexpected}")
     return evidence
 
 
 def canonical(level, name):
-    name = re.sub(rf"^fastmem_x86_{level}_mem(move|set)$", r"\1.kernel", name)
+    name = re.sub(rf"^{re.escape(PREFIX)}{level}_mem(move|set)$", r"\1.kernel", name)
     return name.removeprefix("x86_64.")
 
 
@@ -182,11 +185,15 @@ def normalized(obj, level, entry):
 
 
 LEVELS = []
+PREFIX = ""
 
 
 def main():
-    probe = Object(sys.argv[1])
-    triples = sys.argv[2:]
+    global PREFIX  # noqa: PLW0603 — one checker invocation, one prefix
+    PREFIX = sys.argv[1]
+    require(re.fullmatch(r"fastmem_x86_[0-9a-f]{16}_", PREFIX), f"bad symbol prefix {PREFIX}")
+    probe = Object(sys.argv[2])
+    triples = sys.argv[3:]
     require(len(triples) % 3 == 0 and triples, "expected LEVEL LEVEL_OBJECT PROBE_OBJECT triples")
     LEVELS.extend(triples[0::3])
     evidence = {"stubs": check_probe(probe), "levels": {}}
@@ -195,7 +202,7 @@ def main():
         comptime_obj = Object(comptime_path)
         counts = {}
         for op in ("move", "set"):
-            got = normalized(level_obj, level, f"fastmem_x86_{level}_mem{op}")
+            got = normalized(level_obj, level, f"{PREFIX}{level}_mem{op}")
             want = normalized(comptime_obj, level, f"x86_64.{op}.kernel")
             require(got.keys() == want.keys(), f"{level} {op}: functions {sorted(got)} != {sorted(want)}")
             for key in got:
@@ -204,7 +211,7 @@ def main():
         evidence["levels"][level] = counts
     # The comparison is sensitive: two different levels must differ.
     if len(triples) >= 6:
-        first = normalized(Object(triples[1]), triples[0], f"fastmem_x86_{triples[0]}_memmove")
+        first = normalized(Object(triples[1]), triples[0], f"{PREFIX}{triples[0]}_memmove")
         other = normalized(Object(triples[5]), triples[0], "x86_64.move.kernel")
         require(first != other, f"{triples[0]} matches the {triples[3]} probe: the comparison is blind")
     print(json.dumps({"status": "pass", **evidence}))

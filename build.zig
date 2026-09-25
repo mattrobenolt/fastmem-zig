@@ -31,23 +31,40 @@ const dispatch_levels = [_][]const u8{
 /// dispatch target, its level objects from here.
 const Fastmem = struct {
     b: *std.Build,
-    /// fastmem_options without dispatch: AVX2 targets, other architectures.
-    plain: *std.Build.Step.Options,
-    /// fastmem_options of a module that links the level objects.
-    dispatching: *std.Build.Step.Options,
+    /// fastmem_options, indexed by [dispatch][access]. `dispatch` is true in
+    /// a module that links the level objects. `.test_hooks` enables the test
+    /// hooks (`dispatch.force`); the public module never gets it.
+    options: [2][2]*std.Build.Step.Options,
     dispatch: bool,
+    /// Unique per package instance: see `instanceId`.
+    instance: []const u8,
     /// Level objects per OS and ABI.
     levels: std.StringHashMapUnmanaged([]const *std.Build.Step.Compile) = .empty,
 
+    const Access = enum { public, test_hooks };
+
     fn create(b: *std.Build, tuning: Tuning, dispatch: bool) *Fastmem {
         const fm = b.allocator.create(Fastmem) catch @panic("OOM");
+        const instance = instanceId(b);
         fm.* = .{
             .b = b,
-            .plain = tuningOptions(b, tuning, false),
-            .dispatching = tuningOptions(b, tuning, true),
+            .options = undefined,
             .dispatch = dispatch,
+            .instance = instance,
+        };
+        for (0..2) |d| for (std.enums.values(Access)) |access| {
+            fm.options[d][@intFromEnum(access)] = tuningOptions(b, tuning, .{
+                .dispatch = d == 1,
+                .test_hooks = access == .test_hooks,
+                .instance = instance,
+            });
         };
         return fm;
+    }
+
+    /// The fastmem_options of a module without dispatch and test hooks.
+    fn plain(fm: *const Fastmem) *std.Build.Step.Options {
+        return fm.options[0][@intFromEnum(Access.public)];
     }
 
     /// Keep this rule consistent with `enabled` in src/x86_64/dispatch.zig.
@@ -58,25 +75,25 @@ const Fastmem = struct {
     }
 
     /// A module of src/root.zig with the settings of the public module.
-    fn module(fm: *Fastmem, target: std.Build.ResolvedTarget) *std.Build.Module {
+    fn module(fm: *Fastmem, target: std.Build.ResolvedTarget, access: Access) *std.Build.Module {
         const m = fm.b.createModule(.{
             .root_source_file = fm.b.path("src/root.zig"),
             .target = target,
             .no_builtin = true,
             .omit_frame_pointer = true,
         });
-        fm.configure(m);
+        fm.configure(m, access);
         return m;
     }
 
     /// Add fastmem_options, and the level objects for a dispatch target.
     /// Module.addObject propagates: every compilation whose module graph
     /// contains this module links the objects.
-    fn configure(fm: *Fastmem, m: *std.Build.Module) void {
+    fn configure(fm: *Fastmem, m: *std.Build.Module, access: Access) void {
         const target = m.resolved_target.?;
-        if (!fm.dispatches(target)) return m.addOptions("fastmem_options", fm.plain);
-        m.addOptions("fastmem_options", fm.dispatching);
-        for (fm.levelObjects(target)) |obj| m.addObject(obj);
+        const dispatch = fm.dispatches(target);
+        m.addOptions("fastmem_options", fm.options[@intFromBool(dispatch)][@intFromEnum(access)]);
+        if (dispatch) for (fm.levelObjects(target)) |obj| m.addObject(obj);
     }
 
     fn levelObjects(fm: *Fastmem, target: std.Build.ResolvedTarget) []const *std.Build.Step.Compile {
@@ -102,7 +119,7 @@ const Fastmem = struct {
                 // The consumer can be a PIE or a shared library.
                 .pic = true,
             });
-            root.addOptions("fastmem_options", fm.plain);
+            root.addOptions("fastmem_options", fm.plain());
             object.* = b.addObject(.{
                 .name = "fastmem-x86-" ++ name,
                 .root_module = root,
@@ -113,6 +130,42 @@ const Fastmem = struct {
         return objects;
     }
 };
+
+/// A hex id that is unique per package instance in a build graph. The x86
+/// dispatch symbols contain it, so that two fastmem packages in one link do
+/// not collide (docs/runtime-dispatch.md). Zig creates one `std.Build` per
+/// build root and user options (`dependencyInner` in std/Build.zig): the id
+/// hashes the same key. A fetched package uses its root relative to the
+/// global cache, so that the id does not depend on the cache location.
+fn instanceId(b: *std.Build) []const u8 {
+    var hasher: std.hash.Wyhash = .init(0);
+    const root = b.build_root.path orelse ".";
+    const global = b.graph.global_cache_root.path orelse "";
+    const cached = global.len != 0 and std.mem.startsWith(u8, root, global);
+    hasher.update(if (cached) root[global.len..] else root);
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = b.user_input_options.iterator();
+    while (it.next()) |entry| names.append(b.allocator, entry.key_ptr.*) catch @panic("OOM");
+    std.mem.sortUnstable([]const u8, names.items, {}, struct {
+        fn less(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.less);
+    for (names.items) |name| {
+        hasher.update(name);
+        hasher.update("=");
+        switch (b.user_input_options.get(name).?.value) {
+            .scalar => |value| hasher.update(value),
+            .list => |list| for (list.items) |item| {
+                hasher.update(item);
+                hasher.update(",");
+            },
+            else => |value| hasher.update(@tagName(value)),
+        }
+        hasher.update(";");
+    }
+    return b.fmt("{x:0>16}", .{hasher.final()});
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -143,8 +196,8 @@ pub fn build(b: *std.Build) void {
     ) orelse true;
     const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 small/medium selection (auto = per-model winners)") orelse .auto;
     const fm = Fastmem.create(b, readTuning(b, x86_variant, x86_experiment), x86_dispatch);
-    fm.configure(mod);
-    const x86_options = fm.plain;
+    fm.configure(mod, .public);
+    const x86_options = fm.plain();
 
     // Benchmark executable — always built ReleaseFast.
     const bench_opts = b.addOptions();
@@ -199,6 +252,8 @@ pub fn build(b: *std.Build) void {
     libc_probe_step.dependOn(&install_libc_probe.step);
 
     // Match benchmark libc linkage until the kernels remove libc delegation.
+    // The guard binary gets a private copy of the public module with the
+    // test hooks (--x86-level). The kernels are the same.
     const correctness = b.addExecutable(.{
         .name = "fastmem-tests",
         .root_module = b.createModule(.{
@@ -206,7 +261,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .link_libc = true,
             .optimize = optimize,
-            .imports = &.{.{ .name = "fastmem", .module = mod }},
+            .imports = &.{.{ .name = "fastmem", .module = fm.module(target, .test_hooks) }},
         }),
     });
     const install_correctness = b.addInstallArtifact(correctness, .{});
@@ -257,7 +312,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    fm.configure(mod_tests.root_module);
+    fm.configure(mod_tests.root_module, .test_hooks);
 
     const unit_install = b.addInstallArtifact(mod_tests, .{
         .dest_sub_path = "fastmem-unit-tests",
@@ -267,7 +322,7 @@ pub fn build(b: *std.Build) void {
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(addExportTests(b, fm));
+    test_step.dependOn(addExportTests(b, fm, mod));
     test_step.dependOn(addDispatchTests(b, fm, probes));
     // Compile the shipped binaries too: a module-graph error (for example
     // one file imported by two modules) only shows up when they build.
@@ -290,7 +345,7 @@ fn addAsmObject(
 ) *std.Build.Step {
     // Create a target-specific fastmem module so comptime builtins
     // (cpu.model, cpu.arch, etc.) reflect the cross-compilation target.
-    const target_mod = fm.module(resolved_target);
+    const target_mod = fm.module(resolved_target, .public);
 
     const obj = b.addObject(.{
         .name = "fastmem-probe",
@@ -396,7 +451,9 @@ fn readTuning(b: *std.Build, variant: X86Variant, experiment: X86Experiment) Tun
     return t;
 }
 
-fn tuningOptions(b: *std.Build, t: Tuning, dispatch: bool) *std.Build.Step.Options {
+const Variant = struct { dispatch: bool, test_hooks: bool, instance: []const u8 };
+
+fn tuningOptions(b: *std.Build, t: Tuning, v: Variant) *std.Build.Step.Options {
     const options = b.addOptions();
     options.addOption(X86Experiment, "x86_experiment", t.experiment);
     inline for (tuning_u32, t.u32s) |name, value| {
@@ -411,7 +468,11 @@ fn tuningOptions(b: *std.Build, t: Tuning, dispatch: bool) *std.Build.Step.Optio
     }
     options.addOption(bool, "x86_small_masked_set", t.masked_set);
     // True only in a module that links the level objects (Fastmem.configure).
-    options.addOption(bool, "x86_dispatch", dispatch);
+    options.addOption(bool, "x86_dispatch", v.dispatch);
+    // True only in fastmem's own test modules: it enables dispatch.force.
+    options.addOption(bool, "x86_test_hooks", v.test_hooks);
+    // The dispatch symbol names contain it (Fastmem.instance).
+    options.addOption([]const u8, "x86_instance", v.instance);
     return options;
 }
 
@@ -439,7 +500,7 @@ fn codegenProbe(b: *std.Build, fm: *Fastmem, cpu: []const u8) *std.Build.Step.Co
             .target = target,
             .optimize = .ReleaseFast,
             .omit_frame_pointer = true,
-            .imports = &.{.{ .name = "fastmem", .module = fm.module(target) }},
+            .imports = &.{.{ .name = "fastmem", .module = fm.module(target, .public) }},
         }),
     });
 }
@@ -494,6 +555,7 @@ fn addDispatchTests(
     const probe = codegenProbe(b, fm, "x86_64");
     const check = b.addSystemCommand(&.{"python3"});
     check.addFileArg(b.path("src/x86_64/check_dispatch.py"));
+    check.addArg(b.fmt("fastmem_x86_{s}_", .{fm.instance}));
     check.addFileArg(probe.getEmittedBin());
     for (dispatch_levels, fm.levelObjects(target)) |level, object| {
         const comptime_probe = for (codegen_cpus, probes) |cpu, p| {
@@ -513,7 +575,7 @@ fn addDispatchTests(
             .root_source_file = b.path("src/x86_64/dispatch_probe.zig"),
             .target = target,
             .optimize = .ReleaseFast,
-            .imports = &.{.{ .name = "fastmem", .module = fm.module(target) }},
+            .imports = &.{.{ .name = "fastmem", .module = fm.module(target, .public) }},
         }),
     });
     const run_probe = b.addSystemCommand(&.{"python3"});
@@ -522,7 +584,7 @@ fn addDispatchTests(
     run_probe.addFileArg(probe_exe.getEmittedBin());
     step.dependOn(&run_probe.step);
     for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .Debug }) |mode| {
-        const tests_module = fm.module(target);
+        const tests_module = fm.module(target, .test_hooks);
         tests_module.optimize = mode;
         const tests = b.addTest(.{
             .name = b.fmt("dispatch-unit-{s}", .{@tagName(mode)}),
@@ -536,8 +598,48 @@ fn addDispatchTests(
     return step;
 }
 
-fn addExportTests(b: *std.Build, fm: *Fastmem) *std.Build.Step {
+/// The dispatch test hook stays out of the public module, and two package
+/// instances link together (docs/runtime-dispatch.md).
+fn addPackageTests(b: *std.Build, fm: *Fastmem, public: *std.Build.Module) *std.Build.Step {
+    const step = b.step("test-export-packages", "Check the package boundary of the x86 dispatch");
+    const baseline = b.resolveTargetQuery(std.Target.Query.parse(.{
+        .arch_os_abi = "x86_64-linux-gnu",
+        .cpu_features = "x86_64",
+    }) catch unreachable);
+    const Row = struct { name: []const u8, module: *std.Build.Module };
+    for ([_]Row{
+        // The public module itself, for the -Dtarget of this build.
+        .{ .name = "public", .module = public },
+        // The public configuration of a dispatching baseline consumer.
+        .{ .name = "x86_64-dispatch", .module = fm.module(baseline, .public) },
+    }) |row| {
+        const exe = b.addExecutable(.{
+            .name = b.fmt("hooks-{s}", .{row.name}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/export/hooks.zig"),
+                .target = row.module.resolved_target.?,
+                .optimize = .ReleaseFast,
+                .imports = &.{.{ .name = "fastmem", .module = row.module }},
+            }),
+        });
+        exe.expect_errors = .{
+            .contains = "error: fastmem.dispatch.force is a test hook; the public fastmem module does not provide it",
+        };
+        step.dependOn(&exe.step);
+    }
+    const two = b.addSystemCommand(&.{"python3"});
+    two.addFileArg(b.path("src/export/two_packages.py"));
+    two.addArg(b.graph.zig_exe);
+    two.addArg(b.pathFromRoot("."));
+    two.addArg(b.cache_root.join(b.allocator, &.{"fastmem-two-packages"}) catch @panic("OOM"));
+    two.setCwd(b.path("."));
+    step.dependOn(&two.step);
+    return step;
+}
+
+fn addExportTests(b: *std.Build, fm: *Fastmem, public: *std.Build.Module) *std.Build.Step {
     const step = b.step("test-export", "Check opt-in memory symbols in linked ELF binaries");
+    step.dependOn(addPackageTests(b, fm, public));
     step.dependOn(addExportCollisionTests(b, fm));
     step.dependOn(addArmByteTests(b));
     step.dependOn(addGenericSetTests(b, fm));
@@ -686,7 +788,7 @@ fn exportFixture(
     division: bool,
     enabled: bool,
 ) *std.Build.Module {
-    const kernel = fm.module(target);
+    const kernel = fm.module(target, .public);
     const options = b.addOptions();
     options.addOption(bool, "division", division);
     options.addOption(bool, "enabled", enabled);
@@ -724,7 +826,7 @@ fn addExportCollisionTests(b: *std.Build, fm: *Fastmem) *std.Build.Step {
             .arch_os_abi = b.fmt("{s}-linux-gnu", .{arch}),
             .cpu_features = cpu,
         }) catch unreachable);
-        const kernel = fm.module(target);
+        const kernel = fm.module(target, .public);
         const Kind = enum { strong, weak, default, compiler_rt };
         for ([_]Kind{ .strong, .weak, .default, .compiler_rt }) |kind| {
             for ([_][]const u8{ "memcpy", "memmove", "memset" }) |symbol| {
@@ -763,7 +865,7 @@ fn addGenericSetTests(b: *std.Build, fm: *Fastmem) *std.Build.Step {
             .cpu_features = "baseline",
         }) catch unreachable);
         // The generic kernels are the dispatch level `generic` in this build.
-        const kernel = fm.module(target);
+        const kernel = fm.module(target, .public);
         const obj = b.addObject(.{
             .name = b.fmt("generic-set-{s}", .{triple}),
             .root_module = b.createModule(.{

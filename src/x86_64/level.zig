@@ -2,14 +2,16 @@
 //! (docs/runtime-dispatch.md). build.zig compiles this file once per
 //! level, with -Dcpu set to the level name. The object contains the same
 //! kernels as a comptime build for that CPU, under hidden symbol names
-//! that contain the level name.
+//! that contain the package instance id and the level name.
 const std = @import("std");
 const builtin = @import("builtin");
+const options = @import("fastmem_options");
 const move = @import("move.zig");
 const set = @import("set.zig");
 const tuning = @import("tuning.zig");
 
-const prefix = "fastmem_x86_" ++ builtin.cpu.model.name ++ "_";
+// The same names as `kernels` in dispatch.zig: prefix, instance, level.
+const prefix = "fastmem_x86_" ++ options.x86_instance ++ "_" ++ builtin.cpu.model.name ++ "_";
 const kernel_name = std.fmt.comptimePrint("{s}", .{tuning.name});
 
 comptime {

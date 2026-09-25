@@ -12,7 +12,10 @@ import sys
 
 obj = sys.argv[1]
 defined = set(subprocess.check_output(["llvm-nm", "--defined-only", "-j", obj], text=True).split())
-wanted = [s for s in ("fastmem_x86_generic_memset", "generic.memset", "generic.setBytes") if s in defined]
+wanted = [
+    s for s in defined
+    if re.fullmatch(r"fastmem_x86_[0-9a-f]{16}_generic_memset|generic\.memset|generic\.setBytes", s)
+]
 assert wanted, "no generic memset symbol"
 text = subprocess.check_output(
     ["llvm-objdump", "-d", "--no-show-raw-insn", "--disassemble-symbols=" + ",".join(wanted), obj], text=True
