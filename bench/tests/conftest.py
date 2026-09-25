@@ -43,7 +43,7 @@ MEMORY: dict[str, Any] = {
     "region_bytes": 2 << 20,
     "base_align": 1 << 30,
     "src_offset": 0,
-    "dst_offset": 2 << 20,
+    "dst_offset": (2 << 20) + 4096,
     "seq_offset": 4 << 20,
     "hugepage_advice": "SUCCESS",
     "populate": "SUCCESS",

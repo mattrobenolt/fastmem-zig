@@ -213,9 +213,14 @@ default_owner = "agent"
 instance_type = "c7i.xlarge"
 arch = "x86_64"
 zig_target = "x86_64-linux-gnu"
-zig_cpu = "sapphirerapids"
+zig_cpu = "sapphirerapids"   # -Dcpu of the G1-G4 builds
+baseline_cpu = "x86_64_v3"   # -Dcpu of the G6 builds (bench run --cpu baseline)
 # ... one table for each target in the Targets section
 ```
+
+`baseline_cpu` is `x86_64_v3` on the x86 targets and `generic` on the
+aarch64 targets (plan, G6). Without the key, the adapter uses the same
+values from the architecture.
 
 `ec2bench` reads `[project]`, `[fleet]`, and the `instance_type` and
 `arch` fields of `[targets.*]`. The adapter reads the other fields.
@@ -279,7 +284,7 @@ Command: `bench run`.
 
 ```
 bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dist]
-          [--rounds N] [--no-aa] [--up] [--label L]
+          [--rounds N] [--cpu target|baseline] [--no-aa] [--up] [--label L]
           [--filter S] [--impl a,b] [--samples N] [--sample-ms M]
           [--minimum-effect F] [--dist-file PATH]
 ```
@@ -289,6 +294,10 @@ bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dis
   With two or more revisions, the first revision is the baseline.
 - `--target` defaults to all targets with a running instance.
 - `--rounds` defaults to 5.
+- `--cpu target` (the default) builds with `zig_cpu`. `--cpu baseline`
+  builds every revision with `baseline_cpu`, for G6. The manifest records
+  `cpu_mode` and the CPU of each target (`cpus`). Analysis rejects a raw
+  file whose `meta.cpu` differs from that CPU.
 - `--up` launches missing targets first, and measures the targets that
   came up.
 - `--filter`, `--impl`, `--samples`, and `--sample-ms` go to the binary.
@@ -300,7 +309,7 @@ Protocol:
    `git worktree` under `.bench-cache/src/<sha>`. `WORKTREE` uses the
    repository root.
 2. Build for each (revision, target) pair:
-   `zig build install -Dtarget=<zig_target> -Dcpu=<zig_cpu>
+   `zig build install -Dtarget=<zig_target> -Dcpu=<zig_cpu or baseline_cpu>
    -Doptimize=ReleaseFast -Dlink-libc=true -Drev=<label> --prefix <dir>`.
    Cache the output by (source hash, target, cpu). Build the pairs in
    parallel, limited to the number of local CPUs.
@@ -364,7 +373,10 @@ Analysis:
   than the level says. The 5- and 6-round ranges are distribution-free
   intervals for the median.
 - G4's const rule uses the G3 margin: a const size violates only when its
-  whole interval lies above 1 + max(floor, 0.01).
+  whole interval lies above 1 + max(floor, 0.01). The const A/A null
+  reference uses the same rule.
+- G6 uses the G3 rule on the `fastmem_abi/builtin` rows of a baseline
+  build (`--cpu baseline`).
 - A row with fewer than 5 rounds has insufficient evidence
   (`evidence: "insufficient"`). It gets no mark, and its goal components
   are NA.
@@ -392,6 +404,28 @@ Analysis:
   size tiers are 0–16, 17–64, 65–256, 257–1024, 1025–16384, and above
   16384 bytes.
 - `report.md` puts one table for each target and marks significant rows.
+
+Stability (`bench/fastmem_bench/stability.py`):
+
+- The analysis groups the variants by the executable digest of their
+  codegen evidence (`binary_sha256`). Without evidence, the A/A variant
+  joins its baseline. Two revisions that resolve to the same source give
+  one group.
+- A spike is a round median more than 10% above the median of all rounds
+  of its (case, impl) in the group. The definition is the one of
+  "Estimator evidence" below.
+- For each group, `summary.json` (`stability.groups`) has the spike
+  count, the spike rate over all round cells, the count per variant and
+  per process, and the share of the worst process. Spikes that cluster
+  by process give that process a large share.
+- A group with two or more variants also has a null floor: the A/A floor
+  computation on its first two variants. The report gives the median,
+  p90, and maximum over the floor groups.
+- `memory` gives the THP coverage of the schema-v3 arena for each
+  process. A warning names the processes that did not get THP for the
+  whole arena.
+- These numbers describe the measurement. They do not enter a ratio, an
+  interval, a floor, or a goal.
 
 ### Estimator evidence
 
@@ -542,7 +576,7 @@ The maximum group floor stays above 2% at 20 rounds on every target
 
 ## Measurement binary: bench-fastmem
 
-This section defines schema v2.
+This section defines schema v3.
 The implementation is `src/bench_fastmem.zig`.
 The parser is `bench/fastmem_bench/jsonl.py`.
 The native integration tests are `bench/tests/test_binary_v2.py`.
@@ -580,17 +614,16 @@ Empty selections and invalid arguments cause a nonzero exit.
 | `glibc` | The function pointer from `dlopen("libc.so.6")` and `dlsym` |
 | `fastmem_abi` | The public fastmem API in a noinline C-ABI wrapper |
 | `fastmem_inline` | The public fastmem API directly in the timed loop |
-| `builtin_const` | `@memcpy` with a comptime-known length directly in the timed loop |
+| `builtin_const` | `@memcpy`, `@memmove`, or `@memset` with a comptime-known length directly in the timed loop |
 
 The three indirect implementations share one timed loop for each operation.
 A volatile load reads the selected function pointer once before each batch.
 The loop calls that pointer for each operation.
 The const profile compares only `builtin_const` and `fastmem_inline`.
 
-The public API does not yet provide `fastmem.set`.
-Consequently, set cases contain only `builtin` and `glibc` samples.
-The meta field `fastmem_set` records this absence.
-The compile-time declaration check enables both fastmem set paths when that API exists.
+The meta field `fastmem_set` records whether the public API provides `fastmem.set`.
+A compile-time declaration check enables both fastmem set paths when that API exists.
+Without it, set cases contain only `builtin`, `glibc`, and `builtin_const` samples.
 
 At startup, `dlinfo(RTLD_DI_LINKMAP)` identifies the library that `dlopen` returns.
 Each glibc pointer must have the same `dladdr` path and base as that library.
@@ -618,12 +651,13 @@ The operation is `copy`, `move`, or `set`.
 | copy | `aligned`: offsets 0/0, `misaligned`: offsets 1/3, `cross-lane`: offsets `chunk-1`/`chunk/2`, `page-offset`: offsets 0/2048 |
 | move | `disjoint`, plus `fwd-gapN` and `bwd-gapN` for gaps 1, `chunk-1`, and `chunk+1` |
 | set | `aligned`: destination offset 0, `misaligned`: destination offset 3 |
+| all | `const`: offsets 0/0, comptime-known size, separate source and destination regions |
 
 Forward move places the destination below the source.
 Backward move places the destination above the source.
 The requested gap remains fixed even when the size does not exceed it.
 Such small cases do not overlap.
-Disjoint move uses separate mappings.
+Disjoint move uses the separate source and destination regions.
 
 The standard runtime sizes are:
 
@@ -641,19 +675,65 @@ The quick runtime sizes are:
 
 The large runtime sizes are 1, 4, 16, and 64 MiB.
 Large remains a separate suite.
-The const suite uses the `copy/const/<size>` profile at these sizes:
+The const suite uses the `copy/const/<size>`, `move/const/<size>`, and `set/const/<size>` profiles at these sizes:
 
 ```text
 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256
 ```
 
+The const suite contains 39 cases.
 The standard suite also includes all const cases and both synthetic distributions for every operation.
-With the current API, standard contains 448 cases and quick contains 104 cases.
+Standard contains 540 cases and quick contains 120 cases.
 These counts follow the construction in `buildCases` and the native coverage test.
 
-All buffers come from page-aligned anonymous `mmap` mappings sized for the case.
-Fixed mappings include their maximum offset plus one additional byte.
-Distribution mappings include 512 additional bytes for their offsets.
+#### Memory arena (schema v3)
+
+Schema v2 mapped fresh source and destination buffers for each case.
+Physical placement then changed from case to case and from process to process.
+The baseline run showed spikes with more cycles at a constant instruction count (see "Estimator evidence").
+The stats-lane characterization adds that on AMD, 3% to 4% of cells spike, the spikes cluster by process, and they hit the separate-buffer profiles with equal page offsets.
+The mechanism is unverified.
+Placement that changes with each mapping is a candidate cause.
+
+Schema v3 allocates one arena at startup, before any timing:
+
+1. Reserve the arena size plus 1 GiB as `PROT_NONE`.
+   Map the arena at the 1 GiB boundary inside the reservation, and release the rest.
+   The virtual address bits below 30 are then the same in every process.
+2. Apply `MADV_HUGEPAGE` before the first touch.
+3. Pre-fault with `MADV_POPULATE_WRITE`, then write the initial bytes.
+4. Apply `MADV_COLLAPSE` (Linux 6.1) as a synchronous retry when a fault got small pages.
+5. Read `AnonHugePages` over the arena from `/proc/self/smaps`.
+
+The arena has three regions, and every region is a multiple of 2 MiB:
+
+| Region | Offset | Use |
+|---|---|---|
+| source | 0 | Source bytes. Shared (overlapping) moves use only this region. |
+| destination | `region_bytes + 4096` | Destination bytes of separate-buffer cases |
+| sequence | `2 * region_bytes` | The 4096 entries of the distribution being measured |
+
+`region_bytes` is the largest case footprint of the run plus 4096, rounded up to 2 MiB.
+A footprint is the maximum length plus the maximum offset plus one byte, or plus 512 bytes for a distribution.
+Standard and quick use 2 MiB regions, so their cases use the same addresses.
+Every case uses the same region starts plus its profile offsets.
+Before a case, the binary restores the initial bytes of the case footprint.
+Pre-fault writes `0x5a` to the whole arena.
+Source byte `i` is `i * 131 + 17` modulo 256, and destination bytes are `0x5a`.
+
+With THP, the physical address bits below 21 equal the virtual address bits.
+The cache set of every byte is then the same in every round.
+Without THP, the physical pages still stay fixed for all cases of one process.
+The meta record gives the THP state (see the `memory` table below).
+
+The fixed layout removes the variation of virtual placement between processes, and with THP the variation of physical placement inside each 2 MiB page.
+It does not remove a placement effect.
+If the layout is slow for a case, every round of that case is slow, for all implementations.
+The destination starts one page past its 2 MiB boundary.
+Equal profile offsets keep their page offset, which is the subject of the profiles (4K aliasing).
+The two addresses are not congruent modulo 2 MiB, so caches and predictors that index bits 12 to 20 see two different lines.
+Schema v2 mapped the destination after the source. With top-down `mmap`, a small destination was then usually the page below its source (unverified).
+
 The `page-offset` profile separates the source and destination offsets modulo 4096 by 2048 bytes.
 The loop does not mutate source bytes between operations.
 Copy and move read a destination byte after each operation.
@@ -674,8 +754,8 @@ The `ns` field remains a total over `iters` calls, not a per-call value.
 | `dist/mixed` | Log-uniform sizes from 0 through 16384 | 0 through 511 |
 | `dist/file` | Weighted draws from the supplied histogram | 0 through 511 |
 
-Distribution copy uses separate source and destination mappings.
-Distribution move uses independently selected offsets in one shared mapping.
+Distribution copy uses the separate source and destination regions.
+Distribution move uses independently selected offsets in the source region.
 Distribution set ignores the source offset.
 
 The option `--dist-file` requires `--suite dist` and replaces the synthetic distributions.
@@ -723,10 +803,13 @@ Earlier successful samples retain their counts.
 The meta record contains the error and sets `perf.available` to false.
 The consecutive-sample test skips when the host denies access or supplies no PMU runtime.
 
-### JSONL schema, version 2
+### JSONL schema, version 3
 
 Every measurement consists of one meta record, sample records, and one end record.
-The parser rejects schema v1 and files without an end record.
+The parser accepts schema v2 and v3, so that old run directories still analyze.
+Schema v3 adds the meta `memory` object and the `const` profile for move and set.
+A v2 record has no `memory` field, and its const cases are copy cases only.
+The parser rejects schema v1, v2 records with v3 fields, v3 records without `memory`, and files without an end record.
 It also rejects duplicate samples and incomplete per-case implementation sets.
 All record objects reject unknown fields and duplicate JSON keys.
 Integer fields reject floats, strings, and booleans.
@@ -736,7 +819,7 @@ Meta fields:
 
 | Field | Type and meaning |
 |---|---|
-| `type`, `schema` | Literal `"meta"` and integer 2 |
+| `type`, `schema` | Literal `"meta"` and integer 3 (2 for old runs) |
 | `rev`, `zig`, `target`, `cpu`, `optimize` | Build identifiers. Optimize is `"ReleaseFast"`. |
 | `link_libc`, `chunk_bytes` | Literal true and the SIMD chunk size |
 | `suite`, `seed`, `samples`, `sample_ms`, `warmup_ms` | Effective configuration |
@@ -746,7 +829,23 @@ Meta fields:
 | `libc_path`, `libc_base` | The `dlopen` library path and integer base address |
 | `resolution` | Objects for `memcpy`, `memmove`, and `memset` |
 | `codegen` | Binary inspection evidence, or null without `--codegen-file` |
+| `memory` | The arena object (v3). Null in `--list` output. |
 | `perf` | Object with `available`, `events`, and `error` |
+
+The `memory` object has these fields:
+
+| Field | Type and meaning |
+|---|---|
+| `layout` | Literal `"arena"` |
+| `arena_bytes`, `region_bytes`, `base_align` | Arena size, region size, and base alignment (1 GiB) in bytes |
+| `src_offset`, `dst_offset`, `seq_offset` | View offsets: 0, `region_bytes + 4096`, and `2 * region_bytes` |
+| `hugepage_advice`, `populate`, `collapse` | The errno name of `MADV_HUGEPAGE`, `MADV_POPULATE_WRITE`, and `MADV_COLLAPSE`: `SUCCESS` or an error such as `INVAL` or `NOMEM` |
+| `thp_enabled`, `thp_defrag` | The selected value of the sysfs THP policy, for example `madvise`, or null |
+| `thp_pmd_bytes` | `hpage_pmd_size` from sysfs, or null |
+| `anon_huge_bytes_start`, `anon_huge_bytes_end` | `AnonHugePages` over the arena after pre-fault and after the last case, in bytes, or null |
+
+THP backs the whole arena when both huge-page counts equal `arena_bytes`.
+A difference between the two counts shows a collapse by `khugepaged` during the run.
 
 Each resolution object contains `glibc` and `builtin` evidence objects.
 Each evidence object contains these fields:
@@ -802,7 +901,7 @@ The analysis parser does not accept list output as a measurement.
 
 ### Adapter comparisons and goals
 
-The schema-v2 adapter reports these comparisons for each common case:
+The adapter reports these comparisons for each common case:
 
 - `builtin/glibc`: the ecosystem gap.
 - `fastmem_abi/glibc`: the G2 kernel comparison.
@@ -820,7 +919,7 @@ Distribution floors remain per operation and size tier.
 
 Both output files contain a Goals section for each target, revision, and operation.
 The machine representation is `targets.<target>.goals` in `summary.json`.
-Each entry contains `G2`, `G3`, and `G4` objects with PASS, FAIL, NA, or INVALID status.
+Each entry contains `G2`, `G3`, `G4`, and `G6` objects with PASS, FAIL, NA, or INVALID status.
 Missing cases, fewer than five rounds (insufficient evidence), or absent A/A evidence produce NA for the affected component.
 Each component lists the interval levels of its rows in `ci_levels`.
 
@@ -838,10 +937,17 @@ G3 requires the standard runtime cases and both synthetic distributions.
 A case violates G3 only when its whole interval lies above `1 + max(floor, 0.01)`.
 G3 tests hundreds of cases against 1.00, and this margin controls the false violations of a null.
 The evidence contains the worst ratio, the rule, and the violations.
-G4 evaluates `dist/small` and the const timing component independently.
-The const component applies only to copy.
+G4 evaluates `dist/small` and the const timing component independently, for copy, move, and set.
+The const component requires `<op>/const/<size>` for all 13 const sizes.
+Schema-v2 runs have no move or set const cases, so those components are NA.
 Its no-call component is NA: `checked by binary test, P4`.
-A copy timing pass therefore does not imply a complete G4 pass.
+G4 is therefore FAIL or NA for every operation. A timing pass does not imply a G4 pass.
+
+G6 applies the G3 rule to a baseline build (`bench run --cpu baseline`).
+It uses the same cases, A/A floors, margin, and codegen evidence as G3.
+In a baseline build, G2, G3, and G4 keep their evidence with status NA.
+In a target build, G6 is NA.
+The reason field names the CPU mode in both cases.
 
 The goal implementation is `bench/fastmem_bench/goals.py`.
 The goal tests are `bench/tests/test_v2.py`.
@@ -874,10 +980,10 @@ The harness checks raw meta records against that evidence.
 Offline analysis also checks the raw records against the manifest.
 Evidence must remain identical across rounds of one variant.
 
-Any detected delegation marks G2 and G3 INVALID for that target and variant, across all operations.
+Any detected delegation marks G2, G3, and G6 INVALID for that target and variant, across all operations.
 The reason names each symbol, for example `fastmem delegates to memcpy`.
 INVALID takes precedence over incomplete timing evidence and over a favorable ratio.
-No codegen evidence produces NA, never PASS, for G2 and G3.
+No codegen evidence produces NA, never PASS, for G2, G3, and G6.
 The fastmem kernels remain unchanged.
 
 ### Build and libc-probe

@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from fastmem_bench.goals import evaluate
-from fastmem_bench.jsonl import IMPLEMENTATIONS, parse
-from fastmem_bench.stability import memory_summary, memory_warning, stability
+from fastmem_bench.jsonl import IMPLEMENTATIONS, Measurement, parse
+from fastmem_bench.stability import Cells, memory_summary, memory_warning, stability
 
 # The estimator has no random component. The runner still records this value.
 BOOTSTRAP_SEED = 20260923
@@ -204,9 +204,14 @@ def geomean(values: list[float]) -> float:
     return math.exp(statistics.fmean(math.log(value) for value in values))
 
 
+Series = dict[tuple[str, str, str], dict[int, list[float]]]
+
+
 @dataclass
 class Rounds:
-    data: dict[tuple[str, str, str], dict[int, list[float]]]
+    data: Series
+    # Cycles per operation of the samples that the PMU counted for the whole batch.
+    cycles: Series
     details: dict[str, dict[str, Any]]
     warnings: list[str]
     codegen: dict[str, Any]
@@ -215,7 +220,29 @@ class Rounds:
     cpus: set[str]
 
 
-def load_rounds(  # noqa: C901, PLR0912 — validate clusters before case intersection
+def add_samples(  # noqa: PLR0917 — one round's destinations
+    measurement: Measurement,
+    variant: str,
+    index: int,
+    data: Series,
+    cycles: Series,
+    details: dict[str, dict[str, Any]],
+) -> None:
+    for sample in measurement.samples:
+        case = sample["case"]
+        detail = {key: sample[key] for key in ("op", "size", "profile")}
+        detail["chunk_bytes"] = measurement.meta["chunk_bytes"]
+        if case in details and detail != details[case]:
+            raise ValueError(f"Case metadata changed for {case}")
+        details[case] = detail
+        key = (variant, case, sample["impl"])
+        data[key][index].append(sample["ns"] / sample["iters"])
+        # Multiplexed samples have scaled-down counts. Keep only fully counted batches.
+        if sample["cycles"] is not None and sample["time_running"] == sample["time_enabled"]:
+            cycles[key][index].append(sample["cycles"] / sample["iters"])
+
+
+def load_rounds(  # noqa: C901 — validate clusters before case intersection
     raw: Path,
     variants: list[str],
     *,
@@ -223,9 +250,8 @@ def load_rounds(  # noqa: C901, PLR0912 — validate clusters before case inters
     probe: dict[str, Any] | None = None,
     expected_cpu: str | None = None,
 ) -> Rounds:
-    data: dict[tuple[str, str, str], dict[int, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    data: Series = defaultdict(lambda: defaultdict(list))
+    cycles: Series = defaultdict(lambda: defaultdict(list))
     details: dict[str, dict[str, Any]] = {}
     variant_cases: dict[str, set[tuple[str, str]]] = {}
     codegen: dict[str, Any] = {}
@@ -257,16 +283,7 @@ def load_rounds(  # noqa: C901, PLR0912 — validate clusters before case inters
             if variant in variant_cases and cases != variant_cases[variant]:
                 raise ValueError(f"Rounds have different case/implementation sets within {variant}")
             variant_cases[variant] = cases
-            for sample in measurement.samples:
-                case = sample["case"]
-                detail = {key: sample[key] for key in ("op", "size", "profile")}
-                detail["chunk_bytes"] = measurement.meta["chunk_bytes"]
-                if case in details and detail != details[case]:
-                    raise ValueError(f"Case metadata changed for {case}")
-                details[case] = detail
-                data[variant, case, sample["impl"]][int(path.stem[1:])].append(
-                    sample["ns"] / sample["iters"]
-                )
+            add_samples(measurement, variant, int(path.stem[1:]), data, cycles, details)
     common = set.intersection(*variant_cases.values())
     warnings = []
     for variant, cases in variant_cases.items():
@@ -280,9 +297,16 @@ def load_rounds(  # noqa: C901, PLR0912 — validate clusters before case inters
     if not common:
         raise ValueError("Variants have no common case/implementation pairs")
     data = {key: rounds for key, rounds in data.items() if (key[1], key[2]) in common}
+    rounds = len(expected_rounds or ())
+    # A cycles cell needs a counted sample in every round.
+    cycles = {
+        key: value
+        for key, value in cycles.items()
+        if (key[1], key[2]) in common and len(value) == rounds
+    }
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return Rounds(data, details, warnings, codegen, memory, cpus)
+    return Rounds(data, cycles, details, warnings, codegen, memory, cpus)
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -396,8 +420,12 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     result["codegen"] = codegen
     result["cpu"] = {"mode": cpu_mode, "models": sorted(loaded.cpus)}
     result["memory"] = memory
+    cycle_cells: Cells = {
+        key: (round_medians([rounds[index] for index in sorted(rounds)]), [])
+        for key, rounds in sorted(loaded.cycles.items())
+    }
     result["stability"] = stability(
-        cells,
+        {"ns": cells, "cycles": cycle_cells},
         details,
         [*variants, *([aa] if aa else [])],
         codegen,

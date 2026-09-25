@@ -59,9 +59,12 @@ def test_analysis_reports_stability_memory_and_cpu(tmp_path: Path) -> None:
     (group,) = result["stability"]["groups"]
     assert group["variants"] == ["v0", "aa"]
     # Every implementation of the case spikes in round 4 of both processes.
-    assert group["spikes"] == 8
-    assert group["by_process"] == {"aa/r4": 4, "v0/r4": 4}
-    assert group["null_floor"]["groups"] == 1
+    assert group["ns"]["spikes"] == 8
+    assert group["ns"]["by_process"] == {"aa/r4": 4, "v0/r4": 4}
+    assert group["ns"]["null_floor"]["groups"] == 1
+    # The fixture has no perf counts, so the cycles metric has no cells.
+    assert group["cycles"]["round_cells"] == 0
+    assert group["cycles"]["null_floor"] is None
     assert result["memory"]["thp_full_processes"] == 10
     assert result["cpu"] == {"mode": "target", "models": ["sapphirerapids"]}
     with pytest.raises(ValueError, match="not x86_64_v3"):
@@ -119,3 +122,38 @@ def test_report_renders_g6_and_stability(tmp_path: Path) -> None:
     goal = summary["targets"]["intel"]["goals"][0]
     assert goal["G2"]["reason"].startswith("G2-G4 require the bench.toml zig_cpu build")
     assert copy.deepcopy(goal["G6"])["rule"] == "lower > 1 + max(floor, 0.01)"
+
+
+def test_cycles_metric_uses_only_fully_counted_samples(tmp_path: Path) -> None:
+    for variant in ("v0", "aa"):
+        for index in range(5):
+            path = tmp_path / variant / f"r{index}.jsonl"
+            measurement(path)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            records[0]["perf"] = {
+                "available": True,
+                "events": ["cycles", "instructions"],
+                "error": None,
+            }
+            for row in records[1:-1]:
+                # Round 2 of v0 runs at twice the cycles for the same instructions.
+                cycles = 200000 if (variant, index) == ("v0", 2) else 100000
+                row.update(
+                    cycles=cycles,
+                    instructions=50000,
+                    time_enabled=1000,
+                    time_running=1000,
+                )
+            path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    group = analyze(tmp_path, ["v0"], "v0", probe=PROBE)["stability"]["groups"][0]
+    assert group["cycles"]["spikes"] == 4
+    assert group["cycles"]["by_process"] == {"v0/r2": 4}
+    assert group["ns"]["spikes"] == 0
+    # A multiplexed sample leaves the cycles metric, so the round has no cycles cell.
+    path = tmp_path / "aa/r3.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    for row in records[1:-1]:
+        row["time_running"] = 500
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    group = analyze(tmp_path, ["v0"], "v0", probe=PROBE)["stability"]["groups"][0]
+    assert group["cycles"]["round_cells"] == 0

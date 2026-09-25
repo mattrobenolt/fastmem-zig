@@ -140,7 +140,7 @@ def test_schema_versions_reject_mixed_shapes(tmp_path: Path, mutation: str) -> N
     else:
         memory = dict(MEMORY)
         if mutation == "memory-offset":
-            memory["dst_offset"] = 4096
+            memory["dst_offset"] = memory["region_bytes"]
         else:
             memory["anon_huge_bytes_end"] = memory["arena_bytes"] + 1
         meta.update(schema=3, memory=memory)

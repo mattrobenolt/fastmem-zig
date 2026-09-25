@@ -18,6 +18,8 @@ IMPLEMENTATIONS = ("builtin", "glibc", "fastmem_abi", "fastmem_inline", "builtin
 SYMBOLS = ("memcpy", "memmove", "memset")
 SCHEMAS = (2, 3)
 HUGE_PAGE = 2 << 20
+# The destination view starts one page into its region (src/bench_fastmem.zig).
+DST_STAGGER = 4096
 
 
 class Record(BaseModel):
@@ -114,7 +116,8 @@ class Memory(Record):
             raise ValueError("Memory regions must be whole 2 MiB pages")
         if self.base_align & (self.base_align - 1):
             raise ValueError("Memory alignment must be a power of two")
-        if (self.src_offset, self.dst_offset, self.seq_offset) != (0, region, 2 * region):
+        offsets = (self.src_offset, self.dst_offset, self.seq_offset)
+        if offsets != (0, region + DST_STAGGER, 2 * region):
             raise ValueError("Memory regions are not at their fixed offsets")
         tail = self.arena_bytes - self.seq_offset
         if tail <= 0 or tail % HUGE_PAGE:

@@ -50,6 +50,10 @@ const huge_page_bytes = 2 << 20;
 // indexed or hashed by virtual address (L1D way predictors, TLB sets) then see one layout
 // instead of a new ASLR draw per round.
 const arena_align = 1 << 30;
+// The destination starts one page past its region boundary. Equal profile offsets keep
+// their page offset (4K aliasing is the profile's subject), but the addresses stop being
+// congruent modulo 2 MiB: caches and predictors that index above bit 11 see two lines.
+const dst_stagger = 4096;
 // Linux 5.14. std.os.linux.MADV does not define it.
 const madv_populate_write = 23;
 const madv_collapse = 25;
@@ -717,6 +721,7 @@ test "thp policy parsing selects the bracketed value" {
 /// virtual bits: the cache set of every byte is then the same in every round.
 ///
 /// Layout: [src region][dst region][seq region]. Every region is a multiple of 2 MiB.
+/// The destination view starts `dst_stagger` bytes into its region.
 const Memory = struct {
     bytes: []align(page_size_min) u8,
     region_bytes: u64,
@@ -732,7 +737,7 @@ const Memory = struct {
     fn init(arena: Allocator, io: Io, cases: []const Case) !Memory {
         var need: u64 = 1;
         for (cases) |case| need = @max(need, case.footprint());
-        const region_bytes = mem.alignForward(u64, need, huge_page_bytes);
+        const region_bytes = mem.alignForward(u64, need + dst_stagger, huge_page_bytes);
         const bytes = try reserveAligned(2 * region_bytes + seq_bytes);
         errdefer posix.munmap(bytes);
         // The advice must precede the first touch: a fault in an advised range allocates
@@ -740,9 +745,8 @@ const Memory = struct {
         const advice = advise(bytes, linux.MADV.HUGEPAGE);
         const populate = advise(bytes, madv_populate_write);
         // Without MADV_POPULATE_WRITE, these stores fault in every page before timing.
-        fill(bytes, region_bytes, region_bytes);
-        // The sequence region contains synthetic entries, never secrets.
-        @memset(bytes[2 * region_bytes ..], 0);
+        // Each case restores its own footprint later. The bytes are synthetic, never secrets.
+        @memset(bytes, 0x5a);
         // A fault falls back to small pages when no free huge page exists. The collapse
         // retries with synchronous compaction (Linux 6.1). It is a no-op for huge pages.
         const collapse = advise(bytes, madv_collapse);
@@ -769,7 +773,7 @@ const Memory = struct {
         fill(self.bytes, self.region_bytes, len);
         return .{
             .src = self.bytes[0..len],
-            .dst = @alignCast(self.bytes[self.region_bytes..][0..len]),
+            .dst = @alignCast(self.bytes[self.region_bytes + dst_stagger ..][0..len]),
         };
     }
     /// Copies a distribution sequence to the fixed sequence region.
@@ -781,7 +785,7 @@ const Memory = struct {
     // The regions contain synthetic bytes, never secrets.
     fn fill(bytes: []u8, region_bytes: u64, len: u64) void {
         for (bytes[0..len], 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
-        @memset(bytes[region_bytes..][0..len], 0x5a);
+        @memset(bytes[region_bytes + dst_stagger ..][0..len], 0x5a);
     }
     fn advise(bytes: []align(page_size_min) u8, advice: u32) linux.E {
         return linux.errno(linux.madvise(bytes.ptr, bytes.len, advice));
@@ -795,7 +799,7 @@ const Memory = struct {
         return .{
             .arena_bytes = self.bytes.len,
             .region_bytes = self.region_bytes,
-            .dst_offset = self.region_bytes,
+            .dst_offset = self.region_bytes + dst_stagger,
             .seq_offset = 2 * self.region_bytes,
             .hugepage_advice = @tagName(self.advice),
             .populate = @tagName(self.populate),
@@ -927,7 +931,7 @@ test "memory regions sit at fixed offsets from an aligned base" {
     try testing.expect(memory.huge_start != null);
     const views = memory.buffers(cases[1]);
     try testing.expectEqual(memory.bytes.ptr, views.src.ptr);
-    try testing.expectEqual(memory.bytes[huge_page_bytes..].ptr, views.dst.ptr);
+    try testing.expectEqual(memory.bytes[huge_page_bytes + dst_stagger ..].ptr, views.dst.ptr);
     try testing.expectEqual(@as(usize, 65536 + 32769), views.dst.len);
     try testing.expectEqual(@as(u8, 17 +% 131), views.src[1]);
     try testing.expectEqual(@as(u8, 0x5a), views.dst[views.dst.len - 1]);

@@ -296,11 +296,17 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
         },
     )
     for target, result in targets.items():
-        for group, floor in sorted(result.get("noise_floors", {}).items()):
-            click.echo(f"{target} {group}: {floor:.4%}")
-        for group in result.get("stability", {}).get("groups", []):
-            click.echo(f"{target} stability: {stability_line(group)}")
-        for warning in result.get("warnings", []):
-            click.echo(f"{target}: {warning}")
+        echo_result(target, result)
     if any("error" in result for result in targets.values()):
         raise click.ClickException("One or more targets failed analysis. Read summary.json.")
+
+
+def echo_result(target: str, result: dict[str, Any]) -> None:
+    for group, floor in sorted(result.get("noise_floors", {}).items()):
+        click.echo(f"{target} {group}: {floor:.4%}")
+    stability = result.get("stability", {})
+    for group in stability.get("groups", []):
+        for metric in stability["metrics"]:
+            click.echo(f"{target} stability: {stability_line(group, metric)}")
+    for warning in result.get("warnings", []):
+        click.echo(f"{target}: {warning}")

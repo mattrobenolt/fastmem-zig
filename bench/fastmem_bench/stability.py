@@ -51,7 +51,6 @@ def spike_group(cells: Cells, members: list[str]) -> dict[str, Any]:
     spikes = sum(by_variant.values())
     worst = max(by_process.items(), key=lambda item: item[1], default=(None, 0))
     return {
-        "variants": members,
         "round_cells": total,
         "spikes": spikes,
         "spike_rate": spikes / total if total else None,
@@ -98,7 +97,7 @@ def null_floors(
 
 
 def stability(
-    cells: Cells,
+    metrics: dict[str, Cells],
     details: dict[str, dict[str, Any]],
     variants: list[str],
     codegen: dict[str, Any],
@@ -106,14 +105,25 @@ def stability(
     baseline: str,
     aa: str | None,
 ) -> dict[str, Any]:
+    """Spikes and null floors per binary group, for ns and cycles per operation.
+
+    The time includes descheduled periods. The cycles count only the benchmark thread
+    on its core, so spikes in both metrics are in-core effects, such as placement.
+    """
     groups = []
     for members in binary_groups(variants, codegen, baseline, aa):
-        group = spike_group(cells, members)
         evidence = codegen.get(members[0])
-        group["binary_sha256"] = evidence["binary_sha256"] if evidence else None
-        group["null_floor"] = null_floors(cells, details, members)
+        group: dict[str, Any] = {
+            "variants": members,
+            "binary_sha256": evidence["binary_sha256"] if evidence else None,
+        }
+        for metric, cells in metrics.items():
+            group[metric] = {
+                **spike_group(cells, members),
+                "null_floor": null_floors(cells, details, members),
+            }
         groups.append(group)
-    return {"spike_threshold": SPIKE, "groups": groups}
+    return {"spike_threshold": SPIKE, "metrics": list(metrics), "groups": groups}
 
 
 def memory_summary(memory: dict[str, dict[str, Any] | None]) -> dict[str, Any]:

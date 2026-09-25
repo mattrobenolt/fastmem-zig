@@ -195,16 +195,16 @@ def goal_table(goals: list[dict[str, Any]]) -> list[str]:
     return text
 
 
-def stability_line(group: dict[str, Any]) -> str:
-    rate = group["spike_rate"]
-    share = group["worst_process_share"]
+def stability_line(group: dict[str, Any], metric: str) -> str:
+    value = group[metric]
+    rate, share = value["spike_rate"], value["worst_process_share"]
     text = (
-        f"{'+'.join(group['variants'])}: spikes {group['spikes']}/{group['round_cells']}"
+        f"{'+'.join(group['variants'])} {metric}: spikes {value['spikes']}/{value['round_cells']}"
         f" ({'n/a' if rate is None else f'{rate:.2%}'})"
     )
     if share is not None:
-        text += f", worst process {group['worst_process']} {share:.0%}"
-    if floor := group["null_floor"]:
+        text += f", worst process {value['worst_process']} {share:.0%}"
+    if floor := value["null_floor"]:
         text += (
             f", null floor {floor['candidate']}/{floor['reference']}"
             f" median {floor['median']:.2%} p90 {floor['p90']:.2%} max {floor['max']:.2%}"
@@ -223,21 +223,31 @@ def stability_table(result: dict[str, Any]) -> list[str]:
         (
             f"A spike is a round median more than {stability['spike_threshold']:.0%} above the"
             " median of its case and implementation over all variants of one binary."
+            " Cycles count only samples that the PMU counted for the whole batch."
         ),
         "",
-        "| Variants | Spikes | Rate | Worst process | Null floor median / p90 / max |",
-        "|---|---:|---:|---|---|",
+        "| Variants | Metric | Spikes | Rate | Worst process | Null floor median / p90 / max |",
+        "|---|---|---:|---:|---|---|",
     ]
     for group in stability["groups"]:
-        rate, share, floor = group["spike_rate"], group["worst_process_share"], group["null_floor"]
-        cells = [
-            "+".join(group["variants"]),
-            f"{group['spikes']}/{group['round_cells']}",
-            "n/a" if rate is None else f"{rate:.2%}",
-            "-" if share is None else f"{group['worst_process']} {share:.0%}",
-            f"{floor['median']:.2%} / {floor['p90']:.2%} / {floor['max']:.2%}" if floor else "-",
-        ]
-        text.append("| " + " | ".join(cells) + " |")
+        for metric in stability["metrics"]:
+            value = group[metric]
+            rate, share, floor = (
+                value["spike_rate"],
+                value["worst_process_share"],
+                value["null_floor"],
+            )
+            cells = [
+                "+".join(group["variants"]),
+                metric,
+                f"{value['spikes']}/{value['round_cells']}",
+                "n/a" if rate is None else f"{rate:.2%}",
+                "-" if share is None else f"{value['worst_process']} {share:.0%}",
+                f"{floor['median']:.2%} / {floor['p90']:.2%} / {floor['max']:.2%}"
+                if floor
+                else "-",
+            ]
+            text.append("| " + " | ".join(cells) + " |")
     if memory and memory["arena_processes"]:
         minimum = memory["thp_coverage_min"]
         text += [
