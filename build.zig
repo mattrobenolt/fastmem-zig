@@ -13,6 +13,8 @@ fn resolveX86Variant(cpu: []const u8, variant: X86Variant) X86Variant {
         .auto => {},
         else => return variant,
     }
+    // p3-x86d fleet A/B (docs/results/p3-x86d.md): straight_1k on Intel.
+    if (intel) return .straight_1k;
     return if (std.mem.eql(u8, cpu, "znver4")) .tiered else .compact;
 }
 
@@ -37,7 +39,7 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .straight_1k;
+    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
     const x86_options = tuningOptions(b, x86_variant);
     mod.addOptions("fastmem_options", x86_options);
 

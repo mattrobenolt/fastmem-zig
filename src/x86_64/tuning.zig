@@ -61,7 +61,15 @@ pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
 // Model gates also apply to explicit experiments. Other CPUs retain their defaults.
 // Keep the resolver in build.zig consistent with this table.
-const model_variant = if (builtin.cpu.model == &cpu.znver4) .tiered else .compact;
+// p3-x86d fleet A/B (docs/results/p3-x86d.md): straight_1k on SPR and GNR.
+const intel_model = builtin.cpu.model == &cpu.graniterapids or
+    builtin.cpu.model == &cpu.sapphirerapids;
+const model_variant = if (builtin.cpu.model == &cpu.znver4)
+    .tiered
+else if (intel_model)
+    .straight_1k
+else
+    .compact;
 pub const variant = switch (options.x86_variant) {
     .auto => model_variant,
     .medium_first, .ymm_medium => if (builtin.cpu.model == &cpu.graniterapids)
