@@ -7,13 +7,17 @@
 //! The pointers start at resolver functions, like a lazy PLT entry. The
 //! first call through any pointer selects the level, stores all three
 //! pointers, and tail-calls the selected kernel. Every later call loads
-//! the pointer and makes one indirect jump. There is no global constructor.
+//! the pointer and makes one indirect jump. The C-ABI entries handle sizes
+//! up to 128 bytes themselves and never read the pointers for them. There
+//! is no global constructor.
 //! Concurrent first calls store the same values, so the race is benign; the
 //! atomics only make it defined.
 const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("fastmem_options");
 const cpuid = @import("cpuid.zig");
+const compact = @import("compact.zig");
+const ops = @import("ops.zig");
 const generic = @import("../generic.zig");
 
 pub const Level = cpuid.Level;
@@ -94,22 +98,96 @@ comptime {
     }
 }
 
-/// The C-ABI entries: a pointer load and an indirect jump. LLVM 21 does
-/// not fold the load into `jmp *mem` (src/x86_64/check_dispatch.py pins
-/// the two instructions).
+/// The C-ABI entries. Sizes up to `small_max` never touch the dispatcher:
+/// they use the loop-free classes below, compiled for the consumer CPU
+/// (SSE2 on baseline) and the same for every level. Larger sizes load the
+/// pointer and make one indirect jump. The first large call resolves.
+pub const small_max = 128;
+
 pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n <= small_max) {
+        copySmall(dest, src, n);
+        return dest;
+    }
     return @call(tail, copyPointer(), .{ dest, src, n });
 }
 
 pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n <= small_max) {
+        copySmall(dest, src, n);
+        return dest;
+    }
     return @call(tail, movePointer(), .{ dest, src, n });
 }
 
 pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n <= small_max) {
+        setSmall(dest, @truncate(@as(c_uint, @bitCast(c))), n);
+        return dest;
+    }
     return @call(tail, setPointer(), .{ dest, c, n });
+}
+
+const V16 = @Vector(16, u8); // ziglint-ignore: Z006
+
+/// 0 to 128 bytes. Every class loads all its bytes before its first store,
+/// so memmove uses it too. The classes from compact.zig (compiler-rt) keep
+/// the 0-16 byte path at two compares.
+inline fn copySmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) void {
+    if (n < 16) {
+        if (n >= 4) return compact.quad(u32, @ptrCast(dest.?), @ptrCast(src.?), n);
+        if (n != 0) compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
+        return;
+    }
+    const d: [*]u8 = @ptrCast(dest.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n < 64) return compact.quad(V16, d, s, n);
+    // 64 to 128: four vectors from each end.
+    var head: [4]V16 = undefined;
+    var tail_v: [4]V16 = undefined;
+    inline for (0..4) |i| {
+        head[i] = ops.load(V16, s + 16 * i);
+        tail_v[i] = ops.load(V16, s + n - 64 + 16 * i);
+    }
+    inline for (0..4) |i| {
+        ops.store(V16, d + 16 * i, head[i]);
+        ops.store(V16, d + n - 64 + 16 * i, tail_v[i]);
+    }
+}
+
+/// 0 to 128 bytes with overlapping stores, in the same classes as copySmall.
+inline fn setSmall(dest: ?*anyopaque, value: u8, n: usize) void {
+    if (n < 16) {
+        if (n >= 4) return quadStore(u32, @ptrCast(dest.?), @as(u32, value) * 0x01010101, n);
+        if (n != 0) {
+            const d: [*]u8 = @ptrCast(dest.?);
+            d[0] = value;
+            d[n / 2] = value;
+            d[n - 1] = value;
+        }
+        return;
+    }
+    const d: [*]u8 = @ptrCast(dest.?);
+    const v: V16 = @splat(value);
+    if (n < 64) return quadStore(V16, d, v, n);
+    inline for (0..4) |i| {
+        ops.store(V16, d + 16 * i, v);
+        ops.store(V16, d + n - 64 + 16 * i, v);
+    }
+}
+
+/// The store half of compact.quad. The caller guarantees
+/// sizeof(T) <= n < 4 * sizeof(T).
+inline fn quadStore(comptime T: type, d: [*]u8, v: T, n: usize) void {
+    const step = (n & (2 * @sizeOf(T))) / 2;
+    const last = n - @sizeOf(T);
+    ops.store(T, d, v);
+    ops.store(T, d + step, v);
+    ops.store(T, d + last - step, v);
+    ops.store(T, d + last, v);
 }
 
 /// The large paths of the inline layer call the pointers directly, with
@@ -126,20 +204,27 @@ pub inline fn setPointer() SetFn {
     return @atomicLoad(SetFn, &set_fn, .monotonic);
 }
 
+/// A test build (`x86_resolver_trap`) traps in every resolver. Its small
+/// sizes must still run: they never consult the dispatcher.
+const resolver_trap = @hasDecl(options, "x86_resolver_trap") and options.x86_resolver_trap;
+
 fn resolveCopy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime resolver_trap) @trap();
     install(detect().select());
     return @call(tail, copyPointer(), .{ dest, src, n });
 }
 
 fn resolveMove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime resolver_trap) @trap();
     install(detect().select());
     return @call(tail, movePointer(), .{ dest, src, n });
 }
 
 fn resolveSet(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime resolver_trap) @trap();
     install(detect().select());
     return @call(tail, setPointer(), .{ dest, c, n });
 }

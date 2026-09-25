@@ -8,7 +8,7 @@
 
 Each definition has the address of the corresponding `fastmem.abi` entry.
 The export adds no wrapper or trampoline.
-In an x86_64 dispatch build, the `fastmem.abi` entries are the dispatch stubs (`docs/runtime-dispatch.md`).
+In an x86_64 dispatch build, the `fastmem.abi` entries handle 0 to 128 bytes themselves and dispatch larger sizes (`docs/runtime-dispatch.md`).
 An import alone does not replace these symbols.
 
 ## Enable the exports
@@ -58,7 +58,7 @@ Compiler-rt inside the same Zig compilation receives a collision error.
 The exported kernel bodies contain no branch to any memory entry.
 The binary tests follow every direct branch target, including common helpers and standard-library functions.
 They exclude only named panic handlers for invalid inputs.
-The dispatch stubs jump through pointers, so the audit also starts at every `fastmem_x86_*` function.
+The dispatch entries jump through pointers above 128 bytes, so the audit also starts at every `fastmem_x86_*` function.
 An unresolved direct target fails the audit.
 A compiled negative fixture proves that the audit detects recursion through `std.mem.replace`.
 
@@ -82,7 +82,7 @@ Other object formats and non-LLVM backends receive a compile error.
 
 The target CPU selects the kernel at compile time, with one exception.
 An x86_64 Linux build without AVX2 selects its kernels at run time (`docs/runtime-dispatch.md`).
-There the exported symbols are the dispatch stubs: a pointer load and an indirect jump.
+There the exported symbols handle 0 to 128 bytes inline. Larger sizes make a pointer load and an indirect jump.
 The executable must run on a CPU that supports its target features.
 
 Small or constant-size builtins can remain inline.

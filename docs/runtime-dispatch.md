@@ -111,7 +111,7 @@ Thus a module without the objects never references their symbols.
 `src/x86_64/dispatch.zig` holds one function pointer for each operation: copy, move, and set.
 Each pointer starts at a resolver function, as a lazy PLT entry does.
 
-1. The first call through any pointer reads CPUID and XCR0.
+1. The first call through any pointer reads CPUID and XCR0. Only a size above 128 bytes reaches a pointer.
 2. The resolver selects the level and stores all three pointers.
 3. The resolver tail-calls the kernel of the selected level.
 
@@ -121,16 +121,32 @@ Two threads can resolve at the same time.
 They store the same values, so the race is benign.
 The loads and stores are monotonic atomics, which make the race defined.
 
-The C-ABI entries `abi.memcpy`, `abi.memmove`, and `abi.memset` are the stubs.
-`exportSymbols()` exports the stubs as `memcpy`, `memmove`, and `memset`.
-Each stub is two instructions:
+`exportSymbols()` exports the C-ABI entries `abi.memcpy`, `abi.memmove`, and `abi.memset` as `memcpy`, `memmove`, and `memset`.
+Each entry handles 0 to 128 bytes itself and never reads a pointer for these sizes.
+The small classes compile in the fastmem module for the consumer CPU: SSE2 on baseline.
+Thus they are the same code for every level.
+
+| Size | Class | Instructions to `ret` (copy / set) |
+|---|---|---|
+| 0 | none | 10 / 10 |
+| 1 to 3 | three bytes (`compact.bytes`) | 18 / 15 |
+| 4 to 15 | four 4-byte moves (`compact.quad`) | 21 / 20 |
+| 16 to 63 | four 16-byte moves (`compact.quad`) | 21 / 24 |
+| 64 to 128 | eight 16-byte moves | 24 / 21 |
+
+Copy and move share the classes: every class loads all its bytes before its first store.
+A size above 128 bytes costs two compares, the pointer load, and an indirect jump:
 
 ```text
-movq   copy_fn(%rip), %rax
-jmpq   *%rax
+cmpq   $0x80, %rdx
+ja     large
+...
+large: movq   copy_fn(%rip), %rax
+       jmpq   *%rax
 ```
 
-A glibc PLT entry is one instruction (`jmp *GOT(%rip)`).
+The first fleet version jumped through the pointer at every size.
+The G6 run 20260925T184717Z-p7-dispatch-g6 measured that at 0 to 16 bytes: copy against glibc went from 0.91 to 1.34 on c7i and from 0.85 to 1.53 on c8i.
 LLVM 21 does not fold the load into the jump (see "Zig 0.16 limitations").
 
 The x86 `memcpy` is the memmove kernel, as in the comptime builds.
@@ -182,15 +198,26 @@ error: fastmem.dispatch.force is a test hook; the public fastmem module does not
 That step does these checks:
 
 1. `src/x86_64/check_dispatch.py` inspects the baseline codegen probe.
-   It checks the two-instruction stubs and the pointer of each operation.
+   It follows each C-ABI entry with every size from 0 to 33 and the class edges up to 128.
+   Each such path must return without a pointer read, a symbol reference, an indirect branch, or an AVX instruction.
+   Sizes 129, 4096, and 64 MiB must end in the indirect jump through the pointer of the operation.
    It checks that fixed sizes 1 to 128 make no call and that 129 to 256 use the pointer.
    It checks that every `fastmem_x86_*` symbol is GLOBAL HIDDEN.
 2. The same script compares each level object with the comptime codegen probe of the same CPU.
    The kernel functions and every function that they branch to must be instruction-identical.
    A negative check proves that two different levels differ.
+   A table of the REP and NT use of each level, stated independently of `tuning.zig`, must match the large paths.
+   No level uses REP for a forward overlap: `rep_fwd_gap_min` is null in every row.
 3. `src/x86_64/run_dispatch.py` runs the unit tests in ReleaseFast and Debug under seven qemu CPU models.
    The unit tests force every level that the CPU supports.
 4. The same script runs `dispatch-probe` under the seven models and checks the selected level.
+5. A resolver-trap build (`x86_resolver_trap`, `src/x86_64/dispatch_small.zig`) executes `ud2` in every resolver.
+   Under qemu `max` and `Westmere`, it copies, moves, and fills 0 to 128 bytes at three offsets through the C-ABI entries and the inline layer, and both overlap directions through `memmove`.
+   Then it prints "small ok", and its first 129-byte call must die with SIGILL.
+   The fixture does not call `exportSymbols()`: before `main`, the Zig start code zeroes the TLS area with a memset above 128 bytes, which traps.
+   The exported symbols have the addresses of the C-ABI entries (`src/export/check.py`).
+6. The unit tests move 12 MiB + 4 KiB with a 4113-byte gap in both directions at every supported level.
+   The size is above the AMD NT threshold and the Intel REP threshold.
 
 The export matrix adds an `x86_64-dispatch` row: baseline x86_64 in every link mode.
 The collision tests add a baseline x86_64 row.
@@ -219,6 +246,22 @@ The collision tests add a baseline x86_64 row.
 - `report.md` prints the dispatch state of each variant.
 - `bench test` fails the baseline variant when the guard summary names a different level.
 - `bench.toml` keeps `baseline_cpu = "x86_64"` on the x86 targets.
+
+## Large forward overlaps on c8a
+
+The large run 20260925T194532Z-p7-dispatch-large measured `move/fwd-gap{1,15,17}/67108864` at 1.57 to 1.61 against compiler-rt on c8a.
+`fwd-gap4096` was 1.39 and `fwd-half` was 1.26 at the same size.
+The same rows at 16 MiB, and all rows on c7a, c7i, and c8i, are at or below 1.03.
+
+The dispatch does not cause it:
+
+- In the fleet binary, `rep movsb` occurs only in the `sapphirerapids` and `graniterapids` move kernels.
+- The `znver5` level `move.largeKernel` has 232 instructions. They are identical to `x86_64.move.largeKernel` of a `-Dcpu=znver5` build of the same tree.
+- `rep_fwd_gap_min` is null in every row of `tuning.zig`, and `rep_movsb_min` is null on AMD.
+- A forward overlap takes the `forward` vector loop in both builds.
+
+No large-suite run of a `-Dcpu=znver5` build exists. Thus the comptime kernel has the same unmeasured cost.
+The fix belongs to the x86 kernel lane. "Fleet commands" gives the target-CPU run that confirms it.
 
 ## Zig 0.16 limitations
 
@@ -252,6 +295,9 @@ The first table is the state after the review fixes, merged with main 8d43448 (`
 
 | Check | Result |
 |---|---|
+| `zig build test test-dispatch test-export codegen-x86`, after the small-size fix | 348 of 348 steps, 36 of 36 unit tests |
+| Resolver-trap build under qemu `max` and `Westmere` | 0 to 128 B pass, 129 B traps |
+| Guard suite, baseline musl, after the small-size fix | `x86_64_v3` and `generic`: 28,047,836 cases each, pass |
 | `zig build test` | 318 of 318 steps, 36 of 36 unit tests |
 | `bench-fastmem` `.text`, main 8d43448 and P7, `-Drev=cmp` | identical for sapphirerapids, graniterapids, znver4, znver5, and x86_64_v3 |
 | Codegen probe `.text`, main 8d43448 and P7 | identical for the same five CPUs |
@@ -314,7 +360,14 @@ just bench-run --rev 8d43448 --rev WORKTREE --cpu baseline --target c7i --target
 just bench-run --rev WORKTREE --cpu baseline --target c7i --target c8i --target c7a --target c8a --suite large --rounds 5 --label p7-dispatch-large
 ```
 
-4. Read the results.
+4. Measure the c8a forward overlaps with the comptime `znver5` kernel (`--cpu target`, the default).
+   Equal ratios confirm that the cost is in the kernel, not in the dispatch.
+
+```sh
+just bench-run --rev WORKTREE --target c8a --suite large --filter move/fwd --rounds 5 --label c8a-fwd-comptime
+```
+
+5. Read the results.
 
 ```sh
 just b analyze <run-dir>

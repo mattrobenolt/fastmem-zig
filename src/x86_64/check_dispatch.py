@@ -3,7 +3,9 @@
 Arguments: the symbol prefix (fastmem_x86_<instance>_), the baseline codegen
 probe object, then one triple per level: LEVEL LEVEL_OBJECT COMPTIME_PROBE_OBJECT.
 
-1. Each C-ABI entry is the stub: one pointer load and one indirect jump.
+1. Each C-ABI entry handles 0 to 128 bytes itself: every such size returns
+   without a pointer read, a symbol reference, or an AVX instruction. Larger
+   sizes load the pointer of the operation and jump through it.
 2. The inline classes stay inline up to 128 bytes; larger sizes jump or call
    through the pointer of the same operation.
 3. Every level, resolver, and generic entry is a GLOBAL HIDDEN function whose
@@ -109,6 +111,54 @@ def transfers(obj, code):
     return indirect, direct
 
 
+SMALL_SIZES = (*range(0, 34), 47, 48, 63, 64, 65, 95, 127, 128)
+
+
+def trace(obj, name, n):
+    """Follow `name` with RDX = n and unknown pointers, to ret or an indirect jump."""
+    code = obj.body(name)
+    order = [a for a, t in code if not t.startswith("R_X86_64")]
+    at = {a: t for a, t in code if not t.startswith("R_X86_64")}
+    following = {a: b for a, b in zip(order, order[1:])}
+    # A relocation belongs to the instruction that contains its offset.
+    relocs = {}
+    for a, t in code:
+        if t.startswith("R_X86_64"):
+            relocs.setdefault(max(i for i in order if i <= a), []).append(t)
+    pc, flags, visited = order[0], None, []
+    for _ in range(200):
+        insn = at[pc]
+        visited.append(insn)
+        visited.extend(relocs.get(pc, []))
+        nxt = following.get(pc)
+        op = insn.split()[0]
+        if op.startswith("ret"):
+            return visited, "ret"
+        if re.fullmatch(r"jmpq?\s+\*%r\w+", insn):
+            return visited, "indirect"
+        cmp = re.fullmatch(r"cmpq\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
+        if cmp:
+            flags = (n == int(cmp[1], 0), n < int(cmp[1], 0))
+        elif insn == "testq %rdx, %rdx":
+            flags = (n == 0, False)
+        elif op.startswith("j"):
+            target = int(re.search(r"\b(?:0x)?([0-9a-f]+) <", insn)[1], 16)
+            if op != "jmp":
+                require(flags is not None, f"{name}/{n}: unknown flags at {insn}")
+                equal, below = flags
+                take = {"je": equal, "jne": not equal, "jb": below, "jae": not below,
+                        "jbe": below or equal, "ja": not below and not equal}.get(op)
+                require(take is not None, f"{name}/{n}: unsupported branch {insn}")
+            if op == "jmp" or take:
+                require(target in at, f"{name}/{n} leaves the entry: {insn}")
+                pc = target
+                continue
+        elif re.match(r"\w+\s+.*%rdx$", insn) and not op.startswith(("mov", "cmp", "test")):
+            flags = None  # RDX changed.
+        pc = nxt
+    raise SystemExit(f"x86_64 dispatch: {name}/{n} did not terminate")
+
+
 def check_probe(obj):
     evidence = {}
     dis = run("llvm-objdump", "-dr", "--no-show-raw-insn", obj.path)
@@ -117,15 +167,25 @@ def check_probe(obj):
         "memory symbol reference",
     )
     for op, pointer in (("memcpy", "copy_fn"), ("memmove", "move_fn"), ("memset", "set_fn")):
-        stub = f"x86_64.dispatch.{op}"
-        code = obj.body(stub)
-        text = [t for t in instructions(code) if not t.startswith("nop")]
-        require(len(text) == 2, f"{stub} is not two instructions: {text}")
-        indirect, direct = transfers(obj, code)
-        require(indirect == [f"x86_64.dispatch.{pointer}"] and not direct, f"{stub} does not jump through {pointer}")
+        entry = f"x86_64.dispatch.{op}"
         abi = {"memcpy": "copy", "memmove": "move", "memset": "set"}[op]
-        require(obj.functions[f"probe_abi_{abi}"][0] == obj.functions[stub][0], f"abi.{op} is not the stub")
-        evidence[op] = {"instructions": text, "bytes": obj.functions[stub][1]}
+        require(obj.functions[f"probe_abi_{abi}"][0] == obj.functions[entry][0], f"abi.{op} is not the entry")
+        paths = {}
+        for n in SMALL_SIZES:
+            code, end = trace(obj, entry, n)
+            text = [t for t in code if not t.startswith("R_X86_64")]
+            require(end == "ret", f"{entry}/{n} does not return in the entry: {end}")
+            require(not any(r.startswith("R_X86_64") for r in code), f"{entry}/{n} reads a pointer or a symbol")
+            require(not any(re.match(r"(call|jmp)q?\s+\*", t) for t in text), f"{entry}/{n} branches indirectly")
+            require("%ymm" not in " ".join(text) and "%zmm" not in " ".join(text), f"{entry}/{n} uses AVX")
+            paths[n] = len(text)
+        for n in (129, 4096, 1 << 26):
+            code, end = trace(obj, entry, n)
+            indirect, direct = transfers(obj, [(0, t) for t in code])
+            require(end == "indirect" and indirect == [f"x86_64.dispatch.{pointer}"] and not direct,
+                    f"{entry}/{n} does not jump through {pointer}: {end} {indirect}")
+            paths[n] = len([t for t in code if not t.startswith("R_X86_64")])
+        evidence[op] = {"instructions_by_size": paths}
     for op, pointer in (("copy", "copy_fn"), ("move", "move_fn"), ("set", "set_fn")):
         for n in range(1, FIXED_MAX + 1):
             code = obj.body(f"probe_{op}_{n}")
@@ -186,6 +246,18 @@ def normalized(obj, level, entry):
 
 LEVELS = []
 PREFIX = ""
+# REP and NT use per level (src/x86_64/tuning.zig and src/x86_64/README.md).
+_INTEL = {"move": {"rep": True, "nt": True}, "set": {"rep": True, "nt": True}}
+_AMD = {"move": {"rep": False, "nt": True}, "set": {"rep": False, "nt": False}}
+_NONE = {"move": {"rep": False, "nt": False}, "set": {"rep": False, "nt": False}}
+POLICY = {
+    "sapphirerapids": _INTEL,
+    "graniterapids": _INTEL,
+    "znver4": _AMD,
+    "znver5": _AMD,
+    "x86_64_v3": _NONE,
+    "x86_64_v4": _NONE,
+}
 
 
 def main():
@@ -208,6 +280,14 @@ def main():
             for key in got:
                 require(got[key] == want[key], f"{level} {key}: the level object differs from the -Dcpu={level} build")
             counts[op] = {key: len(lines) for key, lines in sorted(got.items())}
+            # The large policy of tuning.zig, stated independently. No level
+            # uses REP for a forward overlap: rep_fwd_gap_min is null in
+            # every row, so the REP branch requires a disjoint source.
+            text = "\n".join(line for lines in got.values() for line in lines)
+            rep = "movsb" if op == "move" else "stosb"
+            policy = {"rep": f"rep {rep}" in re.sub(r"\s+", " ", text), "nt": "vmovntdq" in text}
+            require(policy == POLICY[level][op], f"{level} {op} large policy {policy} != {POLICY[level][op]}")
+            counts[op]["policy"] = policy
         evidence["levels"][level] = counts
     # The comparison is sensitive: two different levels must differ.
     if len(triples) >= 6:

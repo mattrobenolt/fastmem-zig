@@ -1,6 +1,7 @@
 //! Run-time dispatch checks. Each test runs every level that this CPU
 //! supports (under qemu-x86_64: generic and x86_64_v3).
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const fastmem = @import("../root.zig");
 const dispatch = fastmem.dispatch;
@@ -120,4 +121,34 @@ test "dispatch: the detected level is supported and names its kernel" {
     try dispatch.force(.generic);
     try testing.expectEqualStrings("zig-simd", dispatch.kernelName().?);
     try dispatch.force(detected);
+}
+
+test "dispatch: large forward and backward overlaps at every supported level" {
+    // Above the AMD NT threshold (0xc00001) and the Intel REP threshold, below
+    // the Intel NT thresholds: every large branch of every level applies.
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+    const n: usize = 0xc00001 + 4097;
+    const gap: usize = 4096 + 17;
+    const buffer = try testing.allocator.alloc(u8, n + gap);
+    defer testing.allocator.free(buffer);
+    const want = try testing.allocator.alloc(u8, n + gap);
+    defer testing.allocator.free(want);
+    const Case = struct {
+        var buf: []u8 = undefined;
+        var ref: []u8 = undefined;
+        fn run() !void {
+            for ([_]bool{ false, true }) |backward| {
+                const source: usize = if (backward) 0 else gap;
+                const dest: usize = if (backward) gap else 0;
+                pattern(buf, 3);
+                @memcpy(ref, buf);
+                @memmove(ref[dest..][0..n], ref[source..][0..n]);
+                _ = fastmem.abi.memmove(buf[dest..].ptr, buf[source..].ptr, n);
+                try testing.expect(std.mem.eql(u8, ref, buf));
+            }
+        }
+    };
+    Case.buf = buffer;
+    Case.ref = want;
+    try testing.expect(try eachLevel(Case.run) >= 1);
 }

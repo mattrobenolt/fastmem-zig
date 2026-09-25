@@ -38,6 +38,7 @@ const Fastmem = struct {
     dispatch: bool,
     /// Unique per package instance: see `instanceId`.
     instance: []const u8,
+    tuning: Tuning,
     /// Level objects per OS and ABI.
     levels: std.StringHashMapUnmanaged([]const *std.Build.Step.Compile) = .empty,
 
@@ -51,12 +52,14 @@ const Fastmem = struct {
             .options = undefined,
             .dispatch = dispatch,
             .instance = instance,
+            .tuning = tuning,
         };
         for (0..2) |d| for (std.enums.values(Access)) |access| {
             fm.options[d][@intFromEnum(access)] = tuningOptions(b, tuning, .{
                 .dispatch = d == 1,
                 .test_hooks = access == .test_hooks,
                 .instance = instance,
+                .resolver_trap = false,
             });
         };
         return fm;
@@ -451,7 +454,13 @@ fn readTuning(b: *std.Build, variant: X86Variant, experiment: X86Experiment) Tun
     return t;
 }
 
-const Variant = struct { dispatch: bool, test_hooks: bool, instance: []const u8 };
+const Variant = struct {
+    dispatch: bool,
+    test_hooks: bool,
+    instance: []const u8,
+    /// Only the resolver-trap fixture of test-dispatch sets it.
+    resolver_trap: bool,
+};
 
 fn tuningOptions(b: *std.Build, t: Tuning, v: Variant) *std.Build.Step.Options {
     const options = b.addOptions();
@@ -473,6 +482,8 @@ fn tuningOptions(b: *std.Build, t: Tuning, v: Variant) *std.Build.Step.Options {
     options.addOption(bool, "x86_test_hooks", v.test_hooks);
     // The dispatch symbol names contain it (Fastmem.instance).
     options.addOption([]const u8, "x86_instance", v.instance);
+    // True only in the resolver-trap fixture: every resolver executes ud2.
+    options.addOption(bool, "x86_resolver_trap", v.resolver_trap);
     return options;
 }
 
@@ -583,6 +594,41 @@ fn addDispatchTests(
     run_probe.addArg("--probe");
     run_probe.addFileArg(probe_exe.getEmittedBin());
     step.dependOn(&run_probe.step);
+
+    // Sizes up to 128 never consult the dispatcher: a build whose resolvers
+    // trap copies, moves, and fills 0 to 128 bytes on every path, then
+    // traps at the first 129-byte call. A static musl binary runs under qemu.
+    const musl = b.resolveTargetQuery(std.Target.Query.parse(.{
+        .arch_os_abi = "x86_64-linux-musl",
+        .cpu_features = "x86_64",
+    }) catch unreachable);
+    const trap_module = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = musl,
+        .no_builtin = true,
+        .omit_frame_pointer = true,
+    });
+    trap_module.addOptions("fastmem_options", tuningOptions(b, fm.tuning, .{
+        .dispatch = true,
+        .test_hooks = false,
+        .instance = fm.instance,
+        .resolver_trap = true,
+    }));
+    for (fm.levelObjects(musl)) |obj| trap_module.addObject(obj);
+    const trap_exe = b.addExecutable(.{
+        .name = "dispatch-small-trap",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/x86_64/dispatch_small.zig"),
+            .target = musl,
+            .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "fastmem", .module = trap_module }},
+        }),
+    });
+    const run_trap = b.addSystemCommand(&.{"python3"});
+    run_trap.addFileArg(b.path("src/x86_64/run_dispatch.py"));
+    run_trap.addArg("--resolver-trap");
+    run_trap.addFileArg(trap_exe.getEmittedBin());
+    step.dependOn(&run_trap.step);
     for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .Debug }) |mode| {
         const tests_module = fm.module(target, .test_hooks);
         tests_module.optimize = mode;

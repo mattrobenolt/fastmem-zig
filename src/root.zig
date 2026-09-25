@@ -87,6 +87,8 @@ pub const impl = .{
 /// return null or error.Unsupported.
 pub const dispatch = struct {
     pub const enabled = on_dispatch;
+    /// Sizes up to this bound never consult the dispatcher, on any path.
+    pub const small_max = x86_dispatch.small_max;
     pub const Level = x86_dispatch.Level;
     pub const Info = x86_dispatch.Info;
 
@@ -124,7 +126,7 @@ pub const dispatch = struct {
 /// the x86 inline ladder (x86_64/move.zig and set.zig `small`), compiled for
 /// the target CPU: SSE2 on baseline. 128 is the inline limit of the
 /// x86_64_v3 comptime build. Larger sizes call the dispatched kernel.
-const dispatch_inline_max = 128;
+const dispatch_inline_max = x86_dispatch.small_max;
 
 test {
     _ = @import("tests/fuzz.zig");
@@ -327,7 +329,8 @@ pub fn exportSymbols() void {
 /// C-ABI entry points with the libc signatures, each returning dest.
 /// The entries receive libc names only after exportSymbols. The benchmark
 /// measures these as fastmem_abi. Dedicated kernels handle aarch64 and AVX2.
-/// x86_64 Linux builds without AVX2 get the runtime-dispatch stubs
+/// x86_64 Linux builds without AVX2 get the runtime-dispatch entries: 0 to
+/// 128 bytes inline, larger sizes through the dispatcher
 /// (docs/runtime-dispatch.md). Other targets use generic Zig wrappers.
 pub const abi = struct {
     comptime {
