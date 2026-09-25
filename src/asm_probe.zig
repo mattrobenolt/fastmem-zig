@@ -8,26 +8,26 @@
 
 const fastmem = @import("fastmem");
 
-export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn fastmem_copy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     fastmem.copy(u8, dst[0..len], src[0..len]);
 }
 
-export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn fastmem_move(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     fastmem.move(u8, dst[0..len], src[0..len]);
 }
 
-export fn fastmem_set(dst: [*]u8, value: u8, len: usize) void {
+export fn fastmem_set(dst: [*]u8, value: u8, len: usize) void { // ziglint-ignore: Z001
     fastmem.set(u8, dst[0..len], value);
 }
 
-export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
+export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     @memcpy(dst[0..len], src[0..len]);
 }
 
-export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
+export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001
     @memmove(dst[0..len], src[0..len]);
 }
 
-export fn builtin_memset(dst: [*]u8, value: u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
+export fn builtin_memset(dst: [*]u8, value: u8, len: usize) void { // ziglint-ignore: Z001
     @memset(dst[0..len], value);
 }
