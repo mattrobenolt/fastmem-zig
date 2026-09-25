@@ -11,10 +11,9 @@ const testing = std.testing;
 const common = @import("common.zig");
 const chunk_bytes = common.chunk_bytes;
 const stride = common.stride;
+// The generic Zig fallback for targets without a dedicated kernel.
 const memcpy_impl = @import("memcpy.zig");
-pub const CopyFlags = memcpy_impl.Flags;
 const memmove_impl = @import("memmove.zig");
-pub const MoveFlags = memmove_impl.Flags;
 
 // aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
 // The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
@@ -70,17 +69,6 @@ pub const impl = .{
     .copy = copy_impl_name,
     .move = move_impl_name,
     .set = set_impl_name,
-};
-
-/// Public snapshot of the current memcpy and memmove tuning knobs.
-pub const Flags = struct {
-    copy: CopyFlags,
-    move: MoveFlags,
-};
-
-pub const flags: Flags = .{
-    .copy = memcpy_impl.flags,
-    .move = memmove_impl.flags,
 };
 
 test {

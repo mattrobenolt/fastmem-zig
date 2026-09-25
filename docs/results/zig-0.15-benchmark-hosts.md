@@ -1,3 +1,8 @@
+> Historical. This file records the Zig 0.15.2 era, before the rewrite.
+> It describes the old nushell harness and the old kernels, and its
+> numbers predate the current measurement binary. Current results are in
+> the other files of `docs/results/`.
+
 # Benchmark Hosts
 
 This file is the human notebook for benchmark environments.

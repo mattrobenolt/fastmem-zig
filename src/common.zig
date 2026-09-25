@@ -4,11 +4,8 @@ const simd = std.simd;
 const math = std.math;
 const builtin = @import("builtin");
 
-extern fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
-extern fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque;
-
-/// Native vector width in bytes, selected at comptime. Capped at 32B
-/// because AVX-512 zmm usage causes frequency throttling on Intel cores.
+/// Native vector width in bytes for the generic fallback, capped at 32 B.
+/// The dedicated x86_64 and aarch64 kernels choose their own widths.
 pub const chunk_bytes = @min(simd.suggestVectorLength(u8) orelse 16, 32);
 
 /// SIMD vector type — q-register on NEON, ymm on AVX2.
@@ -19,8 +16,6 @@ pub const vectors_per_stride = 4;
 
 /// Bytes per inner loop iteration.
 pub const stride = chunk_bytes * vectors_per_stride;
-
-pub const can_use_glibc_memops = builtin.link_libc and builtin.os.tag == .linux and builtin.abi == .gnu;
 
 comptime {
     assert(math.isPowerOfTwo(chunk_bytes));
@@ -33,14 +28,6 @@ pub inline fn byteLen(comptime T: type, count: usize) usize {
 
     assert(count <= math.maxInt(usize) / @sizeOf(T));
     return count * @sizeOf(T);
-}
-
-pub inline fn callLibcMemcpy(dest: [*]u8, src: [*]const u8, len: usize) void {
-    _ = memcpy(@ptrCast(dest), @ptrCast(src), len);
-}
-
-pub inline fn callLibcMemmove(dest: [*]u8, src: [*]const u8, len: usize) void {
-    _ = memmove(@ptrCast(dest), @ptrCast(src), len);
 }
 
 /// Handles 0..stride-1 bytes using overlapping loads at progressively

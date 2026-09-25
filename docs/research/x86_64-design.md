@@ -562,7 +562,7 @@ x86_64_v3 binaries use only `ymm`.
 3. **No `rep movsb` on Intel.** glibc switches to `rep movsb` above
    16 KiB on c7i and c8i (1.5). `AGENTS.md` records that `rep movsb` is
    the floor for large aligned copies on x86 with ERMS/FSRM (0.15-era
-   evidence, `docs/benchmark-hosts.md`).
+   evidence, `docs/results/zig-0.15-benchmark-hosts.md`).
 4. **Source-aligned loop.** Stores are unaligned. With a misaligned
    destination, every 64-byte store (znver4) splits two cache lines.
    glibc aligns the destination (1.4).

@@ -1,51 +1,50 @@
-# Default: run tests
+# fastmem: fast memcpy/memmove/memset for Zig. README.md and AGENTS.md
+# describe the layout; docs/bench-design.md describes the benchmark system.
+
 default: test
 
-# Run all tests
+# Unit tests, the export-layer checks, and the shipped-binary builds
 test:
     zig build test
 
-# Run benchmarks (no libc)
-bench *ARGS:
-    zig build bench -- {{ ARGS }}
+# The export-layer binary checks alone (docs/export-layer.md)
+test-export:
+    zig build test-export
 
-# Run benchmarks with libc linked for comparison
-bench-libc *ARGS:
-    zig build bench -Dlink-libc=true -- {{ ARGS }}
+# The full guard-page correctness matrix on this host (G1)
+test-guard:
+    zig build test-guard -Doptimize=ReleaseFast
 
-# Emit assembly for the native target
-asm:
-    zig build asm
-    @echo "Output: zig-out/asm/"
-    @ls zig-out/asm/
+# x86 codegen gates for all fleet CPU models (runs on any host)
+codegen-x86:
+    zig build codegen-x86
 
-# Emit assembly for all key targets
-asm-all:
-    zig build asm-all
-    @echo "Output: zig-out/asm/"
-    @ls zig-out/asm/
-
-# Emit assembly for a specific target (e.g., just asm-target x86_64-linux-gnu)
-asm-target TARGET:
-    zig build asm -Dtarget={{ TARGET }}
-    @echo "Output: zig-out/asm/"
-    @ls zig-out/asm/
-
-# Show a specific function from native asm (e.g., just show-fn fastmem_copy)
-show-fn FN:
-    @grep -A 80 '{{ FN }}:' zig-out/asm/*.s
-
-# Run the fuzzer. Zig 0.16: --fuzz takes an iteration budget with a K/M/G
-# suffix, not a duration. ReleaseSafe forces the LLVM backend, dodging the
-# 0.16.0 self-hosted-backend bug in Debug fuzz mode (ziglang/zig#30655).
+# Zig 0.16: --fuzz takes an iteration budget with a K/M/G suffix, not a
+# duration. ReleaseSafe forces the LLVM backend, dodging the 0.16.0
+# self-hosted-backend bug in Debug fuzz mode (ziglang/zig#30655).
+# Run the fuzzer with an iteration budget (e.g. just fuzz 50M)
 fuzz LIMIT="10M":
     zig build test -Doptimize=ReleaseSafe --fuzz={{ LIMIT }}
 
-# Cross-compile benchmarks for a target with libc
-bench-cross TARGET *ARGS:
-    zig build bench -Dtarget={{ TARGET }} -Dlink-libc=true -- {{ ARGS }}
+# Run the measurement binary on this host (e.g. just bench --suite quick --filter copy/aligned)
+bench *ARGS:
+    zig build bench -- {{ ARGS }}
 
-# Compare asm between two targets (run asm-all first)
+# Emit assembly and LLVM IR for the native (or -Dtarget) target into zig-out/asm/
+asm *ARGS:
+    zig build asm {{ ARGS }}
+    @ls zig-out/asm/
+
+# Emit assembly for the linux-gnu/musl and macOS triples
+asm-all:
+    zig build asm-all
+    @ls zig-out/asm/
+
+# Show one function from the native assembly (e.g. just show-fn fastmem_copy)
+show-fn FN:
+    @grep -A 80 '{{ FN }}:' zig-out/asm/*.s
+
+# Compare assembly between two triples (run asm-all first)
 diff-asm A B:
     diff --color zig-out/asm/{{ A }}.s zig-out/asm/{{ B }}.s || true
 
@@ -57,7 +56,7 @@ clean:
 # Every fleet command runs as the fastmem-bench IAM user.
 export AWS_PROFILE := env("AWS_PROFILE", "fastmem-bench")
 
-# Run a harness command (e.g. just b ls, just b up c8g c7i --ttl 2h)
+# Run any harness command (e.g. just b ls, just b up c8g c7i --ttl 2h, just b analyze <run-dir>)
 b *ARGS:
     uv run --project bench bench {{ ARGS }}
 
@@ -73,7 +72,11 @@ bench-down:
 bench-ls:
     uv run --project bench bench ls
 
-# Run benchmarks on the running boxes (e.g. just bench-run --rev HEAD --rev WORKTREE --suite quick)
+# Correctness on every running box (e.g. just bench-test --optimize ReleaseFast --optimize Debug)
+bench-test *ARGS:
+    uv run --project bench bench test {{ ARGS }}
+
+# Measure on every running box (e.g. just bench-run --rev main --rev WORKTREE --suite standard)
 bench-run *ARGS:
     uv run --project bench bench run {{ ARGS }}
 

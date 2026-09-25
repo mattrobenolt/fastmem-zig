@@ -20,14 +20,14 @@ export fn fastmem_set(dst: [*]u8, value: u8, len: usize) void {
     fastmem.set(u8, dst[0..len], value);
 }
 
-export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn builtin_memcpy(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
     @memcpy(dst[0..len], src[0..len]);
 }
 
-export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void {
+export fn builtin_memmove(dst: [*]u8, src: [*]const u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
     @memmove(dst[0..len], src[0..len]);
 }
 
-export fn builtin_memset(dst: [*]u8, value: u8, len: usize) void {
+export fn builtin_memset(dst: [*]u8, value: u8, len: usize) void { // ziglint-ignore: Z001 (C symbol name)
     @memset(dst[0..len], value);
 }

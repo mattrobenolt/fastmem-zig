@@ -1,99 +1,101 @@
-# fastmem-zig
+# fastmem-zig: agent notes
 
-SIMD-optimized `memcpy`/`memmove` in Zig. Goal: match or beat platform libc.
+fastmem gives Zig a `memcpy`, `memmove`, and `memset` that are equal to or
+faster than glibc and compiler-rt. `README.md` is the user overview.
+`docs/fastmem-plan.md` is the plan: mission, goals G1-G6, the clean-room
+rule, and the facts that the design depends on. Read it before you change
+a kernel or make a performance claim.
 
 ## Layout
 
-- `src/root.zig` — public facade: `fastmem.copy` / `fastmem.move`, the `flags`
-  snapshot (`CopyFlags` / `MoveFlags`), inline wrappers, tests + fuzzers.
-- `src/common.zig` — shared SIMD load/store primitives, `chunk_bytes`/`stride`.
-- `src/forward.zig` — overlap-safe forward kernel.
-- `src/memcpy.zig`, `src/memmove.zig` — copy/move policy decisions and Flags.
-- `src/bench_fastmem.zig` — schema-v2 JSONL measurements of builtin, glibc,
-  fastmem_abi, and fastmem_inline. Const cases compare builtin_const and
-  fastmem_inline. Defaults: 10 ms warmup, 20 ms samples, balanced sample counts.
-- `src/asm_probe.zig` — C-ABI exports (`fastmem_copy` etc.) for asm inspection.
-- `src/libc_probe.zig` — `dlsym` probe reporting which libc symbols a build
-  actually resolves to (JSON on stdout).
-- `build.zig` — `test`, `bench` (always ReleaseFast), `libc-probe`,
-  `asm` / `asm-all` (5 cross targets).
-- `docs/benchmark-hosts.md` — per-target benchmark evidence and learnings.
-  Read it before making or repeating performance claims.
-- `docs/bench-design.md` — the benchmark system contract (infra, harness,
-  JSONL schema, statistics). `infra/README.md` is the fleet runbook.
-- `infra/` — OpenTofu: `modules/bench-iam` + `modules/bench-base`
-  (copyable pattern), root stacks `iam/` (human applies) and `base/`
-  (agent applies), NixOS boxes with a TTL guard and a reaper Lambda.
-- `bench/` — Python (uv) harness: `ec2bench/` (generic fleet library,
-  copyable) and `fastmem_bench/` (build, run protocol, analysis).
-  `bench.toml` configures both.
+- `src/root.zig`: the public API. `copy`, `move`, `set` (inline),
+  `abi.memcpy/memmove/memset` (C-ABI kernel entries), `impl` (kernel names
+  per op), and `exportSymbols()`. It selects a kernel per target.
+- `src/x86_64/`: the x86_64 kernels (AVX-512 and AVX2). `tuning.zig` holds
+  the per-model table and `-Dx86-variant=auto` resolution.
+  `check_codegen.py` is the codegen gate. `README.md` describes the design.
+- `src/aarch64/`: ports of Arm Optimized Routines (SVE and AdvSIMD) as
+  global asm, plus `small.zig` (the inline small classes) and `tuning.zig`
+  (the per-model small-path table).
+- `src/memcpy.zig`, `memmove.zig`, `forward.zig`, `common.zig`: the generic
+  Zig fallback for targets without a dedicated kernel (x86_64 without AVX2,
+  other architectures).
+- `src/export/`: `exportSymbols()` tests and binary checks, including the
+  pinned aarch64 kernel bytes (`check_kernel_bytes.py`).
+- `src/tests/`: the guard-page correctness suite (`fastmem-tests`), fuzzers,
+  and the call paths (runtime, C-ABI, comptime size).
+- `src/bench_fastmem.zig`: the measurement binary (JSONL schema v3).
+  `src/libc_probe.zig`: the glibc resolution probe.
+- `src/asm_probe.zig`: C-ABI wrappers for `zig build asm`.
+- `bench/`: the Python (uv) harness. `ec2bench/` is the generic fleet
+  library. `fastmem_bench/` builds, runs, and analyzes. `bench.toml`
+  configures both.
+- `infra/`: OpenTofu. `modules/bench-iam` and `modules/bench-base`, root
+  stacks `iam/` (a human applies it) and `base/` (the agent applies it).
+  `infra/README.md` is the runbook.
+- `docs/`: `fastmem-plan.md`, `bench-design.md` (the benchmark contract),
+  `export-layer.md`, `research/` (design memos, host facts), `results/`
+  (one file per fleet measurement).
 
 ## Toolchain
 
-- Zig 0.16.0 via the flake (`zig_0_16`); `minimum_zig_version` is 0.16.0.
-  Ported from 0.15.2 on 2026-09-23.
-- Read `.pi/skills/zig/SKILL.md` before writing Zig here. It is verified
-  against this toolchain; 0.15-era patterns from training data are wrong
-  in specific, silent ways (`std.Io`, `main(init)`, `testing.Smith`).
-- Fuzz mode hits an upstream 0.16.0 bug (ziglang/zig#30655, self-hosted
-  backend, Debug only). `just fuzz` passes `-Doptimize=ReleaseSafe` to force
-  the LLVM backend around it.
+- Zig 0.16.0 from the flake. Read `.pi/skills/zig/SKILL.md` before you
+  write Zig here. 0.15-era patterns are wrong in 0.16 in silent ways
+  (`std.Io`, `main(init)`, `testing.Smith`).
+- The flake is the environment. Add a missing tool to `flake.nix`; do not
+  install it globally.
+- Fuzz mode hits ziglang/zig#30655 in Debug. `just fuzz` uses ReleaseSafe.
 
 ## Commands
 
-- `just test` — full test suite.
-- `just fuzz` — fuzzer (iteration budget with K/M/G suffix).
-- `just bench` / `just bench-libc` — local benchmark runs.
-- `just asm` / `just asm-all` / `just show-fn <fn>` — codegen inspection.
-- `just bench-up [targets]` / `bench-ls` / `bench-down` — the fleet
-  (profile `fastmem-bench`; boxes self-destruct, the reaper backstops).
-- `just bench-run --rev A --rev B --suite quick` — build locally, measure
-  on every running box in parallel, write `bench-results/<run-id>/`.
-- `just b analyze <run-dir>` — re-analyze saved raw rounds offline.
-- `just b <cmd>` — any harness command; `just bench-check` — harness tests.
+- `just test`: unit tests, export checks, and a build of every shipped
+  binary. It must pass before a commit.
+- `just test-guard`: the guard-page matrix on this host.
+- `just codegen-x86`: the x86 codegen gate for every fleet CPU model.
+- `just bench-up [targets]`, `just bench-test --optimize ReleaseFast
+  --optimize ReleaseSafe --optimize Debug`, `just bench-run --rev A --rev B
+  --suite standard --rounds 5`, `just b analyze <run-dir>`, `just
+  bench-down`. `bench run --cpu baseline` measures G6.
+- `ziglint src/` before you call Zig work done.
 
 ## Benchmark targets
 
-`bench.toml` is the source of truth (instance type, Zig target, `-Dcpu`).
-All `.xlarge`, us-west-2, account 396684171460 ("playground").
+`bench.toml` is the source of truth. All `.xlarge`, us-west-2, account
+396684171460 ("playground"), profile `fastmem-bench`.
 
-- `c7i` — Intel Sapphire Rapids (SMT 2/core).
-- `c8i` — Intel Granite Rapids (SMT 2/core).
-- `c7a` — AMD Genoa (1 thread/core). Materially noisier in 0.15-era runs.
-- `c8a` — AMD Turin (1 thread/core).
-- `c7g` — Graviton3 / Neoverse-V1 (256-bit SVE).
-- `c8g` — Graviton4 / Neoverse-V2 (128-bit SVE).
-- `c9g` — Graviton5 (`-Dcpu=neoverse_v3` unverified).
+| Target | CPU | x86 variant / aarch64 small path |
+|---|---|---|
+| c7i | Sapphire Rapids | straight_1k |
+| c8i | Granite Rapids | straight_1k |
+| c7a | Zen 4 | tiered |
+| c8a | Zen 5 | compact |
+| c7g | Neoverse V1 (256-bit SVE) | copy/set sve, move hybrid |
+| c8g | Neoverse V2 | copy/set sve, move hybrid |
+| c9g | Neoverse V3 | copy/set neon, move hybrid |
 
-## Performance state
+## Rules
 
-All recorded evidence in `docs/benchmark-hosts.md` is from the 0.15.2
-toolchain. Nothing has been benchmarked on 0.16 yet.
-
-- x86 with ERMS/FSRM: `rep movsb` (the builtin) is the floor for large
-  aligned copies — delegate rather than fight it.
-- c8g: aligning the hot loop around source loads (matching glibc's
-  `__memcpy_sve` / `__memmove_sve`) fixed the worst regressions. Remaining
-  gaps: large aligned 4096/16384 B copy, some 256 B cross-lane rows, and
-  narrow backward-overlap rows near 256 B.
-- A single-stride exact fast path fixed small-copy (64 B) regressions on
-  c8g. The broader `2 * stride` variant helped c8g but hurt Intel badly
-  enough to drop — keep only the single-stride version.
-- glibc-floor delegation thresholds for libc-linked builds live in the
-  Flags structs in `src/memcpy.zig` / `src/memmove.zig`.
-
-## Zig notes
-
-- File-scope `const` is already comptime — no redundant `comptime` keyword.
-- `std.Target.Cpu.Model` is a struct; compare by pointer:
-  `builtin.cpu.model == &std.Target.aarch64.cpu.generic`.
-- Vector width: `std.simd.suggestVectorLength(u8)` — 16 on NEON, 32 on AVX2.
-- Run `ziglint src/` before completion. Existing warnings remain in the kernels
-  and `src/asm_probe.zig`. Modified benchmark files must pass lint.
+- Clean room: glibc is LGPL. Read it only to learn behavior. Never copy,
+  transcribe, or translate its code, in source or disassembly. glibc
+  binaries and disassembly stay in `.bench-cache/glibc/` (gitignored).
+  Ports come from Arm Optimized Routines or llvm-libc, with attribution in
+  `THIRD_PARTY.md`.
+- fastmem never calls `memcpy`, `memmove`, or `memset` through a symbol.
+  The harness marks such a build INVALID. The fastmem module builds with
+  `no_builtin` and `omit_frame_pointer`.
+- The inline layer contains no loops. Loops go in non-inline functions of
+  the `no_builtin` module.
+- A performance claim names its run directory and a results file in
+  `docs/results/`. A change that helps one target and hurts another needs a
+  comptime per-model selection.
+- A kernel change that changes aarch64 bytes updates GOLDEN in
+  `src/export/check_kernel_bytes.py` in the same commit, on purpose.
+- Fleet scripts tear down only the targets that they launched. `bench down
+  --all` stops every run on the fleet.
 
 ## Git
 
-- Never `git add -A` or `git add .`. Stage tracked changes with `git add -u` and
-  add new files by explicit path after reading `git status --short`. Untracked
-  files here can hold secrets: qemu-user core dumps (`*.core`) contain the whole
-  process environment.
+- Never `git add -A` or `git add .`. Stage tracked changes with `git add -u`,
+  and add a new file by its path after you read `git status --short`.
+  Untracked files can hold secrets: qemu-user core dumps (`*.core`) contain
+  the whole process environment.

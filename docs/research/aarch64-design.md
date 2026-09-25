@@ -563,7 +563,7 @@ Broadcast with `@splat` into `@Vector(16, u8)` — E7 shows it emits
 
 Note the alignment asymmetry glibc uses: memcpy aligns the **source**
 (load side), memset aligns the **destination** (store side). The copy
-side is settled by 0.15.2-era measurement (`docs/benchmark-hosts.md`
+side is settled by 0.15.2-era measurement (`docs/results/zig-0.15-benchmark-hosts.md`
 c8g section, line ~125: matching source alignment "fixed the worst
 non-libc c8g regressions"); H7 in §6 tests the memset side.
 
@@ -649,7 +649,7 @@ bench-results/<run-id>/`. Baseline for every comparison: P1d's
 
 1. **H1 — the AOR-parity port closes the c8g aligned 4096/16384
    residual.** The 0.15.2-era fastmem never caught glibc on large
-   **aligned** copies on c8g: `docs/benchmark-hosts.md` c8g section
+   **aligned** copies on c8g: `docs/results/zig-0.15-benchmark-hosts.md` c8g section
    (line ~128: "large aligned copy (`4096B` and `16384B`)"; line ~130:
    reference run `bench-results/trials/20260308-155235-c8g-exact-stride-single/`,
    "remaining copy gap is concentrated in large aligned `16384B`").
@@ -696,7 +696,7 @@ bench-results/<run-id>/`. Baseline for every comparison: P1d's
    rules allow per-target selection.
 7. **H7 — memset destination alignment side.** glibc aligns dst for
    memset (0xb0110) but src for memcpy (0xaee10). The copy side is
-   already measured (0.15.2-era c8g work, `docs/benchmark-hosts.md`);
+   already measured (0.15.2-era c8g work, `docs/results/zig-0.15-benchmark-hosts.md`);
    hypothesis: dst-alignment is likewise optimal for memset. Cheap A/B
    against an unaligned variant.
 8. **H8 — `prfm` prefetch beyond L2.** Hypothesis: software prefetch in
@@ -709,7 +709,7 @@ bench-results/<run-id>/`. Baseline for every comparison: P1d's
 
 Closed before P3: the backward-loop pairing question (E12 — pairs on
 all four CPUs); the copy-side source-alignment question (0.15.2
-evidence, `docs/benchmark-hosts.md` c8g line ~125); the "unroll the
+evidence, `docs/results/zig-0.15-benchmark-hosts.md` c8g line ~125); the "unroll the
 builtin's loop" framing (E8 — LLVM already unrolls it; the gap is loop
 polish).
 
@@ -719,7 +719,7 @@ polish).
   V3's SVE VL (128 vs 256 bit) only shifts the small-class boundary, and
   the runtime `cntb` design absorbs it — but P3 should run a one-line
   `cntb` probe on each box once and record the result in
-  `docs/benchmark-hosts.md`.
+  `docs/results/zig-0.15-benchmark-hosts.md`.
 - **ZVA block size is a system property, not a CPU feature.** 64 B is
   proven for the three bench targets twice (glibc resolver behavior §1;
   `dczid_el0=0x4` in `ld-diagnostics.txt:122-137`), and the kernel
