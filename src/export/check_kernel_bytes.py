@@ -48,6 +48,12 @@ def main():
             name = strings[name_off:].split(b"\0", 1)[0].decode()
             if not name.startswith(prefix):
                 continue
+            # fastmem_sve_copy_gt64 is a size-0 hidden label inside
+            # fastmem_sve_copy (the > 64 byte mid entry used by the inline
+            # layer). It adds no instruction bytes; the copy/move entries
+            # below cover the bytes it points into.
+            if name == prefix + "copy_gt64":
+                continue
             op = name.removeprefix(prefix)
             expected_size, expected_hash = GOLDEN[cpu][op]
             assert size == expected_size, (cpu, name, size, expected_size)

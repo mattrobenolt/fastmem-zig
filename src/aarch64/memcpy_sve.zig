@@ -224,6 +224,15 @@ const mid_sve =
 const mid_neon =
     \\
     \\    .p2align 4
+    \\    // Entry for the inline layer's > 64 byte calls (tuning.mid_entry):
+    \\    // skips the head's small-size dispatch, which the inline gate has
+    \\    // already decided. Valid for any n > 64 and any overlap: the
+    \\    // 33..128 blocks load before they store, and > 128 still routes
+    \\    // to the long path's backward/forward dispatch. Hidden label
+    \\    // only; no instruction bytes added.
+    \\    .globl  fastmem_sve_copy_gt64
+    \\    .hidden fastmem_sve_copy_gt64
+    \\fastmem_sve_copy_gt64:
     \\.Lfm_sve_cpy_gt32:
     \\    cmp    x2, 128
     \\    b.hi    .Lfm_sve_cpy_long
@@ -379,3 +388,8 @@ pub const fastmem_sve_move: *const fn (
     [*]const u8,
     usize,
 ) callconv(.c) void = @ptrCast(&move_entry);
+
+// Present only when the neon mid block is emitted (some head is not
+// .sve). root.zig references it behind `has_gt64_entry` at comptime.
+pub const has_gt64_entry = enabled and need_neon_mid;
+pub extern fn fastmem_sve_copy_gt64(d: [*]u8, s: [*]const u8, n: usize) callconv(.c) void;

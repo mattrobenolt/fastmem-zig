@@ -272,6 +272,15 @@ fn tuningOptions(b: *std.Build, variant: X86Variant) *std.Build.Step.Options {
     options.addOption(X86Variant, "x86_variant", variant);
     // aarch64 small-path overrides (src/aarch64/tuning.zig). "auto" keeps
     // the per-CPU-model default; these serve local A/B runs.
+    options.addOption(
+        []const u8,
+        "mid_entry",
+        b.option(
+            []const u8,
+            "mid-entry",
+            "aarch64 inline >64B calls enter the kernel mid block: auto|on|off",
+        ) orelse "auto",
+    );
     inline for (.{ "copy", "move", "set" }) |op| {
         options.addOption(
             []const u8,

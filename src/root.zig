@@ -90,7 +90,11 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         if (bytes > aarch64_small.max_inline) {
             @branchHint(.unlikely);
             if (comptime on_aarch64_sve) {
-                aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
+                if (comptime arm_tuning.mid_entry and aarch64_memcpy_sve.has_gt64_entry) {
+                    aarch64_memcpy_sve.fastmem_sve_copy_gt64(d, s, bytes);
+                } else {
+                    aarch64_memcpy_sve.fastmem_sve_copy(d, s, bytes);
+                }
             } else {
                 aarch64_memcpy_advsimd.fastmem_advsimd_copy(d, s, bytes);
             }
@@ -121,7 +125,11 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         if (bytes > aarch64_small.max_inline) {
             @branchHint(.unlikely);
             if (comptime on_aarch64_sve) {
-                aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
+                if (comptime arm_tuning.mid_entry and aarch64_memcpy_sve.has_gt64_entry) {
+                    aarch64_memcpy_sve.fastmem_sve_copy_gt64(d, s, bytes);
+                } else {
+                    aarch64_memcpy_sve.fastmem_sve_move(d, s, bytes);
+                }
             } else {
                 aarch64_memcpy_advsimd.fastmem_advsimd_move(d, s, bytes);
             }
