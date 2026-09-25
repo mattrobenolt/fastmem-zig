@@ -8,13 +8,14 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("cpu")
 parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"))
 parser.add_argument("artifact")
-parser.add_argument("--experiment", default="none",
-                    choices=("none", "medium_layout", "medium_entry", "small_paths"))
+parser.add_argument("--experiment", default="auto",
+                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths"))
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
-medium_entry = cpu == "graniterapids" and args.experiment == "medium_entry"
+auto = args.experiment == "auto"
+medium_entry = cpu == "graniterapids" and args.experiment in ("auto", "medium_entry")
 short_scalar = cpu == "znver4" and args.experiment == "small_paths"
-inline_short_first = cpu == "sapphirerapids" and args.experiment == "small_paths"
+inline_short_first = cpu == "sapphirerapids" and args.experiment in ("auto", "small_paths")
 compact_variants = ("compact", "ymm_medium", "straight_1k")
 reordered_variants = ("tiered", *compact_variants, "medium_first")
 dis = subprocess.check_output(["llvm-objdump", "-dr", "--no-show-raw-insn", artifact], text=True)

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const X86Experiment = enum { none, medium_layout, medium_entry, small_paths };
+const X86Experiment = enum { auto, none, medium_layout, medium_entry, small_paths };
 
 const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
 
@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
-    const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 fleet3 experiment") orelse .none;
+    const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 small/medium selection (auto = per-model winners)") orelse .auto;
     const x86_options = tuningOptions(b, x86_variant, x86_experiment);
     mod.addOptions("fastmem_options", x86_options);
 
