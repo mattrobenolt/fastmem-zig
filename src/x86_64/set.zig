@@ -72,7 +72,7 @@ pub noinline fn kernel(
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    if (comptime t.medium_first and ops.high_available) {
+    if (comptime (t.medium_first or tuning.medium_entry) and ops.high_available) {
         if (n >= 64) {
             @branchHint(.likely);
             return mediumReordered(dst, value, n);
@@ -95,6 +95,7 @@ pub noinline fn kernel(
     const d: [*]u8 = @ptrCast(dst.?);
     if (comptime tuning.reordered and ops.high_available) {
         if (n < 64) {
+            @branchHint(if (tuning.medium_layout) .unlikely else .none);
             if (n <= 32) {
                 pair(16, d, byte, n);
             } else {
