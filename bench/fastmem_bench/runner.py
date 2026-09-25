@@ -314,8 +314,8 @@ def analyze_run(run_dir: Path, minimum_effect: float | None) -> None:
 
 
 def echo_result(target: str, result: dict[str, Any]) -> None:
-    for variant, record in sorted((result.get("dispatch") or {}).items()):
-        if record:
+    for variant, state in sorted((result.get("dispatch") or {}).items()):
+        if record := state["record"]:
             click.echo(f"{target} {variant} dispatch: {record['level']} ({record['kernel']})")
     for group, floor in sorted(result.get("noise_floors", {}).items()):
         click.echo(f"{target} {group}: {floor:.4%}")

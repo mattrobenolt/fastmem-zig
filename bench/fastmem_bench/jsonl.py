@@ -165,7 +165,7 @@ class Meta(Record):
     resolution: dict[str, Resolution]
     codegen: Codegen | None
     memory: Memory | None = None
-    # Absent before P7 and null in comptime-selected builds.
+    # Present only in a binary that dispatches at run time (docs/runtime-dispatch.md).
     dispatch: Dispatch | None = None
 
     @field_validator("schema_version", mode="before")

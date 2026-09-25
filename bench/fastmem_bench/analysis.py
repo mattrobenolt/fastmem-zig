@@ -18,6 +18,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from fastmem_bench.build import dispatches
 from fastmem_bench.goals import evaluate
 from fastmem_bench.jsonl import IMPLEMENTATIONS, Measurement, parse
 from fastmem_bench.stability import Cells, memory_summary, memory_warning, stability
@@ -218,8 +219,8 @@ class Rounds:
     # The meta memory object of each process, keyed "<variant>/r<round>". None for v2.
     memory: dict[str, dict[str, Any] | None]
     cpus: set[str]
-    # The runtime-dispatch meta of each variant (None when it selects at comptime).
-    dispatch: dict[str, dict[str, Any] | None]
+    # The runtime-dispatch capability and record of each variant (record_dispatch).
+    dispatch: dict[str, dict[str, Any]]
 
 
 def add_samples(  # noqa: PLR0917 — one round's destinations
@@ -253,17 +254,37 @@ def record_dispatch(
     path: Path,
     meta: dict[str, Any],
     variant: str,
-    dispatch: dict[str, dict[str, Any] | None],
+    dispatch: dict[str, dict[str, Any]],
     expected: str | None,
 ) -> None:
-    """Keep one runtime-dispatch record per variant, and check the level."""
-    level = meta.get("dispatch")
-    # A revision before P7 has no dispatch meta: it runs the generic kernels.
-    if expected is not None and level and level["level"] != expected:
-        raise ValueError(f"{path}: the dispatched level is {level['level']}, not {expected}")
-    if variant in dispatch and dispatch[variant] != level:
+    """Keep the runtime-dispatch capability and record of each variant.
+
+    The capability comes from the binary (docs/runtime-dispatch.md): a
+    dispatching binary exports its resolvers, and the codegen evidence in
+    the meta record names them. Such a binary must emit the `dispatch`
+    object, with the expected level. Any other binary must not emit it.
+    build.check_dispatch_build rejects a revision with runtime dispatch
+    whose G6 x86_64 build has no resolvers.
+    """
+    record = meta.get("dispatch")
+    codegen = meta.get("codegen")
+    if codegen is None:
+        if expected is not None:
+            raise ValueError(f"{path}: no codegen evidence for the dispatch capability")
+        capable = record is not None
+    else:
+        capable = dispatches(codegen)
+        if capable != (record is not None):
+            raise ValueError(
+                f"{path}: the dispatch record ({record}) disagrees with the binary "
+                f"({'with' if capable else 'without'} dispatch resolvers)"
+            )
+    if expected is not None and record is not None and record["level"] != expected:
+        raise ValueError(f"{path}: the dispatched level is {record['level']}, not {expected}")
+    state = {"capable": capable, "record": record}
+    if variant in dispatch and dispatch[variant] != state:
         raise ValueError(f"Dispatch level changed within {variant}")
-    dispatch[variant] = level
+    dispatch[variant] = state
 
 
 def load_rounds(  # noqa: C901 — validate clusters before case intersection
@@ -282,7 +303,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     codegen: dict[str, Any] = {}
     memory: dict[str, dict[str, Any] | None] = {}
     cpus: set[str] = set()
-    dispatch: dict[str, dict[str, Any] | None] = {}
+    dispatch: dict[str, dict[str, Any]] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))

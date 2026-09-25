@@ -17,15 +17,21 @@ def comparison(row: dict[str, Any]) -> str:
     )
 
 
-def dispatch_lines(dispatch: dict[str, dict[str, Any] | None]) -> list[str]:
-    """The runtime-dispatch level of each variant (baseline x86_64 builds only)."""
-    lines = [
-        f"Runtime dispatch, {variant}: {record['level']} ({record['kernel']}),"
-        f" {record['vendor']} family {record['family']} model {record['model']}."
-        for variant, record in sorted(dispatch.items())
-        if record
-    ]
-    return [*lines, ""] if lines else []
+def dispatch_lines(dispatch: dict[str, dict[str, Any]]) -> list[str]:
+    """The runtime-dispatch state of each variant (analysis.record_dispatch)."""
+    if not any(state["record"] for state in dispatch.values()):
+        return []
+    lines = []
+    for variant, state in sorted(dispatch.items()):
+        record = state["record"]
+        if record:
+            lines.append(
+                f"Runtime dispatch, {variant}: {record['level']} ({record['kernel']}),"
+                f" {record['vendor']} family {record['family']} model {record['model']}."
+            )
+        else:
+            lines.append(f"Runtime dispatch, {variant}: none (the binary has no dispatch).")
+    return [*lines, ""]
 
 
 def write(path: Path, summary: dict[str, Any]) -> None:
