@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const X86Experiment = enum { none, medium_layout, medium_entry, small_paths };
+
 const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
 
 // The per-model default of the "auto" variant, from the p3-x86c fleet A/B
@@ -40,7 +42,8 @@ pub fn build(b: *std.Build) void {
     });
 
     const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
-    const x86_options = tuningOptions(b, x86_variant);
+    const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 fleet3 experiment") orelse .none;
+    const x86_options = tuningOptions(b, x86_variant, x86_experiment);
     mod.addOptions("fastmem_options", x86_options);
 
     // Benchmark executable — always built ReleaseFast.
@@ -135,7 +138,7 @@ pub fn build(b: *std.Build) void {
 
     // Private cross probes must not replace the public dependency module.
     std.debug.assert(b.modules.get("fastmem").? == mod);
-    addX86Codegen(b, x86_options, x86_variant);
+    addX86Codegen(b, x86_options, x86_variant, x86_experiment);
     addStdExportTests(b, x86_options);
 
     // Tests. The fastmem test module takes an explicit optimize so a
@@ -250,8 +253,9 @@ fn addAsmStep(
     step.dependOn(obj_step);
 }
 
-fn tuningOptions(b: *std.Build, variant: X86Variant) *std.Build.Step.Options {
+fn tuningOptions(b: *std.Build, variant: X86Variant, experiment: X86Experiment) *std.Build.Step.Options {
     const options = b.addOptions();
+    options.addOption(X86Experiment, "x86_experiment", experiment);
     inline for (.{ "vec", "inline-max" }) |name| {
         options.addOption(
             ?u32,
@@ -301,7 +305,12 @@ fn replaceDash(comptime name: []const u8) *const [name.len]u8 {
     return &result;
 }
 
-fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Variant) void {
+fn addX86Codegen(
+    b: *std.Build,
+    options: *std.Build.Step.Options,
+    variant: X86Variant,
+    experiment: X86Experiment,
+) void {
     const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
     for ([_][]const u8{ "sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3" }) |cpu| {
         const target = b.resolveTargetQuery(std.Target.Query.parse(.{
@@ -330,6 +339,7 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Va
         check.addArg(cpu);
         check.addArg(@tagName(resolveX86Variant(cpu, variant)));
         check.addFileArg(obj.getEmittedBin());
+        check.addArgs(&.{ "--experiment", @tagName(experiment) });
         step.dependOn(&check.step);
         if (std.mem.eql(u8, cpu, "sapphirerapids") or std.mem.eql(u8, cpu, "graniterapids")) {
             const mutations = b.addSystemCommand(&.{"python3"});
@@ -337,6 +347,7 @@ fn addX86Codegen(b: *std.Build, options: *std.Build.Step.Options, variant: X86Va
             mutations.addArg(cpu);
             mutations.addArg(@tagName(resolveX86Variant(cpu, variant)));
             mutations.addFileArg(obj.getEmittedBin());
+            mutations.addArgs(&.{ "--experiment", @tagName(experiment) });
             step.dependOn(&mutations.step);
         }
         const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("codegen/{s}.o", .{cpu}));

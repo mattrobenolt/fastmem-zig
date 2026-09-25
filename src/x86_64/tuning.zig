@@ -57,6 +57,15 @@ pub const selected: Tuning = .{
     .alias_mask = options.x86_alias_mask orelse defaults.alias_mask,
     .rep_src_align_mask = options.x86_rep_src_align_mask orelse defaults.rep_src_align_mask,
 };
+// Experiments remain model-local. The default keeps the measured kernels.
+pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
+    options.x86_experiment == .medium_layout;
+pub const medium_entry = builtin.cpu.model == &cpu.graniterapids and
+    options.x86_experiment == .medium_entry;
+pub const short_scalar = builtin.cpu.model == &cpu.znver4 and
+    options.x86_experiment == .small_paths;
+pub const inline_short_first = builtin.cpu.model == &cpu.sapphirerapids and
+    options.x86_experiment == .small_paths;
 pub const vec = selected.vec;
 pub const inline_max = options.x86_inline_max orelse 4 * vec;
 // Model gates also apply to explicit experiments. Other CPUs retain their defaults.
