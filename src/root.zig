@@ -133,7 +133,8 @@ pub const dispatch = struct {
 /// the x86 inline ladder (x86_64/move.zig and set.zig `small`), compiled for
 /// the target CPU: SSE2 on baseline. 128 is the inline limit of the
 /// x86_64_v3 comptime build. Larger sizes call the dispatched kernel.
-const dispatch_inline_max = x86_dispatch.small_max;
+// The ABI threshold experiment does not change fixed-size inlining.
+const dispatch_inline_max = 128;
 
 test {
     _ = @import("tests/fuzz.zig");

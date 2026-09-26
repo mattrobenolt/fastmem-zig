@@ -63,11 +63,17 @@ fn kernels(comptime l: Level) Kernels {
     };
     const prefix = symbol_prefix ++ @tagName(l) ++ "_";
     // x86 memcpy is the memmove kernel, as in the comptime builds.
-    const move = @extern(CopyFn, .{ .name = prefix ++ "memmove_above128", .visibility = .hidden });
+    const move = @extern(CopyFn, .{
+        .name = prefix ++ "memmove_above_small",
+        .visibility = .hidden,
+    });
     return .{
         .copy = move,
         .move = move,
-        .set = @extern(SetFn, .{ .name = prefix ++ "memset_above128", .visibility = .hidden }),
+        .set = @extern(SetFn, .{
+            .name = prefix ++ "memset_above_small",
+            .visibility = .hidden,
+        }),
         .name = @extern(NameFn, .{ .name = prefix ++ "name", .visibility = .hidden }),
     };
 }
@@ -103,7 +109,7 @@ comptime {
 /// they use the loop-free classes below, compiled for the consumer CPU
 /// (SSE2 on baseline) and the same for every level. Larger sizes load the
 /// pointer and make one indirect jump. The first large call resolves.
-pub const small_max = 128;
+pub const small_max = @import("tuning.zig").dispatch_small_max;
 
 pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
@@ -194,20 +200,20 @@ inline fn quadStore(comptime T: type, d: [*]u8, v: T, n: usize) void {
 }
 
 /// The large paths of the inline layer call the pointers directly, with
-/// no entry jump. The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// no entry jump. The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn copyPointer() CopyFn {
     return @atomicLoad(CopyFn, &copy_fn, .monotonic);
 }
 
-/// The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn movePointer() CopyFn {
     return @atomicLoad(CopyFn, &move_fn, .monotonic);
 }
 
-/// The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn setPointer() SetFn {
     return @atomicLoad(SetFn, &set_fn, .monotonic);
 }

@@ -42,8 +42,8 @@ def run(command):
     )
 
 
-def resolver_trap(runner, binary):
-    """Sizes 0-128 must pass without a resolver; the 129-byte call must trap."""
+def resolver_trap(runner, binary, small_max):
+    """Sizes through small_max bypass resolution. The next size must trap."""
     for model in ("max", "Westmere") if runner else (None,):
         command = runner + (["-cpu", model] if model else []) + [binary]
         result = run(command)
@@ -53,14 +53,15 @@ def resolver_trap(runner, binary):
                              f"exit {result.returncode}\n{result.stdout}{result.stderr}")
         # qemu-user re-raises the guest signal; a native run reports it too.
         if result.returncode not in (-signal.SIGILL, 128 + signal.SIGILL):
-            raise SystemExit(f"FAIL {label}: the 129-byte call did not trap: exit {result.returncode}")
-        print(f"PASS {label}: 0-128 B never consulted the dispatcher; 129 B trapped in the resolver")
+            raise SystemExit(f"FAIL {label}: the {small_max + 1}-byte call did not trap: exit {result.returncode}")
+        print(f"PASS {label}: 0-{small_max} B never consulted the dispatcher; {small_max + 1} B trapped in the resolver")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--resolver-trap", action="store_true")
+    parser.add_argument("--small-max", type=int, choices=(64, 128), default=128)
     parser.add_argument("binary")
     args = parser.parse_args()
     runner = linux_runner("x86_64")
@@ -68,7 +69,7 @@ def main():
         print(f"SKIP {args.binary}: no x86_64 Linux runner")
         return
     if args.resolver_trap:
-        return resolver_trap(runner, args.binary)
+        return resolver_trap(runner, args.binary, args.small_max)
     models = MODELS if runner else {None: None}
     for model, expected in models.items():
         command = runner + (["-cpu", model] if model else []) + [args.binary]

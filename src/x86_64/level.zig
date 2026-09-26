@@ -18,8 +18,14 @@ comptime {
     if (!tuning.available) @compileError("a dispatch level object requires AVX2");
     @export(&move.moveKernel, .{ .name = prefix ++ "memmove", .visibility = .hidden });
     @export(&set.kernel, .{ .name = prefix ++ "memset", .visibility = .hidden });
-    @export(&move.kernelAbove128, .{ .name = prefix ++ "memmove_above128", .visibility = .hidden });
-    @export(&set.kernelAbove128, .{ .name = prefix ++ "memset_above128", .visibility = .hidden });
+    @export(&move.kernelAboveSmall, .{
+        .name = prefix ++ "memmove_above_small",
+        .visibility = .hidden,
+    });
+    @export(&set.kernelAboveSmall, .{
+        .name = prefix ++ "memset_above_small",
+        .visibility = .hidden,
+    });
     @export(&name, .{ .name = prefix ++ "name", .visibility = .hidden });
 }
 

@@ -1,5 +1,6 @@
 """Reject split vectors and external memory calls in the x86 probes."""
 import argparse
+from functools import cache
 import json
 import re
 import subprocess
@@ -9,13 +10,16 @@ parser.add_argument("cpu")
 parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"))
 parser.add_argument("artifact")
 parser.add_argument("--experiment", default="auto",
-                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths"))
+                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch"))
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
-auto = args.experiment == "auto"
-medium_entry = cpu == "graniterapids" and args.experiment in ("auto", "medium_entry")
+auto = args.experiment == "auto" or args.experiment.startswith("x86f_")
+entry_pairs = cpu == "graniterapids" and args.experiment == "x86f_pairs"
+medium_chunks = cpu in ("sapphirerapids", "graniterapids") and args.experiment == "x86f_chunks"
+zen4_short = cpu == "znver4" and args.experiment == "x86f_zen4"
+medium_entry = cpu == "graniterapids" and (auto or args.experiment == "medium_entry")
 short_scalar = cpu == "znver4" and args.experiment == "small_paths"
-inline_short_first = cpu == "sapphirerapids" and args.experiment in ("auto", "small_paths")
+inline_short_first = cpu == "sapphirerapids" and (auto or args.experiment == "small_paths")
 compact_variants = ("compact", "ymm_medium", "straight_1k")
 reordered_variants = ("tiered", *compact_variants, "medium_first")
 dis = subprocess.check_output(["llvm-objdump", "-dr", "--no-show-raw-insn", artifact], text=True)
@@ -32,6 +36,7 @@ for line in dis.splitlines():
         instructions[int(match[1], 16)] = match[2].split("#")[0].strip()
 
 
+@cache
 def body(name):
     start, size = syms[name]
     return [(a, i) for a, i in instructions.items() if start <= a < start + size]
@@ -150,6 +155,55 @@ def class_path(name, n, stats=None):
     raise SystemExit(f"{cpu}: dispatch did not terminate")
 
 
+def check_medium_bytes(name, n, *, fill=False):
+    """Check actual vector offsets, source snapshots, coverage, and access bounds."""
+    dst_base = 1 << 20
+    scalars = {"%rsi": 0, "%rdi": dst_base, "%rdx": n}
+    vectors = {}
+    covered = set()
+    stored = False
+
+    def address(operand):
+        match = re.fullmatch(r"(-?0x[0-9a-f]+)?\((%r\w+)(?:,(%r\w+))?\)", operand)
+        require(match is not None, f"{name}/{n}: unknown address {operand}")
+        offset, base, index = match.groups()
+        return int(offset or "0", 0) + scalars[base] + (scalars[index] if index else 0)
+
+    for line in class_path(name, n).splitlines():
+        parts = line.split(None, 1)
+        op = parts[0]
+        if len(parts) == 1:
+            continue
+        operands = re.split(r",\s*(?![^()]*\))", parts[1])
+        if op == "movq" and len(operands) == 2 and operands[0] in scalars:
+            scalars[operands[1]] = scalars[operands[0]]
+        elif op == "vpbroadcastb":
+            vectors[operands[1]] = None
+        elif op == "vmovdqu64":
+            source, dest = operands
+            reg = dest if dest.startswith("%") else source
+            width = 64 if reg.startswith("%zmm") else 32
+            if dest.startswith("%"):
+                require(not fill and not stored, f"{name}/{n}: load after store")
+                offset = address(source)
+                require(0 <= offset <= n - width, f"{name}/{n}: source access outside bounds")
+                vectors[dest] = offset
+            else:
+                stored = True
+                offset = address(dest) - dst_base
+                require(0 <= offset <= n - width, f"{name}/{n}: destination access outside bounds")
+                require(source in vectors and vectors[source] == (None if fill else offset),
+                        f"{name}/{n}: wrong source bytes")
+                covered.update(range(offset, offset + width))
+    require(covered == set(range(n)), f"{name}/{n}: incomplete vector coverage")
+
+
+# LLVM can merge the pair candidate with the identical move entry.
+if entry_pairs and "x86_64.move.moveKernel" not in syms:
+    require(syms["probe_abi_move"][0] == syms["probe_abi_copy"][0],
+            "missing move entry is not an ABI alias")
+    syms["x86_64.move.moveKernel"] = syms["x86_64.move.kernel"]
+
 # The probe object contains only fastmem consumers, so every mem* reference is invalid.
 require(not re.search(r"(?<![\w.])(?:__)?(?:memcpy|memmove|memset)(?=[+@>\s-]|$)", dis), "memory symbol reference")
 wide = cpu != "x86_64_v3"
@@ -186,6 +240,10 @@ if wide and variant != "entry":
     fingerprints["straight_1k"] = fingerprints["compact"]
     fingerprints["medium_first"] = {0: 4, 4: 3, 8: 3, 17: 2, 65: 2, 129: 3}
     expected = fingerprints["medium_first"] if medium_entry else fingerprints[variant]
+    if entry_pairs:
+        expected = {0: 3, 4: 4, 8: 4, 17: 4, 65: 2, 129: 3}
+    if zen4_short:
+        expected = {**expected, 0: 3, 4: 2, 8: 2}
     if short_scalar:
         expected = {**expected, 17: 2}
     for n, count in expected.items():
@@ -198,9 +256,10 @@ if wide and variant == "medium_first":
 if wide and variant == "straight_1k":
     for n in (513, 767, 768, 1023, 1024):
         text = class_path("x86_64.move.kernel", n)
-        require("%zmm31" in text and "vzeroupper" not in text, f"move/{n} lacks the 16-register class")
+        count = 12 if medium_chunks and n <= 768 else 16
+        require(f"%zmm{15 + count}" in text and "vzeroupper" not in text, f"move/{n} lacks the {count}-register class")
         require(not re.search(r"%[yz]mm(?:[0-9]|1[0-5])\b", text), f"move/{n} dirties the low vector bank")
-        require(len(re.findall(r"vmovdqu64", text)) == 32, f"move/{n} has wrong vector count")
+        require(len(re.findall(r"vmovdqu64", text)) == 2 * count, f"move/{n} has wrong vector count")
 if wide and args.experiment in ("medium_layout", "medium_entry") and cpu == "graniterapids":
     for op in ("move", "set"):
         require(syms[f"x86_64.{op}.kernel"][0] % 16 == 0, f"{op} entry lacks 16-byte alignment")
@@ -234,6 +293,8 @@ for n in range(65):
             budget = 8 if medium_entry or variant == "medium_first" else 6
         elif n < 4:
             budget = 16 if medium_entry or variant == "medium_first" else 14
+            if zen4_short and n > 1:
+                budget += 2
         else:
             budget = 14 if n < 64 else 18
         require(len(text.splitlines()) <= budget, f"small move/{n} exceeds instruction budget")
@@ -262,12 +323,12 @@ for op in ("move", "set"):
                     f"kernel {op}/{n} dirties the low vector bank")
         if wide and variant in reordered_variants and n in (65, 128, 129, 256):
             branches = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
-            require(branches == ((2 if n <= 128 else 3) if variant == "medium_first" or medium_entry else (3 if n <= 128 else 4)), f"kernel {op}/{n} has excess dispatch")
+            require(branches == ((2 if n <= 128 else 3) if variant == "medium_first" or medium_entry or (zen4_short and op == "set") else (3 if n <= 128 else 4)), f"kernel {op}/{n} has excess dispatch")
         paths.append(n)
     if high_regs:
         for n in (33, 63):
             text = class_path(name, n)
-            register = "%xmm" if (variant in (*compact_variants, "medium_first") or short_scalar) and op == "move" else "%ymm16"
+            register = "%ymm16" if entry_pairs and op == "move" else "%xmm" if (variant in (*compact_variants, "medium_first") or short_scalar) and op == "move" else "%ymm16"
             require(register in text and "vzeroupper" not in text,
                     f"kernel {op}/{n} lacks clean high registers")
     kernel_counts[op] = paths
@@ -292,12 +353,16 @@ for op in ("move", "set"):
             if wide and op == "move" and variant in reordered_variants:
                 budget = ({1: 15, 4: 10, 8: 8, 15: 8} if variant == "tiered" else
                           {1: 13, 4: 15, 8: 15, 15: 15})[n]
-            if variant == "medium_first" or medium_entry:
+            if variant == "medium_first" or medium_entry or (zen4_short and op == "set"):
                 budget += 2
+            if zen4_short and op == "move":
+                budget = 15
+            if entry_pairs and op == "move":
+                budget = 14
             if high_regs and op == "set" and variant in reordered_variants:
                 # The return-register move precedes the stores. Total work stays unchanged.
-                budget = 14 if variant == "medium_first" or medium_entry else 12
-                require(len(lines) <= (16 if variant == "medium_first" or medium_entry else 14), f"small set/{n} exceeds total instruction budget")
+                budget = 16 if zen4_short else 14 if variant == "medium_first" or medium_entry else 12
+                require(len(lines) <= (18 if zen4_short else 16 if variant == "medium_first" or medium_entry else 14), f"small set/{n} exceeds total instruction budget")
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))
@@ -310,6 +375,13 @@ for op, kernel in (("copy", "move"), ("move", "move"), ("set", "set")):
     if code[0][0] != kernel_address:
         require(len(code) == 1 and code[0][1].startswith("jmp"), f"ABI {op} is not one direct branch")
         require(f"0x{kernel_address:x} " in code[0][1], f"ABI {op} branches elsewhere")
+
+if high_regs:
+    for name in ("x86_64.move.kernel", "x86_64.move.moveKernel", "x86_64.set.kernel"):
+        fill = ".set." in name
+        limit = 1024 if (medium_chunks if fill else variant == "straight_1k") else 512
+        for n in range(64, limit + 1):
+            check_medium_bytes(name, n, fill=fill)
 
 large_paths = {}
 for op, name in (("copy", "x86_64.move.copyLarge"),

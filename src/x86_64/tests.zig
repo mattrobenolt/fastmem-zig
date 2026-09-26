@@ -17,12 +17,12 @@ fn pattern(bytes: []u8) void {
 
 const lengths = [_]u32{
     // Scalar and vector classes.
-    0,    1,     2,     3,     4,     7,    8,    15,   16,   31,   32,
-    63,   64,    65,    127,   128,   129,  255,  256,  257,
+    0,    1,    2,    3,    4,     7,     8,     15,    16,   31,   32,
+    63,   64,   65,   127,  128,   129,   255,   256,   257,
     // Loop and string thresholds.
-     511,  512,
-    513,  767,   768,   769,   1023,  1024, 1025, 2048, 2049, 4095, 4096,
-    4097, 16383, 16384, 16385, 32768,
+     383,  384,
+    385,  511,  512,  513,  767,   768,   769,   1023,  1024, 1025, 2048,
+    2049, 4095, 4096, 4097, 16383, 16384, 16385, 32768,
 };
 const gaps = [_]u32{
     0,    1,    31,   33,   63,   64,   128,  255,  256,
@@ -43,7 +43,7 @@ test "x86: class edges and 4K alias overlap in both directions" {
                     const source = offset + if (backward) @as(u32, 0) else gap;
                     const dest = offset + if (backward) gap else @as(u32, 0);
                     for (0..n) |i| expected[dest + i] = original[source + i];
-                    const result = move.kernel(got[dest..].ptr, got[source..].ptr, n);
+                    const result = move.moveKernel(got[dest..].ptr, got[source..].ptr, n);
                     try testing.expectEqual(@as(?*anyopaque, @ptrCast(got[dest..].ptr)), result);
                     try testing.expectEqualSlices(u8, &expected, &got);
                 }
@@ -90,7 +90,7 @@ test "x86: every ABI length through 1 KiB and overlapping vector fragment" {
                 const source = 1 + if (backward) @as(u32, 0) else gap;
                 const dest = 1 + if (backward) gap else @as(u32, 0);
                 for (0..n) |i| expected[dest + i] = original[source + i];
-                _ = move.kernel(got[dest..].ptr, got[source..].ptr, n);
+                _ = move.moveKernel(got[dest..].ptr, got[source..].ptr, n);
                 try testing.expectEqualSlices(u8, &expected, &got);
             }
         }
@@ -114,6 +114,30 @@ test "x86: compiler-rt compact fragments cover every short overlap and offset" {
                     compact.quad(@Vector(16, u8), got[dest..].ptr, got[source..].ptr, n);
                 }
                 try testing.expectEqualSlices(u8, &expected, &got);
+            }
+        }
+    }
+}
+
+test "x86: compiler-rt copy fragments preserve disjoint endpoints and canaries" {
+    var source: [128]u8 = undefined;
+    pattern(&source);
+    for (1..16) |n| {
+        for (0..64) |source_offset| {
+            for (0..64) |dest_offset| {
+                var got: [128]u8 = @splat(0xa5);
+                if (n < 4) {
+                    compact.copyBytes(got[dest_offset..].ptr, source[source_offset..].ptr, n);
+                } else {
+                    compact.copyQuad(u32, got[dest_offset..].ptr, source[source_offset..].ptr, n);
+                }
+                try testing.expectEqualSlices(
+                    u8,
+                    source[source_offset..][0..n],
+                    got[dest_offset..][0..n],
+                );
+                for (got[0..dest_offset]) |byte| try testing.expectEqual(@as(u8, 0xa5), byte);
+                for (got[dest_offset + n ..]) |byte| try testing.expectEqual(@as(u8, 0xa5), byte);
             }
         }
     }

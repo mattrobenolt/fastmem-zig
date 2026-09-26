@@ -107,12 +107,24 @@ pub noinline fn moveKernel(
     n: usize,
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    // Shared candidate bodies keep level objects identical after LLVM merges aliases.
+    if (comptime tuning.entry_pairs and ops.high_available) return copyPairs(dst, src, n);
     if (comptime ops.high_available and (t.medium_first or tuning.medium_entry)) {
         if (n >= 64) return mediumReordered(dst, src, n);
     }
     // Zero permits null pointers, so form only non-optional pointers after it.
     if (n <= 3) {
-        if (n != 0) compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+        if (n != 0) {
+            if (comptime tuning.zen4_short) {
+                if (n == 1) {
+                    const d: [*]u8 = @ptrCast(dst.?);
+                    const s: [*]const u8 = @ptrCast(src.?);
+                    d[0] = s[0];
+                    return dst;
+                }
+            }
+            compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+        }
         return dst;
     }
     const d: [*]u8 = @ptrCast(dst.?);
@@ -163,12 +175,15 @@ pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: u
     }
 }
 
+// The ABI memcpy entry requires disjoint buffers, unlike moveKernel.
 pub noinline fn kernel(
     dst: ?*anyopaque,
     src: ?*const anyopaque,
     n: usize,
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime tuning.entry_pairs and ops.high_available)
+        return copyPairs(dst, src, n);
     if (comptime tuning.reordered and ops.high_available) return reordered(dst, src, n);
     if (n <= 16) {
         if (n == 0) return dst;
@@ -207,6 +222,33 @@ pub noinline fn kernel(
     return @call(tail_call, mediumKernel, .{ dst, src, n });
 }
 
+// This copy candidate keeps the measured medium-first tree and entry alignment.
+// Its small classes match the move pairs without a new wrapper around moveKernel.
+inline fn copyPairs(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
+    if (n >= 64) {
+        @branchHint(.likely);
+        return mediumReordered(dst, src, n);
+    }
+    if (n <= 3) {
+        if (n != 0) compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+        return dst;
+    }
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n <= 16) {
+        if (n >= 8) {
+            pair(u64, d, s, n);
+        } else {
+            pair(u32, d, s, n);
+        }
+    } else if (n <= 32) {
+        pair(@Vector(16, u8), d, s, n);
+    } else {
+        ops.highMove(32, 2, d, s, n);
+    }
+    return dst;
+}
+
 // These experiments retain the measured large policy and all inline classes.
 inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
     if (comptime t.medium_first or tuning.medium_entry) {
@@ -215,9 +257,15 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
             return mediumReordered(dst, src, n);
         }
     }
-    const short_limit = if (tuning.compact_short) 15 else 16;
+    const short_limit = if (tuning.compact_short or tuning.zen4_short) 15 else 16;
     if (n <= short_limit) {
-        if (tuning.compact_short) {
+        if (tuning.zen4_short) {
+            if (n >= 4) {
+                compact.copyQuad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
+            } else if (n != 0) {
+                compact.copyBytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+            }
+        } else if (tuning.compact_short) {
             if (n >= 4) {
                 compact.quad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
             } else if (n != 0) {
@@ -260,6 +308,7 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
 }
 
 inline fn mediumReordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
+    if (comptime tuning.medium_chunks) return mediumChunks(dst, src, n);
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
     if (n <= 128) {
@@ -270,6 +319,31 @@ inline fn mediumReordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*
         ops.highMove(64, 8, d, s, n);
     } else if (t.abi_move_max == 1024 and n <= 1024) {
         ops.highMove(64, 16, d, s, n);
+    } else {
+        return @call(.always_tail, largeKernel, .{ dst, src, n });
+    }
+    return dst;
+}
+
+inline fn mediumChunks(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n <= 128) {
+        ops.highMove(t.medium_vec, 128 / t.medium_vec, d, s, n);
+    } else if (n <= 256) {
+        ops.highMove(t.medium_vec, 256 / t.medium_vec, d, s, n);
+    } else if (n <= 512) {
+        if (tuning.medium_chunks and n <= 384) {
+            ops.highMove(64, 6, d, s, n);
+        } else {
+            ops.highMove(64, 8, d, s, n);
+        }
+    } else if (t.abi_move_max == 1024 and n <= 1024) {
+        if (tuning.medium_chunks and n <= 768) {
+            ops.highMove(64, 12, d, s, n);
+        } else {
+            ops.highMove(64, 16, d, s, n);
+        }
     } else {
         return @call(.always_tail, largeKernel, .{ dst, src, n });
     }
@@ -476,14 +550,14 @@ fn stream(dst: [*]u8, src: [*]const u8, n: usize) void {
     _ = small(8 * w, dst + n - 4 * w, src + n - 4 * w, 4 * w);
 }
 
-/// The dispatch layer handles every size through 128 bytes before this entry.
-pub noinline fn kernelAbove128(
+/// The dispatch layer handles every size through its small limit before this entry.
+pub noinline fn kernelAboveSmall(
     dst: ?*anyopaque,
     src: ?*const anyopaque,
     n: usize,
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n <= 128) unreachable;
+    if (n <= tuning.dispatch_small_max) unreachable;
     if (comptime ops.high_available) return mediumReordered(dst, src, n);
     if (!small(8 * w, @ptrCast(dst.?), @ptrCast(src.?), n))
         return @call(tail_call, largeKernel, .{ dst, src, n });

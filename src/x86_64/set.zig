@@ -72,14 +72,22 @@ pub noinline fn kernel(
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    if (comptime (t.medium_first or tuning.medium_entry) and ops.high_available) {
+    const medium_first = t.medium_first or tuning.medium_entry or tuning.zen4_short;
+    if (comptime medium_first and ops.high_available) {
         if (n >= 64) {
-            @branchHint(.likely);
+            @branchHint(if (tuning.entry_pairs) .unlikely else .likely);
             return mediumReordered(dst, value, n);
         }
     }
     if (n <= 16) {
         if (n == 0) return dst;
+        if (comptime tuning.zen4_short) {
+            if (n == 1) {
+                const d: [*]u8 = @ptrCast(dst.?);
+                d[0] = byte;
+                return dst;
+            }
+        }
         const d: [*]u8 = @ptrCast(dst.?);
         if (n >= 8) {
             pair(8, d, byte, n);
@@ -127,6 +135,7 @@ pub noinline fn kernel(
 }
 
 inline fn mediumReordered(dst: ?*anyopaque, value: c_int, n: usize) ?*anyopaque {
+    if (comptime tuning.medium_chunks) return mediumChunks(dst, value, n);
     const d: [*]u8 = @ptrCast(dst.?);
     if (n <= 128) {
         ops.highSet(t.medium_vec, 128 / t.medium_vec, d, value, n);
@@ -134,6 +143,30 @@ inline fn mediumReordered(dst: ?*anyopaque, value: c_int, n: usize) ?*anyopaque 
         ops.highSet(t.medium_vec, 256 / t.medium_vec, d, value, n);
     } else if (n <= 512) {
         ops.highSet(64, 8, d, value, n);
+    } else {
+        return @call(.always_tail, largeKernel, .{ dst, value, n });
+    }
+    return dst;
+}
+
+inline fn mediumChunks(dst: ?*anyopaque, value: c_int, n: usize) ?*anyopaque {
+    const d: [*]u8 = @ptrCast(dst.?);
+    if (n <= 128) {
+        ops.highSet(t.medium_vec, 128 / t.medium_vec, d, value, n);
+    } else if (n <= 256) {
+        ops.highSet(t.medium_vec, 256 / t.medium_vec, d, value, n);
+    } else if (n <= 512) {
+        if (tuning.medium_chunks and n <= 384) {
+            ops.highSet(64, 6, d, value, n);
+        } else {
+            ops.highSet(64, 8, d, value, n);
+        }
+    } else if (tuning.medium_chunks and n <= 1024) {
+        if (n <= 768) {
+            ops.highSet(64, 12, d, value, n);
+        } else {
+            ops.highSet(64, 16, d, value, n);
+        }
     } else {
         return @call(.always_tail, largeKernel, .{ dst, value, n });
     }
@@ -199,14 +232,14 @@ fn stream(dst: [*]u8, value: u8, n: usize) void {
     ops.store(V, dst + n - w, v);
 }
 
-/// The dispatch layer handles every size through 128 bytes before this entry.
-pub noinline fn kernelAbove128(
+/// The dispatch layer handles every size through its small limit before this entry.
+pub noinline fn kernelAboveSmall(
     dst: ?*anyopaque,
     value: c_int,
     n: usize,
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n <= 128) unreachable;
+    if (n <= tuning.dispatch_small_max) unreachable;
     if (comptime ops.high_available) return mediumReordered(dst, value, n);
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
     if (!small(8 * w, true, @ptrCast(dst.?), byte, n))

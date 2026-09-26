@@ -1,9 +1,8 @@
 //! The resolver-trap fixture (docs/runtime-dispatch.md). build.zig links it
-//! with a fastmem module whose dispatch resolvers execute ud2. Every path
-//! copies, moves, and fills 0 to 128 bytes, then the program prints
-//! "small ok" and makes one 129-byte call. src/x86_64/run_dispatch.py
-//! requires the line and then SIGILL: the small sizes never consulted the
-//! dispatcher, and the first large size did.
+//! with a fastmem module whose dispatch resolvers execute ud2.
+//! Every path covers lengths through the configured ABI limit.
+//! The program prints "small ok" before its first ABI call above that limit.
+//! src/x86_64/run_dispatch.py requires the line and then SIGILL.
 const std = @import("std");
 const fastmem = @import("fastmem");
 const linux = std.os.linux;
