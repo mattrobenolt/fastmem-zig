@@ -200,11 +200,15 @@ def check_probe(obj):
                       if re.search(r", [^%]*\([^)]*\)$", insn)]
             first_stores[n] = stores[0] if stores else None
             if n == 0:
-                require(not stores and len(text) <= 4, f"{entry}/0 exceeds the immediate-return budget")
+                require(not stores and len(text) <= 6, f"{entry}/0 exceeds the tiny-return budget")
             elif n < 4:
-                budget = 11 if op != "memset" else 6
+                budget = 10 if op != "memset" else 5
                 require(stores and stores[0] <= budget, f"{entry}/{n} exceeds the first-store budget")
                 require(len(text) <= (14 if op != "memset" else 11), f"{entry}/{n} exceeds the byte-class budget")
+            else:
+                budgets = (21, 23, 26) if op != "memset" else (20, 25, 22)
+                budget = budgets[0 if n < 16 else 1 if n < 64 else 2]
+                require(len(text) <= budget, f"{entry}/{n} exceeds the small-class budget")
         # Every decision uses an immediate comparison with unchanged RDX.
         # The boundary points cover every unsigned interval of that tree.
         boundaries = {129, 4096, 1 << 26, (1 << 64) - 1}

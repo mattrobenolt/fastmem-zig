@@ -106,8 +106,8 @@ pub const small_max = 128;
 
 pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n == 0) return dest;
-    if (n < 4) {
+    if (n <= 3) {
+        if (n == 0) return dest;
         compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
         return dest;
     }
@@ -120,8 +120,8 @@ pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) 
 
 pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n == 0) return dest;
-    if (n < 4) {
+    if (n <= 3) {
+        if (n == 0) return dest;
         compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
         return dest;
     }
@@ -134,8 +134,8 @@ pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c)
 
 pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
-    if (n == 0) return dest;
-    if (n < 4) {
+    if (n <= 3) {
+        if (n == 0) return dest;
         const d: [*]u8 = @ptrCast(dest.?);
         const value: u8 = @truncate(@as(c_uint, @bitCast(c)));
         d[0] = value;
@@ -196,15 +196,20 @@ inline fn quadStore(comptime T: type, d: [*]u8, v: T, n: usize) void {
 }
 
 /// The large paths of the inline layer call the pointers directly, with
-/// no entry jump.
+/// no entry jump. The returned function requires n > 128.
+/// A call with n <= 128 has undefined behavior in ReleaseFast.
 pub inline fn copyPointer() CopyFn {
     return @atomicLoad(CopyFn, &copy_fn, .monotonic);
 }
 
+/// The returned function requires n > 128.
+/// A call with n <= 128 has undefined behavior in ReleaseFast.
 pub inline fn movePointer() CopyFn {
     return @atomicLoad(CopyFn, &move_fn, .monotonic);
 }
 
+/// The returned function requires n > 128.
+/// A call with n <= 128 has undefined behavior in ReleaseFast.
 pub inline fn setPointer() SetFn {
     return @atomicLoad(SetFn, &set_fn, .monotonic);
 }
