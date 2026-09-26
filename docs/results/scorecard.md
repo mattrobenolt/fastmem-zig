@@ -465,3 +465,57 @@ All seven ReleaseFast `install` rows pass.
 The changed comptime `x86_64_v3` build passes 28,047,836 guard cases under `qemu-x86_64 -cpu max`.
 The Arm kernel-byte gate still passes without another re-pin.
 The exact fleet commands above remain the acceptance procedure.
+
+
+### V1 carve-out after the fleet A/B, 2026-09-26
+
+The run directory is `bench-results/20260926T085954Z-smallmove/`.
+The NEON move candidate regressed c7g, so Neoverse V1 now restores the previous hybrid head.
+It uses the scalar tree below 16 bytes and the SVE pair through `2*VL`.
+V1 has a 256-bit SVE width, so the pair covers 16–64 bytes.
+V2/V3 retain the new NEON classes.
+
+The c7g report contains these `fastmem_abi/glibc` ratios:
+
+| Case | v0: hybrid | v1: NEON candidate |
+|---|---:|---:|
+| disjoint/16 | 1.0001 | 1.1667 |
+| fwd-gap1/48 | 1.0015 | 1.1464 |
+| fwd-gap1/63 | 1.0016 | 1.1202 |
+| fwd-gap1/64 | 1.0009 | 1.1333 |
+| fwd-gap4096/48 | 1.0426 | 1.4358 |
+| fwd-gap4096/63 | 1.0033 | 1.2971 |
+| fwd-gap4096/64 | 1.0210 | 1.4732 |
+| fwd-gap31/16 | 0.9999 | 1.1666 |
+| fwd-gap31/24 | 1.0001 | 0.4795 |
+| fwd-gap31/31 | 1.0002 | 0.4418 |
+
+The carve-out gives up the V1 gap31/24 and gap31/31 wins to remove the broader regressions.
+It restores the exact V1 move bytes from before `802f5e3`.
+Only the V1 move entry changes in the Arm kernel pins.
+V2 now has a separate move pin because it no longer shares V1's move bytes.
+Copy and set remain unchanged on every model.
+
+The existing implementation names distinguish the selected kernels:
+
+- V1: `aor-sve-5e20a93+small-hybrid`.
+- V2/V3: `aor-sve-5e20a93+small-neon-exact16-v1`.
+
+The name test now covers the restored hybrid path.
+The parent will repeat the fleet comparison on c7g, c8g, and c9g.
+The carve-out does not constitute performance acceptance.
+
+
+Validation passes 348/348 steps and 38/38 tests for `test`, `test-export`, `test-dispatch`, and `codegen-x86`.
+`just test` and all seven ReleaseFast `install` rows pass.
+All three Arm unit binaries also pass under QEMU, including the implementation-name test.
+
+Each Arm model passes 28,047,836 QEMU guard cases through 1 MiB.
+V1 uses `-cpu max,sve-max-vq=2`.
+V2/V3 use `-cpu max,sve-max-vq=1`.
+An independent `cntb` probe confirms vector widths of 32 and 16 bytes.
+
+A byte comparison against the preceding candidate covers the ABI kernels on all seven targets.
+Only V1 move differs, and its bytes match the pre-`802f5e3` binary exactly.
+The evidence resides in `.bench-cache/small-moves/v1-carveout/`.
+`ziglint src/` reports the same 18 existing findings.

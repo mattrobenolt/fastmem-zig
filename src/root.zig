@@ -397,6 +397,9 @@ test "implementation names distinguish the move-only small classes" {
     if (on_aarch64_sve and arm_tuning.move_small == .neon) {
         try testing.expectEqualStrings("aor-sve-5e20a93+small-neon-exact16-v1", impl.move);
     }
+    if (on_aarch64_sve and arm_tuning.move_small == .hybrid) {
+        try testing.expectEqualStrings("aor-sve-5e20a93+small-hybrid", impl.move);
+    }
 }
 
 test "copy: all size classes" {

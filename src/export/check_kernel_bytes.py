@@ -1,4 +1,4 @@
-"""Pin the measured aarch64 instruction bytes (updated for move-only exact-16 classes).
+"""Pin the aarch64 instruction bytes, with the V1 hybrid move head restored.
 
 Update GOLDEN only in a commit that deliberately changes kernel bytes.
 """
@@ -19,7 +19,7 @@ GOLDEN = {
     "neoverse_v1": {
         "set": (256, "90f42348d31f9f25412aab25f7feeb3acd6652ffbe1772321525fd4bc253e8a0"),
         "copy": (496, "687eb66c4b79b9b512e6454b4bf38301757aa4b7cc94d89825b3d90cf64d0d5d"),
-        "move": (192, "d83d946a28edb3ee6f8918234a3eb7b05eb9f6e0aad47d05f4f5e045179b1479"),
+        "move": (192, "fb44ddb4077266857e85ac46639d2a4e142a8ff1e7da83afd06eca6281fb229a"),
     },
     "neoverse_v3": {
         "set": (336, "6a38736588879006b6c9ae1bfc52574b34696143e7e3310538f0075b4e8347b0"),
@@ -27,7 +27,11 @@ GOLDEN = {
         "move": (192, "2928e9a9c2d7c03b51cdbc3a6896ccef36faf78ab1167e67b21feea7cfc639ab"),
     },
 }
-GOLDEN["neoverse_v2"] = GOLDEN["neoverse_v1"]
+# Copy and set match V1. V2 retains the new NEON move head.
+GOLDEN["neoverse_v2"] = {
+    **GOLDEN["neoverse_v1"],
+    "move": (192, "d83d946a28edb3ee6f8918234a3eb7b05eb9f6e0aad47d05f4f5e045179b1479"),
+}
 
 
 def main():

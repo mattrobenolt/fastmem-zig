@@ -16,8 +16,8 @@
 //! one vector at 16 bytes. The rejected plain NEON pair wrote the same bytes twice.
 //! The previous hybrid head did not duplicate that store.
 //! The candidate improves local V3 calls at 16–32 bytes.
-//! The candidate replaces the hybrid head on the three Graviton targets.
-//! Local V3 evidence appears in docs/results/scorecard.md. Fleet acceptance remains pending.
+//! V1 retains the hybrid head after the NEON candidate regressed fleet measurements.
+//! V2/V3 retain the new NEON classes. Evidence appears in docs/results/scorecard.md.
 //!
 //! For set:
 //! - sve:    the AOR memset-sve.S predicated store below 16.
@@ -70,10 +70,12 @@ const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 // lost (c8g copy 17-64 B 1.12x glibc, c7g copy 65-256 B 1.06x), so copy
 // keeps the SVE pair there; move and set follow the A/B winners.
 const default_copy_small: CopySmall = if (on_neoverse_v3) .neon else .sve;
-// The candidate improves local V3 calls at 16–32 bytes versus the hybrid head.
-// The exact-16 class avoids the duplicate store of the rejected plain NEON pair.
-// The fleet must accept V1/V2, especially V1 forward-gap1/16 and 33..64 bytes.
-const default_move_small: CopySmall = if (on_neoverse_v3 or on_neoverse_v1 or on_neoverse_v2)
+// V1 retains its SVE pair through 2*VL after the NEON regression in
+// bench-results/20260926T085954Z-smallmove (docs/results/scorecard.md).
+// V2/V3 retain the NEON classes and the exact-16 transfer.
+const default_move_small: CopySmall = if (on_neoverse_v1)
+    .hybrid
+else if (on_neoverse_v2 or on_neoverse_v3)
     .neon
 else
     .sve;
