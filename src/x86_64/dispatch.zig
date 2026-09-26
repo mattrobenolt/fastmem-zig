@@ -125,7 +125,7 @@ fn kernels(comptime l: Level) Kernels {
 
 fn genericName() callconv(.c) [*:0]const u8 {
     @disableIntrinsics();
-    return "zig-simd";
+    return "zig-simd" ++ if (small_max == 64) "+above64" else "";
 }
 
 var copy_fn: CopyFn = &resolveCopy;

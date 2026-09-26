@@ -121,7 +121,7 @@ pub const high_regs = variant != .entry and avx512 and
 pub const reordered = high_regs and variant != .high_regs;
 pub const compact_short = variant != .tiered;
 pub const small_masked_set = options.x86_small_masked_set;
-pub const name: []const u8 = if (reordered)
+const base_name: []const u8 = if (reordered)
     "x86-avx512-" ++ @tagName(variant) ++ "-v3"
 else if (high_regs)
     "x86-avx512-high-regs-v2"
@@ -130,8 +130,20 @@ else if (vec == 64)
 else
     "x86-avx2-entry-v2";
 
-// Copy and set retain their identifiers. Move has a separate small entry.
-pub const move_name = name ++ "+move-pairs-v1";
+pub const experiment_suffix = switch (experiment) {
+    .auto, .none, .medium_layout, .medium_entry, .small_paths => "",
+    else => "+" ++ @tagName(experiment),
+};
+const model_suffix = if (entry_pairs or medium_chunks or source_early or source_64 or temporal_large)
+    experiment_suffix
+else
+    "";
+pub const name = base_name ++ model_suffix;
+pub const set_name = base_name ++ if (medium_chunks) experiment_suffix else "";
+pub const move_name = if (entry_pairs and high_regs and builtin.zig_backend == .stage2_llvm)
+    name
+else
+    base_name ++ "+move-pairs-v1" ++ if (zen4_short) experiment_suffix else model_suffix;
 
 comptime {
     if (available) {

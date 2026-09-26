@@ -12,7 +12,10 @@ const tuning = @import("tuning.zig");
 
 // The same names as `kernels` in dispatch.zig: prefix, instance, level.
 const prefix = "fastmem_x86_" ++ options.x86_instance ++ "_" ++ builtin.cpu.model.name ++ "_";
-const kernel_name = std.fmt.comptimePrint("{s}", .{tuning.move_name});
+const kernel_name = std.fmt.comptimePrint("{s}{s}", .{
+    tuning.move_name,
+    if (tuning.dispatch_small_max == 64) "+above64" else "",
+});
 
 comptime {
     if (!tuning.available) @compileError("a dispatch level object requires AVX2");

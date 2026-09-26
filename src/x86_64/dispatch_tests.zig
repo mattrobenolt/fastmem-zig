@@ -108,7 +108,7 @@ test "dispatch: the ABI entries are the dispatch stubs" {
     try testing.expect(fastmem.abi.memcpy == &x86_dispatch.memcpy);
     try testing.expect(fastmem.abi.memmove == &x86_dispatch.memmove);
     try testing.expect(fastmem.abi.memset == &x86_dispatch.memset);
-    try testing.expectEqualStrings("x86-dispatch", fastmem.impl.copy);
+    try testing.expect(std.mem.startsWith(u8, fastmem.impl.copy, "x86-dispatch"));
 }
 
 test "dispatch: the detected level is supported and names its kernel" {
@@ -119,7 +119,10 @@ test "dispatch: the detected level is supported and names its kernel" {
         try testing.expectError(error.Unsupported, dispatch.force(.x86_64_v4));
     try testing.expect(dispatch.kernelName().?.len > 0);
     try dispatch.force(.generic);
-    try testing.expectEqualStrings("zig-simd", dispatch.kernelName().?);
+    try testing.expectEqualStrings(
+        if (dispatch.small_max == 64) "zig-simd+above64" else "zig-simd",
+        dispatch.kernelName().?,
+    );
     try dispatch.force(detected);
 }
 
