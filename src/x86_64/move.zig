@@ -7,7 +7,7 @@ const tuning = @import("tuning.zig");
 const t = tuning.selected;
 const source_loop = t.copy_source_min != null or t.fwd_source_min != null;
 // Keep the temporal loops in the same kernel on both sides of dispatch.
-const temporal_call = if (t.copy_source_min != null) .always_inline else .auto;
+const temporal_call = if (source_loop) .always_inline else .auto;
 const w = ops.width;
 const V = ops.vector;
 pub const Overlap = enum { may_overlap, disjoint };
