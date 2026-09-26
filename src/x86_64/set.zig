@@ -79,6 +79,10 @@ pub noinline fn kernel(
             return mediumReordered(dst, value, n);
         }
     }
+    // This check stays below the medium return, so medium calls pay no new predicate.
+    if (comptime tuning.entry_pairs and ops.high_available) {
+        if (n == 0) return dst;
+    }
     if (n <= 16) {
         if (n == 0) return dst;
         if (comptime tuning.zen4_short) {
