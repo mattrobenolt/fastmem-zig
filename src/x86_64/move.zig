@@ -332,7 +332,11 @@ fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
 
 // One vector per source iteration avoids the 2 KiB unroll of forward().
 // The saved endpoints permit strict source alignment without out-of-range access.
-noinline fn forwardSource(dest: ?*anyopaque, source: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn forwardSource(
+    dest: ?*anyopaque,
+    source: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const dst: [*]u8 = @ptrCast(dest.?);
     const src: [*]const u8 = @ptrCast(source.?);
@@ -398,7 +402,7 @@ pub noinline fn kernelAbove128(
     dst: ?*anyopaque,
     src: ?*const anyopaque,
     n: usize,
-) callconv(.c) ?*anyopaque {
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= 128) unreachable;
     if (comptime ops.high_available) return mediumReordered(dst, src, n);

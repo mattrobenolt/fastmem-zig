@@ -200,7 +200,11 @@ fn stream(dst: [*]u8, value: u8, n: usize) void {
 }
 
 /// The dispatch layer handles every size through 128 bytes before this entry.
-pub noinline fn kernelAbove128(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernelAbove128(
+    dst: ?*anyopaque,
+    value: c_int,
+    n: usize,
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= 128) unreachable;
     if (comptime ops.high_available) return mediumReordered(dst, value, n);
