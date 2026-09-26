@@ -10,7 +10,7 @@ parser.add_argument("cpu")
 parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"))
 parser.add_argument("artifact")
 parser.add_argument("--experiment", default="auto",
-                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch"))
+                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch", "x86f_temporal"))
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
 auto = args.experiment == "auto" or args.experiment.startswith("x86f_")
