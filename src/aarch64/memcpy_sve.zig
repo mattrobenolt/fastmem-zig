@@ -57,8 +57,17 @@ const copy_v = tuning.copy_small;
 const move_v = tuning.move_small;
 // The move NEON head has an exact 16-byte class, unlike copy.
 const aliased = copy_v == move_v and move_v != .neon;
-const need_sve_mid = copy_v == .sve or move_v == .sve;
-const need_neon_mid = copy_v != .sve or move_v != .sve;
+// The hybrid head routes n > 2*VL straight to the SVE mid block (its
+// 128-byte check sits in the head), so hybrid needs mid_sve too.
+const need_sve_mid = copy_v != .neon or move_v != .neon;
+const need_neon_mid = copy_v == .neon or move_v == .neon;
+// Neoverse V3 copy: the neon head ends in the 16..32 test laid out so
+// that n > 32 falls through into the mid block instead of branching to
+// it. One fewer predicted-taken branch at 33..128 and above (the mid
+// block itself was 1.25x glibc at misaligned/48 after the pair swap
+// with both taken branches in place). Only valid when mid_neon follows
+// the copy head directly, which needs the SVE mid absent.
+const v3_copy_fallthrough = tuning.on_neoverse_v3 and copy_v == .neon and !need_sve_mid;
 
 // Upstream small head: one predicated pair covers 0..2*VL.
 const head_sve =
@@ -158,6 +167,29 @@ fn head_neon(comptime p: []const u8) []const u8 {
         \\    ret
         \\
     ;
+    if (comptime (std.mem.eql(u8, p, "cpy") and v3_copy_fallthrough))
+        // Inverted 32 test: 16..32 branches out, 33+ falls through into
+        // the mid block, which copyEntry must emit immediately after.
+        return std.fmt.comptimePrint(
+            \\    cmp    x2, 16
+            \\    b.hs    .Lfm_sve_{s}_ge16
+            \\
+        , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
+            \\    .p2align 4
+            \\.Lfm_sve_{s}_le32:
+            \\    add    x4, x1, x2
+            \\    ldr    q0, [x1]
+            \\    ldr    q1, [x4, -16]
+            \\    add    x5, x0, x2
+            \\    str    q0, [x0]
+            \\    str    q1, [x5, -16]
+            \\    ret
+            \\
+            \\    .p2align 4
+            \\.Lfm_sve_{s}_ge16:
+            \\    cmp    x2, 32
+            \\    b.ls    .Lfm_sve_{s}_le32
+        , .{ p, p, p });
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
         \\    b.hs    .Lfm_sve_{s}_ge16
@@ -180,6 +212,12 @@ fn head_neon(comptime p: []const u8) []const u8 {
 
 // Hybrid head: the tree below 16, the predicated SVE pair for
 // 16..2*VL. The cntb sits in the >= 16 block: the tree never needs it.
+// The >= 16 block checks 128 before 2*VL and routes (2*VL, 128]
+// straight to the SVE mid block: going through the neon mid entry paid
+// one extra taken branch plus its repeated 128/64 checks, which
+// measured 1.09-1.43x glibc at move 96..256 on Neoverse V1 (run
+// 20260926T112106Z-smallmove-v1). The pair path pays one not-taken
+// cmp; glibc's memmove entry checks 128 first too.
 fn head_hybrid(comptime p: []const u8) []const u8 {
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
@@ -189,8 +227,10 @@ fn head_hybrid(comptime p: []const u8) []const u8 {
         \\    .p2align 4
         \\.Lfm_sve_{s}_ge16:
         \\    cntb    x6
+        \\    cmp    x2, 128
+        \\    b.hi    .Lfm_sve_cpy_long
         \\    cmp    x2, x6, lsl 1
-        \\    b.hi    .Lfm_sve_cpy_gt32
+        \\    b.hi    .Lfm_sve_cpy32_128
         \\    whilelo p0.b, xzr, x2
         \\    whilelo p1.b, x6, x2
         \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
@@ -242,13 +282,19 @@ const mid_sve =
     \\
 ;
 
-// Neon mid block: 33..64 as four overlapping 16-byte chunks at 0, 16,
-// n-32, n-16 (beats the ldp/stp pair block on Neoverse V3; same shape
-// as the compiler-rt 16..63 class but with all loads before all
-// stores), 65..128 as the upstream overlapping 32-byte chunks.
-const mid_neon =
-    \\
-    \\    .p2align 4
+// Neon mid block. 33..128 is the upstream ldp/stp pair block (the same
+// shape as mid_sve and as glibc's __memcpy_sve at these sizes), entered
+// through the 128/64 checks instead of the SVE 2*VL compare. The
+// earlier 4x16-byte chunk block at 33..64 lost to the pair block under
+// misalignment on Neoverse V3 (copy/misaligned/48 at 1.50x glibc in
+// bench-results/20260926T112106Z-smallmove-v1; the pair shape runs the
+// same 4.00 cycles as glibc locally), while its only wins came on
+// profiles where glibc stalls on 4K aliasing (aligned, page-offset),
+// where parity with glibc is enough.
+const mid_neon = mid_neon_padded;
+const mid_neon_padded = "    .p2align 4\n" ++ mid_neon_body;
+const mid_neon_unpadded = mid_neon_body;
+const mid_neon_body =
     \\    // Entry for the inline layer's > 64 byte calls (tuning.mid_entry):
     \\    // skips the head's small-size dispatch, which the inline gate has
     \\    // already decided. Valid for any n > 64 and any overlap: the
@@ -261,27 +307,19 @@ const mid_neon =
     \\.Lfm_sve_cpy_gt32:
     \\    cmp    x2, 128
     \\    b.hi    .Lfm_sve_cpy_long
+    \\    add    x4, x1, x2
+    \\    add    x5, x0, x2
+    \\    ldp    q0, q1, [x1]
+    \\    ldp    q2, q3, [x4, -32]
     \\    cmp    x2, 64
     \\    b.hi    .Lfm_sve_cpy65_128
-    \\    add    x4, x1, x2
-    \\    ldr    q0, [x1]
-    \\    ldr    q1, [x1, 16]
-    \\    ldr    q2, [x4, -32]
-    \\    ldr    q3, [x4, -16]
-    \\    add    x5, x0, x2
-    \\    str    q0, [x0]
-    \\    str    q1, [x0, 16]
-    \\    str    q2, [x5, -32]
-    \\    str    q3, [x5, -16]
+    \\    stp    q0, q1, [x0]
+    \\    stp    q2, q3, [x5, -32]
     \\    ret
     \\
     \\    .p2align 4
     \\    // Copy 65..128 bytes.
     \\.Lfm_sve_cpy65_128:
-    \\    add    x4, x1, x2
-    \\    add    x5, x0, x2
-    \\    ldp    q0, q1, [x1]
-    \\    ldp    q2, q3, [x4, -32]
     \\    ldp    q4, q5, [x1, 32]
     \\    cmp    x2, 96
     \\    b.ls    .Lfm_sve_cpy96n
@@ -398,9 +436,13 @@ fn splitMoveEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.na
 }
 
 pub fn copyEntry() align(64) linksection(".text.fastmem_sve_pair") callconv(.naked) void {
+    const mid = if (need_neon_mid)
+        (if (v3_copy_fallthrough) mid_neon_unpadded else mid_neon)
+    else
+        "";
     asm volatile (".arch armv8-a+sve\n    hint 34\n" ++ head(copy_v, "cpy") ++
-            (if (need_sve_mid) mid_sve else "") ++
-            (if (need_neon_mid) mid_neon else "") ++ long_path ::: .{ .memory = true });
+            (if (v3_copy_fallthrough) mid else (if (need_sve_mid) mid_sve else "")) ++
+            (if (v3_copy_fallthrough) "" else mid) ++ long_path ::: .{ .memory = true });
 }
 
 pub const fastmem_sve_copy: *const fn (

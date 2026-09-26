@@ -49,7 +49,8 @@ const aarch64_cpu = std.Target.aarch64.cpu;
 
 const on_neoverse_v1 = builtin.cpu.model == &aarch64_cpu.neoverse_v1;
 const on_neoverse_v2 = builtin.cpu.model == &aarch64_cpu.neoverse_v2;
-const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
+// memcpy_sve.zig reads this for the V3 copy-head layout.
+pub const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 
 // V1 (c7g): the SVE small paths lose to the tree there. The predicated
 // pair costs 2.05-2.45x compiler-rt on the gap1 1..3 B move cases
