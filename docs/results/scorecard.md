@@ -67,8 +67,16 @@ fastmem is faster.
 - Goals: G1 PASS. G2 PASS: c8a set, c7g copy/set, c8g copy/set, c9g
   move/set. G3 PASS: set on c8i, c8a, c7g, c8g, c9g. The failing rows are
   listed below. G4 fails (the 0.90 target is not met on `dist/small` for
-  most targets). G5 PASS (docs/results/export-layer-0.16.md). G6: re-run
-  pending (the baseline run hit a full local disk).
+  most targets). G5 PASS (docs/results/export-layer-0.16.md). G6: measured for baseline
+  builds after P7 (runtime dispatch, 61e3ba4). fastmem_abi/compiler-rt at
+  0-16 / 17-64 / 65-256 B, baseline build on the x86 targets: c7i 1.03 /
+  0.82 / 0.70, c8i 1.02 / 0.83 / 0.70, c7a 1.11 / 0.89 / 0.76, c8a 1.01 /
+  0.97 / 0.84 (copy; move and set similar). Above 1 KiB it is 0.37-0.92.
+  set passes on c8a; copy and move fail on a few small rows (0-3 B entry
+  overhead, c8a 192 B and 64-256 KiB, c7a 511/768 B). P7b fixes those.
+  The baseline builds above run the c8a 64 MiB forward-overlap kernel
+  path 1.5-1.8x slower than compiler-rt; the same applies to the comptime
+  znver5 build, so it is a kernel gap, not a dispatch one. P7b covers it.
 
 ## Open gaps (next work)
 
