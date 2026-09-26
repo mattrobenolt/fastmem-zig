@@ -696,6 +696,31 @@ test "move: non-overlapping regions" {
     }
 }
 
+test "move: small ABI and inline classes preserve every surrounding byte" {
+    var original: [192]u8 = undefined;
+    for (&original, 0..) |*byte, i| byte.* = @truncate(i *% 37 +% 11);
+    for (0..65) |len| {
+        for ([_]usize{ 0, 1, 16, 31, 33 }) |gap| {
+            for (0..4) |offset| {
+                for (0..2) |direction| {
+                    const src = 32 + offset + if (direction == 0) gap else 0;
+                    const dst = 32 + offset + if (direction == 0) 0 else gap;
+                    var expected = original;
+                    for (0..len) |i| expected[dst + i] = original[src + i];
+                    var actual = original;
+                    const returned = abi.memmove(&actual[dst], &actual[src], len);
+                    try testing.expectEqual(@as(?*anyopaque, &actual[dst]), returned);
+                    try testing.expectEqualSlices(u8, &expected, &actual);
+                    actual = original;
+                    move(u8, actual[dst..][0..len], actual[src..][0..len]);
+                    try testing.expectEqualSlices(u8, &expected, &actual);
+                }
+            }
+        }
+    }
+    try testing.expectEqual(@as(?*anyopaque, null), abi.memmove(null, null, 0));
+}
+
 test "move: identity (dest == src)" {
     const sizes = [_]usize{ 0, 1, 3, 8, 16, 63, 64, 128, 256, 1024, 4096 };
     for (sizes) |len| {

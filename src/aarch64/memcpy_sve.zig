@@ -33,10 +33,10 @@
 //   laid out so 1..3 bytes fall through every branch), one overlapping
 //   16-byte pair for 16..32, and four overlapping 16-byte chunks for
 //   33..64; .hybrid is the tree below 16 and the SVE pair for 16..2*VL.
-//   When both entries select the same variant they share one aliased
-//   head, as upstream; otherwise each entry has its own head and both
-//   branch into the shared mid/long blocks. Everything above 64 bytes
-//   is upstream in all variants.
+//   The move NEON head uses one exact transfer at 16 bytes. It has a
+//   separate entry even when copy also selects NEON. Other equal variants
+//   share an entry. Both heads branch into the shared mid/long blocks.
+//   Everything above 64 bytes is upstream in all variants.
 //
 // Why the non-sve heads exist: on Neoverse V3 the predicated SVE pair
 // loses to plain NEON/scalar code below 32 bytes (fleet run
@@ -55,7 +55,8 @@ const enabled = builtin.cpu.arch == .aarch64 and
 
 const copy_v = tuning.copy_small;
 const move_v = tuning.move_small;
-const aliased = copy_v == move_v;
+// The move NEON head has an exact 16-byte class, unlike copy.
+const aliased = copy_v == move_v and move_v != .neon;
 const need_sve_mid = copy_v == .sve or move_v == .sve;
 const need_neon_mid = copy_v != .sve or move_v != .sve;
 
@@ -133,6 +134,30 @@ fn tree(comptime p: []const u8) []const u8 {
 // branch); the 1..3 class is the one the fleet shows failing G3, so
 // the trade goes this way.
 fn head_neon(comptime p: []const u8) []const u8 {
+    // The exact class avoids a second store to the same 16 bytes.
+    if (comptime std.mem.eql(u8, p, "mov")) return std.fmt.comptimePrint(
+        \\    cmp x2, 16
+        \\    b.hs .Lfm_sve_{s}_ge16
+        \\
+    , .{p}) ++ tree(p) ++
+        \\    .p2align 4
+        \\.Lfm_sve_mov_ge16:
+        \\    cmp x2, 32
+        \\    b.hi .Lfm_sve_cpy_gt32
+        \\    ldr q0, [x1]
+        \\    cmp x2, 16
+        \\    b.eq .Lfm_sve_mov_one
+        \\    add x4, x1, x2
+        \\    ldur q1, [x4, -16]
+        \\    add x5, x0, x2
+        \\    str q0, [x0]
+        \\    stur q1, [x5, -16]
+        \\    ret
+        \\.Lfm_sve_mov_one:
+        \\    str q0, [x0]
+        \\    ret
+        \\
+    ;
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
         \\    b.hs    .Lfm_sve_{s}_ge16

@@ -1,4 +1,4 @@
-"""Pin the measured aarch64 instruction bytes (updated for the p3-armc merge).
+"""Pin the measured aarch64 instruction bytes (updated for move-only exact-16 classes).
 
 Update GOLDEN only in a commit that deliberately changes kernel bytes.
 """
@@ -19,12 +19,12 @@ GOLDEN = {
     "neoverse_v1": {
         "set": (256, "90f42348d31f9f25412aab25f7feeb3acd6652ffbe1772321525fd4bc253e8a0"),
         "copy": (496, "687eb66c4b79b9b512e6454b4bf38301757aa4b7cc94d89825b3d90cf64d0d5d"),
-        "move": (192, "fb44ddb4077266857e85ac46639d2a4e142a8ff1e7da83afd06eca6281fb229a"),
+        "move": (192, "d83d946a28edb3ee6f8918234a3eb7b05eb9f6e0aad47d05f4f5e045179b1479"),
     },
     "neoverse_v3": {
         "set": (336, "6a38736588879006b6c9ae1bfc52574b34696143e7e3310538f0075b4e8347b0"),
         "copy": (528, "de9eda141f65d7bf68d91e53ea30c7ec2becb43f092842a55665877bb171089c"),
-        "move": (192, "620d83fecf6941d295ce744a82e4b7e3824bda6cf07af15117e8c38840b975b3"),
+        "move": (192, "2928e9a9c2d7c03b51cdbc3a6896ccef36faf78ab1167e67b21feea7cfc639ab"),
     },
 }
 GOLDEN["neoverse_v2"] = GOLDEN["neoverse_v1"]

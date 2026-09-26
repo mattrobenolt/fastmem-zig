@@ -12,11 +12,10 @@
 //! - hybrid: the tbz tree below 16, the SVE predicated pair for
 //!           16..2*VL.
 //!
-//! For move the same three variants apply, selected independently:
-//! the shared-buffer gap1 overlap cases punish the NEON q-pair at
-//! 16..32 (store-to-load forwarding chains across benchmark
-//! iterations), so the move default keeps the SVE pair there (.hybrid)
-//! on V3 while copy takes the pure tree (.neon).
+//! Move selects its small path independently. Its NEON head transfers exactly
+//! one vector at 16 bytes. This avoids duplicate stores on dependent calls.
+//! The candidate replaces the hybrid head on the three Graviton targets.
+//! Local V3 evidence appears in docs/results/scorecard.md. Fleet acceptance remains pending.
 //!
 //! For set:
 //! - sve:    the AOR memset-sve.S predicated store below 16.
@@ -69,8 +68,10 @@ const on_neoverse_v3 = builtin.cpu.model == &aarch64_cpu.neoverse_v3;
 // lost (c8g copy 17-64 B 1.12x glibc, c7g copy 65-256 B 1.06x), so copy
 // keeps the SVE pair there; move and set follow the A/B winners.
 const default_copy_small: CopySmall = if (on_neoverse_v3) .neon else .sve;
+// Candidate: exact 16-byte transfers remove the duplicate-store gap1 penalty.
+// The fleet must accept V1/V2 and the V1 33..64-byte NEON class.
 const default_move_small: CopySmall = if (on_neoverse_v3 or on_neoverse_v1 or on_neoverse_v2)
-    .hybrid
+    .neon
 else
     .sve;
 const default_set_small: SetSmall = if (on_neoverse_v3) .neon else .sve;
