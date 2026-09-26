@@ -58,7 +58,7 @@ pub const selected: Tuning = .{
     .nt_min = options.x86_nt_min orelse
         if (temporal_large) 0x4000001 else defaults.nt_min,
     .fwd_source_min = options.x86_fwd_source_min orelse
-        if (source_early) 1048576 else defaults.fwd_source_min,
+        if (source_64) 65536 else if (source_early) 1048576 else defaults.fwd_source_min,
     .copy_source_min = options.x86_copy_source_min orelse defaults.copy_source_min,
     .rep_stosb_min = options.x86_rep_stosb_min orelse defaults.rep_stosb_min,
     .memset_nt_min = options.x86_memset_nt_min orelse defaults.memset_nt_min,
@@ -71,7 +71,7 @@ pub const selected: Tuning = .{
 // Zen 4 short classes lost at 17-256 B and stay opt-in.
 const experiment = options.x86_experiment;
 const auto_experiment = switch (experiment) {
-    .auto, .x86f_pairs, .x86f_chunks, .x86f_zen4, .x86f_source, .x86f_dispatch, .x86f_temporal => true,
+    .auto, .x86f_pairs, .x86f_chunks, .x86f_zen4, .x86f_source, .x86f_dispatch, .x86f_temporal, .x86f_source64 => true,
     else => false,
 };
 // Fleet candidates retain all unrelated measured selections.
@@ -79,6 +79,7 @@ pub const entry_pairs = experiment == .x86f_pairs and builtin.cpu.model == &cpu.
 pub const medium_chunks = experiment == .x86f_chunks and intel_model;
 pub const zen4_short = experiment == .x86f_zen4 and builtin.cpu.model == &cpu.znver4;
 pub const temporal_large = experiment == .x86f_temporal and builtin.cpu.model == &cpu.znver5;
+pub const source_64 = experiment == .x86f_source64 and builtin.cpu.model == &cpu.znver5;
 pub const source_early = experiment == .x86f_source and builtin.cpu.model == &cpu.znver5;
 pub const dispatch_small_max: u32 = if (experiment == .x86f_dispatch) 64 else 128;
 pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
