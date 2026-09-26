@@ -130,21 +130,20 @@ Thus they are the same code for every level.
 
 | Size | Class | Instructions to `ret` (copy / set) |
 |---|---|---|
-| 0 | immediate return | 4 / 4 |
+| 0 | return from the tiny class | 6 / 6 |
 | 1 to 3 | three bytes (`compact.bytes`) | 14 / 11 |
-| 4 to 15 | four 4-byte moves (`compact.quad`) | 23 / 22 |
-| 16 to 63 | four 16-byte moves (`compact.quad`) | 25 / 27 |
-| 64 to 128 | eight 16-byte moves | 28 / 24 |
+| 4 to 15 | four 4-byte moves (`compact.quad`) | 21 / 20 |
+| 16 to 63 | four 16-byte moves (`compact.quad`) | 23 / 25 |
+| 64 to 128 | eight 16-byte moves | 26 / 22 |
 
 Copy and move share the classes: every class loads all its bytes before its first store.
-The entry tests zero first, then 1 to 3 bytes, then the 128-byte limit.
-The large path costs eight instructions:
+The entry tests the tiny class first, then the 128-byte limit.
+Only the tiny class tests zero.
+The large path costs six instructions:
 
 ```text
-testq  %rdx, %rdx
-je     empty
-cmpq   $4, %rdx
-jb     bytes
+cmpq   $3, %rdx
+jbe    tiny
 cmpq   $0x80, %rdx
 jbe    small
 movq   copy_fn(%rip), %rax
@@ -284,7 +283,8 @@ Instruction counts establish paths, not cycle savings.
 ### Zero and byte sizes on all four x86 targets
 
 The old entry tests the 128-byte limit, 16-byte class, and four-byte class before zero.
-`f43ea0f` moves zero first and the byte class second.
+`f43ea0f` moved zero first and the byte class second.
+The review fix `027bc7e` tests `n <= 3` first and tests zero only inside that class.
 All byte loads still precede every store, so overlapping moves retain their original source bytes.
 
 The following counts include the first store, or the return for zero.
@@ -292,9 +292,9 @@ The compiler-rt counts come from the baseline `c8a/bin/v1/bench-fastmem` binary,
 
 | Entry | Old fastmem, zero | New fastmem, zero | compiler-rt, zero | Old first store, 1–3 | New first store, 1–3 | compiler-rt first store, 1–3 |
 |---|---:|---:|---:|---:|---:|---:|
-| copy | 10 | 4 | 11 | 15 | 11 | 11 |
-| move | 10 | 4 | 8 | 15 | 11 | 13 |
-| set | 10 | 4 | 4 | 10 | 6 | 11 |
+| copy | 10 | 6 | 11 | 15 | 10 | 11 |
+| move | 10 | 6 | 8 | 15 | 10 | 13 |
+| set | 10 | 6 | 4 | 10 | 5 | 11 |
 
 Compiler-rt copy starts at `0x10a68a0`, move at `0x10a6610`, and set at `0x10a6580`.
 Only its memset has the immediate zero return in this binary.
@@ -302,9 +302,12 @@ The baseline memcpy also pays its frame prologue and epilogue.
 The instruction trace counts the memset alignment nop before its byte loop.
 
 The new byte paths contain 14 instructions for copy/move and 11 for set.
-The zero path contains `mov`, `test`, `je`, and `ret`.
+The zero path contains six instructions, with two comparisons and two conditional branches.
 The gate enforces these budgets in `src/x86_64/check_dispatch.py`.
-Sizes 4–128 gain extra entry tests, which remain a fleet regression risk.
+The review fix removes the zero test from sizes 4–128 and from the pointer path.
+The 4–15 class returns to its pre-P7b instruction count.
+The 16–128 classes lose two instructions, but remain one or two above their pre-P7b counts.
+These counts do not establish cycle parity.
 
 ### c8a copy/aligned/192 and c7a backward-gap15/511,768
 
@@ -327,7 +330,7 @@ vmovdqu64 -0x40(%rsi,%rdx), %zmm19
 The 192-byte class now takes 12 instructions through return inside the level entry.
 The 511-byte class takes 22.
 The 768-byte AMD path takes four instructions before the original large kernel.
-These counts exclude the eight-instruction baseline stub.
+These counts exclude the six-instruction baseline stub.
 
 The 511-byte case does **not** use a backward loop.
 It loads eight ZMM vectors before its first store, irrespective of overlap direction.
@@ -398,6 +401,46 @@ The saved endpoints cover the prefix and suffix without overlap hazards.
 No new path uses NT or REP.
 Both baseline and comptime Zen 5 builds select this function.
 
+### Review fixes
+
+Opus accepted the candidates with four P2 fixes and no P0 or P1 findings.
+Its independent models passed the following case counts:
+
+- 139,836 baseline entry cases.
+- 338,249 bounded-entry cases per level.
+- 5,478,957 source-loop cases.
+
+`5202bbc` restores tail transfers from `largeKernel` to `forwardSource`.
+Both functions use the same C-ABI signature and return the destination.
+The explicit tail-call requirement prevents LLVM from substituting the known destination after a normal call.
+The original void call graph remains on models without a source loop, so their code bytes remain identical.
+
+The Zen 5 entry now starts with the distance test, without any push:
+
+```asm
+movq %rdi, %rax
+subq %rsi, %rax
+je   return_dst
+cmpq %rdx, %rax
+jae  forward_safe
+```
+
+The source-loop selections use conditional tail jumps.
+Stack saves occur only inside the NT path.
+The codegen gate follows each path from a stack save and requires an NT store before any return or external transfer.
+It rejects the original P7b object with `non-NT large path saves registers`.
+
+`675f523` enables `temporal_call` when either source threshold is non-null.
+The forward-only override now passes `test-dispatch` on all levels.
+`9e2edf6` requires both Zen 5 source-loop selectors and aligned full-width loads inside every source loop.
+The gate also requires temporal full-width stores and excludes NT, REP, and fences from that function.
+Three disassembly mutations fail: absent selectors, unaligned loop loads, and NT stores.
+
+`027bc7e` isolates the zero test inside the tiny class and adds instruction budgets for every class through 128 bytes.
+Each pointer accessor now documents its `n > 128` precondition and the ReleaseFast undefined behavior for invalid calls.
+`b405294` applies `align(t.abi_alignment)` to both bounded entries.
+The `medium_first` dispatch gate passes with that alignment.
+
 ### Local evidence and limits
 
 The host is aarch64. QEMU executes AVX2, not AVX-512.
@@ -405,13 +448,16 @@ The local guards cannot replace the model-level fleet guards.
 
 | Check | Result |
 |---|---|
-| `just test` and `zig build`, final code | Pass |
+| `zig build test test-dispatch test-export codegen-x86 --summary all`, after review | 348/348 steps, 36/36 tests pass |
+| `zig build`, after review | Pass |
 | `zig build test-dispatch codegen-x86 --summary all` | 61/61 steps pass |
 | Baseline v3 guard after tiny entry | 28,047,836 cases pass |
-| Baseline v3 guard after bounded entries | 28,047,836 cases pass |
+| Baseline v3 guard after review fixes | 28,047,836 cases pass, 342 seconds |
 | Baseline v3 guard with both source thresholds at 512 | 28,047,836 cases pass |
 | Complete level kernels versus comptime kernels | Same instructions and branch destinations, except padding |
 | `ziglint src/` | 18 existing findings outside changed files |
+| `test-dispatch -Dx86-fwd-source-min=12582913` | Pass |
+| `test-dispatch -Dx86-variant=medium_first` | Pass |
 
 The bounded-entry gate traces every small length and every immediate-comparison interval above 128.
 It checks the resolver tables, fixed-size inline calls, and runtime inline paths.
@@ -430,6 +476,7 @@ The final codegen probe `.text` equals the `61e3ba4` probe on these CPUs:
 | x86_64_v4 | `dc0582797311298fd6348db2d67887fc2b4078ab7714533c348f8c42db2e9ca7` |
 
 The unchanged probe includes `x86_64.move.kernel` and all its reachable code.
+The post-review probe also matches the pre-review `eec1dd7` probe on all five CPUs in the table.
 Zen 5 changes intentionally.
 No AWS instance was launched by this lane.
 
