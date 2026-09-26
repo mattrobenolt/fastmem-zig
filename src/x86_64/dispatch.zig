@@ -54,11 +54,56 @@ const Kernels = struct {
     name: NameFn,
 };
 
+const generic_copy: CopyFn = if (small_max < 128) &genericCopyAboveSmall else &generic.memcpy;
+const generic_move: CopyFn = if (small_max < 128) &genericMoveAboveSmall else &generic.memmove;
+const generic_set: SetFn = if (small_max < 128) &genericSetAboveSmall else &generic.memset;
+
+noinline fn genericCopyAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        copySmall(dest, src, n);
+        return dest;
+    }
+    return @call(tail, genericCopyLarge, .{ dest, src, n });
+}
+
+noinline fn genericMoveAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        copySmall(dest, src, n);
+        return dest;
+    }
+    return @call(tail, genericMoveLarge, .{ dest, src, n });
+}
+
+// Keep generic loop frames off the bounded SSE2 return paths.
+noinline fn genericCopyLarge(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    return generic.memcpy(dest, src, n);
+}
+
+noinline fn genericMoveLarge(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    return generic.memmove(dest, src, n);
+}
+
+fn genericSetAboveSmall(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        setSmall(dest, @truncate(@as(c_uint, @bitCast(c))), n);
+        return dest;
+    }
+    return @call(tail, generic.memset, .{ dest, c, n });
+}
+
 fn kernels(comptime l: Level) Kernels {
     if (l == .generic) return .{
-        .copy = &generic.memcpy,
-        .move = &generic.memmove,
-        .set = &generic.memset,
+        .copy = generic_copy,
+        .move = generic_move,
+        .set = generic_set,
         .name = &genericName,
     };
     const prefix = symbol_prefix ++ @tagName(l) ++ "_";
@@ -99,9 +144,9 @@ comptime {
         @export(&resolveCopy, .{ .name = p ++ "resolve_memcpy", .visibility = hidden });
         @export(&resolveMove, .{ .name = p ++ "resolve_memmove", .visibility = hidden });
         @export(&resolveSet, .{ .name = p ++ "resolve_memset", .visibility = hidden });
-        @export(&generic.memcpy, .{ .name = p ++ "generic_memcpy", .visibility = hidden });
-        @export(&generic.memmove, .{ .name = p ++ "generic_memmove", .visibility = hidden });
-        @export(&generic.memset, .{ .name = p ++ "generic_memset", .visibility = hidden });
+        @export(generic_copy, .{ .name = p ++ "generic_memcpy", .visibility = hidden });
+        @export(generic_move, .{ .name = p ++ "generic_memmove", .visibility = hidden });
+        @export(generic_set, .{ .name = p ++ "generic_memset", .visibility = hidden });
     }
 }
 

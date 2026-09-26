@@ -267,6 +267,19 @@ def check_probe(obj):
                 want = f"{PREFIX}{level}_{target}_above_small"
                 require(tables.get(base + 8 * i) == want,
                         f"resolver {op} {kernel}/{level} does not install {want}")
+    if SMALL_MAX == 64:
+        for op in ("memcpy", "memmove", "memset"):
+            counts = {}
+            for n in range(65, 129):
+                code, end = trace(obj, f"{PREFIX}generic_{op}", n, allow_direct=True)
+                require(end == "ret", f"generic {op}/{n} leaves its SSE2 class")
+                text = "\n".join(code)
+                require(not re.search(r"push|pop|call|%[yz]mm|%rsp", text),
+                        f"generic {op}/{n} has a frame, call, or AVX instruction")
+                require(len(code) <= (17 if op == "memset" else 20),
+                        f"generic {op}/{n} exceeds its bounded instruction budget")
+                counts[n] = len(code)
+            evidence[f"generic_{op}"] = counts
     unexpected = sorted(n for n in obj.functions if n.startswith("fastmem_x86_") and n not in names)
     require(not unexpected, f"dispatch symbols without the instance prefix: {unexpected}")
     return evidence
