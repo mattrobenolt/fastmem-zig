@@ -15,7 +15,7 @@ from pathlib import Path
 # V3's move head includes alignment padding before the shared copy body.
 GOLDEN = {
     "generic": {
-        "set": (288, "692787b6bd827981bde4e9f7423b92392ff4b727d2f898fa27c2c162fac7d823"),
+        "set": (348, "c82b1061bbf1c082a145f8fee446a00d07b6132a463faa7c7d0c8d64cd65f1b4"),
         "copy": (448, "006648e55dd1a1122d97a713fbbe317308f9ae253ddc93a284bca4dfca13da09"),
         "move": (448, "006648e55dd1a1122d97a713fbbe317308f9ae253ddc93a284bca4dfca13da09"),
     },
