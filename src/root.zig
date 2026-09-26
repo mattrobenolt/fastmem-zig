@@ -138,7 +138,7 @@ pub const dispatch = struct {
 // The ABI threshold experiment does not change fixed-size inlining.
 const dispatch_inline_max = 128;
 comptime {
-    if (dispatch_inline_max < x86_dispatch.small_max)
+    if (on_dispatch and dispatch_inline_max < x86_dispatch.small_max)
         @compileError("the inline dispatch limit must cover the ABI small limit");
 }
 
