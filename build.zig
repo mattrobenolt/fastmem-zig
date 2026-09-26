@@ -407,8 +407,9 @@ fn addAsmStep(
 
 const tuning_u32 = .{ "vec", "inline-max" };
 const tuning_u64 = .{
-    "rep-movsb-min", "nt-min",             "rep-stosb-min",   "memset-nt-min",
-    "alias-mask",    "rep-src-align-mask", "rep-fwd-gap-min", "fwd-source-min",
+    "rep-movsb-min",   "nt-min",             "rep-stosb-min",   "memset-nt-min",
+    "alias-mask",      "rep-src-align-mask", "rep-fwd-gap-min", "fwd-source-min",
+    "copy-source-min",
 };
 const small_ops = .{ "copy", "move", "set" };
 

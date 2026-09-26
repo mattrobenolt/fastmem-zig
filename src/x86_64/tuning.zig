@@ -17,6 +17,7 @@ pub const Tuning = struct {
     rep_fwd_gap_min: ?u64 = null,
     nt_min: ?u64 = null,
     fwd_source_min: ?u64 = null,
+    copy_source_min: ?u64 = null,
     rep_stosb_min: ?u64 = null,
     memset_nt_min: ?u64 = null,
     alias_mask: u64 = 0xf00,
@@ -38,6 +39,7 @@ const defaults: Tuning = if (builtin.cpu.model == &cpu.sapphirerapids) .{
     // AMD uses temporal stores at exactly 12 MiB. Neither AMD model uses REP.
     .nt_min = 0xc00001,
     .fwd_source_min = if (builtin.cpu.model == &cpu.znver5) 0xc00001 else null,
+    .copy_source_min = if (builtin.cpu.model == &cpu.znver5) 65536 else null,
 } else if (builtin.cpu.model == &cpu.skylake_avx512 or
     builtin.cpu.model == &cpu.cascadelake or
     builtin.cpu.model == &cpu.icelake_client or
@@ -55,6 +57,7 @@ pub const selected: Tuning = .{
     .rep_movsb_min = options.x86_rep_movsb_min orelse defaults.rep_movsb_min,
     .nt_min = options.x86_nt_min orelse defaults.nt_min,
     .fwd_source_min = options.x86_fwd_source_min orelse defaults.fwd_source_min,
+    .copy_source_min = options.x86_copy_source_min orelse defaults.copy_source_min,
     .rep_stosb_min = options.x86_rep_stosb_min orelse defaults.rep_stosb_min,
     .memset_nt_min = options.x86_memset_nt_min orelse defaults.memset_nt_min,
     .alias_mask = options.x86_alias_mask orelse defaults.alias_mask,

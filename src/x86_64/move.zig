@@ -5,6 +5,8 @@ const ops = @import("ops.zig");
 const compact = @import("compact.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
+// Keep the temporal loops in the same kernel on both sides of dispatch.
+const temporal_call = if (t.copy_source_min != null) .always_inline else .auto;
 const w = ops.width;
 const V = ops.vector;
 pub const Overlap = enum { may_overlap, disjoint };
@@ -228,7 +230,7 @@ fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void
     const distance = @intFromPtr(dst) -% @intFromPtr(src);
     if (overlap == .may_overlap) {
         if (distance == 0) return;
-        if (distance < n) return backward(dst, src, n);
+        if (distance < n) return @call(temporal_call, backward, .{ dst, src, n });
     }
     const source_inside = overlap == .may_overlap and @intFromPtr(src) -% @intFromPtr(dst) < n;
     if (t.rep_movsb_min) |threshold| {
@@ -253,13 +255,20 @@ fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void
     if (t.nt_min) |threshold| {
         if (!source_inside and n >= threshold) return stream(dst, src, n);
     }
+    if (t.copy_source_min) |threshold| {
+        // This model uses forward traversal for cache-sized disjoint copies.
+        // The NT check above still owns disjoint sizes above its threshold.
+        if (!source_inside and n >= threshold) return forwardSource(dst, src, n);
+    }
     if (t.fwd_source_min) |threshold| {
         // NT and reverse traversal cannot serve an overlap. Keep its loads aligned.
         if (source_inside and n >= threshold) return forwardSource(dst, src, n);
     }
     // A source inside the destination requires forward traversal, even with a 4K alias.
-    if (!source_inside and distance & t.alias_mask == 0) return backward(dst, src, n);
-    forward(dst, src, n);
+    if (!source_inside and distance & t.alias_mask == 0) {
+        return @call(temporal_call, backward, .{ dst, src, n });
+    }
+    @call(temporal_call, forward, .{ dst, src, n });
 }
 
 fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
@@ -289,7 +298,7 @@ fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
 
 // One vector per source iteration avoids the 2 KiB unroll of forward().
 // The saved endpoints permit strict source alignment without out-of-range access.
-fn forwardSource(dst: [*]u8, src: [*]const u8, n: usize) void {
+noinline fn forwardSource(dst: [*]u8, src: [*]const u8, n: usize) void {
     @disableIntrinsics();
     const head = ops.load(V, src);
     const tail_v = ops.load(V, src + n - w);
@@ -348,7 +357,11 @@ fn stream(dst: [*]u8, src: [*]const u8, n: usize) void {
 }
 
 /// The dispatch layer handles every size through 128 bytes before this entry.
-pub noinline fn kernelAbove128(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+pub noinline fn kernelAbove128(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= 128) unreachable;
     if (comptime ops.high_available) return mediumReordered(dst, src, n);
