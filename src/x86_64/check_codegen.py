@@ -69,6 +69,43 @@ def check_nt_frame(code):
             pending.append(following[pc])
 
 
+def tests_pointer_order(text):
+    """Track pointer origins, not register names that LLVM can reuse as scratch."""
+    wide = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp"]
+    narrow = ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"]
+    wide += [f"r{i}" for i in range(8, 16)]
+    narrow += [f"r{i}d" for i in range(8, 16)]
+    aliases = {f"%{a}": f"%{b}" for a, b in zip(narrow, wide)}
+    registers = {f"%{r}" for r in wide}
+    origins = {"%rdi": {"dst"}, "%rsi": {"src"}}
+    for line in text.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        op = parts[0]
+        operands = re.split(r",\s*(?![^()]*\))", parts[1])
+        if len(operands) != 2:
+            continue
+        src, dst = operands
+        left, right = origins.get(src, set()), origins.get(dst, set())
+        if op in ("cmpq", "subq") and left and right and left != right:
+            return True
+        if op.startswith(("cmp", "test")):
+            continue
+        dest = aliases.get(dst, dst)
+        if dest not in registers:
+            continue
+        if op == "movq":
+            origins[dest] = left.copy()
+        elif op == "leaq":
+            origins[dest] = set().union(*(origins.get(r, set()) for r in re.findall(r"%\w+", src)))
+        elif op in ("addq", "subq"):
+            origins[dest] = left | right
+        else:
+            origins.pop(dest, None)
+    return False
+
+
 def class_path(name, n, stats=None):
     """Follow the kernel's size dispatch with concrete RDX and unknown pointers."""
     code = body(name)
@@ -181,17 +218,30 @@ if inline_short_first:
             text = class_path(f"probeRuntime{op}", n)
             actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
             require(actual == count, f"inline {op}/{n} has {actual} branches, expected {count}")
+    for n, count in ((1, 2), (4, 5), (8, 5), (16, 5), (24, 5), (48, 5)):
+        text = class_path("probeRuntimeMove", n)
+        actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
+        require(actual == count, f"inline Move/{n} has {actual} branches, expected {count}")
 # The move-only entry never tests pointer order in its small classes.
 # Concrete lengths trace the complete path, including zero and every boundary.
 for n in range(65):
-    text = class_path("x86_64.move.moveKernel", n)
+    move_stats = {}
+    text = class_path("x86_64.move.moveKernel", n, move_stats)
     require(not re.search(r"\b(?:call\w*|push\w*)\b", text), f"small move/{n} is not a leaf")
-    require(not re.search(r"(?:cmp|sub)q.*%(?:rdi|rsi)", text),
-            f"small move/{n} tests pointer order")
+    require(not tests_pointer_order(text), f"small move/{n} tests pointer order")
     if high_regs:
-        budget = (8 if medium_entry or variant == "medium_first" else 6) if n == 0 else 16 if n < 4 else 18
+        if n == 0:
+            budget = 8 if medium_entry or variant == "medium_first" else 6
+        elif n < 4:
+            budget = 16 if medium_entry or variant == "medium_first" else 14
+        else:
+            budget = 14 if n < 64 else 18
         require(len(text.splitlines()) <= budget, f"small move/{n} exceeds instruction budget")
         require("vzeroupper" not in text, f"small move/{n} needs vector cleanup")
+        if 4 <= n < 64 and not medium_entry and variant != "medium_first":
+            taken_budget = 2 if n < 8 else 1 if n <= 16 else 2 if n <= 32 else 3
+            require(move_stats["taken_branches"] <= taken_budget,
+                    f"small move/{n} exceeds taken-branch budget")
 
 kernel_counts = {}
 for op in ("move", "set"):

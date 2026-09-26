@@ -61,7 +61,14 @@ else
     "zig-simd";
 
 const move_impl_name: []const u8 = if (on_aarch64_sve)
-    armName(@tagName(arm_tuning.move_small))
+    armName(if (arm_tuning.move_small == .neon)
+        "neon-exact16-v1"
+    else
+        @tagName(arm_tuning.move_small))
+else if (on_x86)
+    x86_tuning.move_name
+else if (on_dispatch)
+    "x86-dispatch+move-pairs-v1"
 else
     copy_impl_name;
 
@@ -73,8 +80,8 @@ else
     "zig-vector";
 
 /// Names of the kernel implementations in this build, one per operation.
-/// A dispatch build names "x86-dispatch"; `dispatch.kernelName` names the
-/// kernel that the run-time level selected.
+/// Dispatch builds name copy/set "x86-dispatch" and move "x86-dispatch+move-pairs-v1".
+/// `dispatch.kernelName` identifies the selected level and its move policy.
 pub const impl = .{
     .copy = copy_impl_name,
     .move = move_impl_name,
@@ -381,6 +388,16 @@ pub const abi = struct {
     else
         &generic.memset;
 };
+
+test "implementation names distinguish the move-only small classes" {
+    if (on_x86 or on_dispatch or (on_aarch64_sve and arm_tuning.move_small == .neon)) {
+        try testing.expect(!std.mem.eql(u8, impl.copy, impl.move));
+    }
+    if (on_x86) try testing.expectEqualStrings(x86_tuning.move_name, impl.move);
+    if (on_aarch64_sve and arm_tuning.move_small == .neon) {
+        try testing.expectEqualStrings("aor-sve-5e20a93+small-neon-exact16-v1", impl.move);
+    }
+}
 
 test "copy: all size classes" {
     const sizes = [_]usize{

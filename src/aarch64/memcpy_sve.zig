@@ -134,7 +134,7 @@ fn tree(comptime p: []const u8) []const u8 {
 // branch); the 1..3 class is the one the fleet shows failing G3, so
 // the trade goes this way.
 fn head_neon(comptime p: []const u8) []const u8 {
-    // The exact class avoids a second store to the same 16 bytes.
+    // The rejected plain NEON pair duplicated this store. The old hybrid head did not.
     if (comptime std.mem.eql(u8, p, "mov")) return std.fmt.comptimePrint(
         \\    cmp x2, 16
         \\    b.hs .Lfm_sve_{s}_ge16

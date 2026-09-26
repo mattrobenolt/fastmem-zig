@@ -117,6 +117,9 @@ else if (vec == 64)
 else
     "x86-avx2-entry-v2";
 
+// Copy and set retain their identifiers. Move has a separate small entry.
+pub const move_name = name ++ "+move-pairs-v1";
+
 comptime {
     if (available) {
         if (selected.rep_fwd_gap_min) |gap| {

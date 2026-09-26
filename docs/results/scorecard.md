@@ -390,8 +390,78 @@ nix develop /Users/matt/code/fastmem-zig-small-moves -c just b analyze <run-dir>
 ```
 
 8. Reject significant regressions, including copy, set, inline, and sizes above 64 bytes.
-9. Inspect Zen 4 at 4–63 bytes and V1 at 33–64 bytes before acceptance.
+9. Inspect Zen 4 at 4–63 bytes and V1 at forward-gap1/16 and 33–64 bytes before acceptance.
 10. Keep item 1 open until every required comparison meets the whole-interval rule.
 
 These commands launch no instances.
 The parent owns fleet execution, cross-family review, and final acceptance.
+
+
+### Cross-family review follow-up, 2026-09-26
+
+Opus found no correctness blockers in `d71d819` after disassembly-based emulation across every small overlap gap and both directions.
+The review identified unnecessary taken branches in the x86 small entry.
+The candidate now marks the `n >= 64` block in `moveKernel` unlikely.
+This keeps 4–63-byte calls on the short fall-through path.
+The Granite Rapids medium-first decision remains unchanged.
+
+The following taken-branch counts come from the reviewer emulator on rebuilt SPR and Zen 4 binaries.
+They exclude return and include jumps between blocks.
+
+| Size | Before hint | After hint | Instructions after hint |
+|---|---:|---:|---:|
+| 1–3 | 0 | 0 | 14 |
+| 4–7 | 3 | 2 | 14 |
+| 8–16 | 2 | 1 | 14 |
+| 17–32 | 3 | 2 | 14 |
+| 33–63 | 4 | 3 | 14 |
+| 64 | 1 | 2 | 12 |
+
+The repeated emulator row covers lengths 0–130, every gap from `-n-2` through `n+2`, and four alignments.
+Additional disjoint gaps are `±(n+1500)` and `±4096`.
+Each CPU passes 72,836 cases with zero failures, no external exits, and a correct null-pointer zero-length return.
+Every source load and destination store stays within its interval.
+Logs reside in `.bench-cache/small-moves/review/emulator.log`.
+
+The codegen gate now limits taken branches and tightens the 4–63-byte instruction budget to 14.
+The SPR inline move branch-count gate now checks the new class tree.
+The pointer-order check tracks pointer origins instead of register names.
+It accepts `subq %rcx,%rdi` after LLVM repurposes `%rdi` for an offset.
+Five focused tests cover scratch reuse and comparisons through pointer aliases.
+
+Implementation names now distinguish the changed move code:
+
+- Comptime x86 move: the existing tuning name plus `+move-pairs-v1`.
+- Baseline x86 move: `x86-dispatch+move-pairs-v1`.
+- Dispatched level name: the existing level name plus `+move-pairs-v1`.
+- Arm NEON move: `aor-sve-5e20a93+small-neon-exact16-v1`.
+
+Copy and set retain their implementation names.
+The Arm hybrid and SVE overrides retain their names because their code does not change.
+A unit test checks that the changed move names differ from copy.
+
+The exact-16 comments now distinguish the rejected NEON pair from the previous hybrid head.
+The hybrid head did not duplicate the 16-byte store: its second SVE predicate was empty.
+The measured improvement versus that head covers 16–32 bytes.
+The exact-16 class prevents the regression that the rejected plain NEON pair introduced.
+
+The V1 forward-gap1/16 result in `src/aarch64/tuning.zig` remains relevant evidence against an unconditional replacement.
+`docs/results/small-path-aarch64c.md` records 0.61 times compiler-rt for the old SVE path in `20260924T102308Z-p3-arm-small`.
+That result supports the previous hybrid default, not the current NEON candidate.
+The fleet watch list therefore includes V1 forward-gap1/16, alongside V1 33–64 bytes and Zen 4 4–63 bytes.
+
+The review also identifies failures outside the changed classes in `20260926T040226Z-final-standard`:
+
+- c8i disjoint 0–63 bytes retains the medium-first entry cost.
+- c8g 0–3 bytes retains the scalar path.
+- c9g forward-gap1 at 8, 15, 48, and 64 bytes retains the original transfer bodies.
+
+These rows keep item 1 open regardless of the gap31 improvement.
+The local timing table above predates the x86 branch hint and does not establish its performance effect.
+
+Follow-up validation passes 348/348 build steps and 38/38 tests.
+The command includes `test`, `test-export`, `test-dispatch`, and `codegen-x86`.
+All seven ReleaseFast `install` rows pass.
+The changed comptime `x86_64_v3` build passes 28,047,836 guard cases under `qemu-x86_64 -cpu max`.
+The Arm kernel-byte gate still passes without another re-pin.
+The exact fleet commands above remain the acceptance procedure.

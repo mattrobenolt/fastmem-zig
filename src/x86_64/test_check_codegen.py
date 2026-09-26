@@ -24,11 +24,12 @@ def check(text, requested, failure=None):
     with patch.object(sys, "argv", argv), patch("subprocess.check_output", side_effect=[text, nm]):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:
-                runpy.run_path(str(checker), run_name="__main__")
+                result = runpy.run_path(str(checker), run_name="__main__")
             except SystemExit as error:
                 assert failure is not None and failure in str(error), str(error)
             else:
                 assert failure is None, f"Gate accepted mutation: {failure}"
+                return result
 
 
 def mutate(old, new, symbol="x86_64.move.copyLarge"):
@@ -45,7 +46,12 @@ def mutate(old, new, symbol="x86_64.move.copyLarge"):
     return "\n".join(lines)
 
 
-check(dis, [variant])
+pointer_order = check(dis, [variant])["tests_pointer_order"]
+assert not pointer_order("leaq -0x4(%rdx), %rdi\nsubq %rcx, %rdi")
+assert not pointer_order("movl %edx, %edi\nsubq %rsi, %rdi")
+assert pointer_order("cmpq %rsi, %rdi")
+assert pointer_order("movq %rdi, %rax\nsubq %rsi, %rax")
+assert pointer_order("leaq 0x10(%rsi), %rcx\ncmpq %rdi, %rcx")
 check(dis, [], "2")
 for wrong in ("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"):
     if wrong != variant:

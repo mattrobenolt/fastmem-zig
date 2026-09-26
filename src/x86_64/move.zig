@@ -118,6 +118,7 @@ pub noinline fn moveKernel(
     const d: [*]u8 = @ptrCast(dst.?);
     const s: [*]const u8 = @ptrCast(src.?);
     if (n >= 64) {
+        @branchHint(.unlikely);
         if (comptime ops.high_available) return mediumReordered(dst, src, n);
         if (!small(8 * w, d, s, n)) return @call(tail_call, largeKernel, .{ dst, src, n });
         return dst;
