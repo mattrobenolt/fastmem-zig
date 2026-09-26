@@ -272,8 +272,27 @@ if cpu == "znver5":
     code = body("x86_64.move.largeKernel")
     check_nt_frame(code)
     transfers = [i for _, i in code if "<x86_64.move.forwardSource>" in i]
-    require(transfers and all(i.startswith("j") for i in transfers),
-            "forwardSource lacks a tail transfer")
+    require(len(transfers) >= 2 and all(i.startswith("j") for i in transfers),
+            "forwardSource lacks disjoint and overlap tail transfers")
+    source = body("x86_64.move.forwardSource")
+    text = "\n".join(i for _, i in source)
+    require(not re.search(r"vmovnt|sfence|rep\s", text), "forwardSource uses NT or REP")
+    loops = []
+    for address, insn in source:
+        branch = re.match(r"j\w+\s+0x([0-9a-f]+)", insn)
+        if branch and int(branch[1], 16) < address:
+            loops.append([i for a, i in source if int(branch[1], 16) <= a <= address])
+    require(loops, "forwardSource lacks a loop")
+    for loop in loops:
+        loads = [i for i in loop if re.search(r"\([^)]*\), %[xyz]mm", i)]
+        stores = [i for i in loop if re.search(r"%[xyz]mm\d+, .*\(", i)]
+        require(loads and stores, "forwardSource loop lacks vector memory operations")
+        require(all(re.match(r"vmovaps\s+.*\), %zmm\d+$", i) for i in loads),
+                "forwardSource loop lacks aligned full-width loads")
+        require(all(re.match(r"vmovups\s+%zmm\d+,", i) for i in stores),
+                "forwardSource loop lacks temporal full-width stores")
+    large_paths["forward_source"] = {"aligned_loads": True, "nt": False,
+                                     "loop_count": len(loops), "tail_transfers": len(transfers)}
 if not wide:
     require("%zmm" not in dis, "v3 uses AVX-512")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
