@@ -5,6 +5,7 @@ const ops = @import("ops.zig");
 const compact = @import("compact.zig");
 const tuning = @import("tuning.zig");
 const t = tuning.selected;
+const source_loop = t.copy_source_min != null or t.fwd_source_min != null;
 // Keep the temporal loops in the same kernel on both sides of dispatch.
 const temporal_call = if (t.copy_source_min != null) .always_inline else .auto;
 const w = ops.width;
@@ -216,21 +217,41 @@ noinline fn largeKernel(
     n: usize,
 ) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime source_loop) return largeBody(.may_overlap, @ptrCast(dst.?), @ptrCast(src.?), n);
     large(.may_overlap, @ptrCast(dst.?), @ptrCast(src.?), n);
     return dst;
 }
 
 noinline fn copyLarge(dst: [*]u8, src: [*]const u8, n: usize) void {
     @disableIntrinsics();
-    if (!small(8 * w, dst, src, n)) large(.disjoint, dst, src, n);
+    if (!small(8 * w, dst, src, n)) {
+        if (comptime source_loop) {
+            _ = largeBody(.disjoint, dst, src, n);
+        } else {
+            large(.disjoint, dst, src, n);
+        }
+    }
 }
 
+// Keep the original void call graph on models without a source-aligned loop.
 fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
     @disableIntrinsics();
+    largeBody(overlap, dst, src, n);
+}
+
+inline fn largeBody(
+    comptime overlap: Overlap,
+    dst: [*]u8,
+    src: [*]const u8,
+    n: usize,
+) if (source_loop) ?*anyopaque else void {
     const distance = @intFromPtr(dst) -% @intFromPtr(src);
     if (overlap == .may_overlap) {
-        if (distance == 0) return;
-        if (distance < n) return @call(temporal_call, backward, .{ dst, src, n });
+        if (distance == 0) return if (source_loop) dst else {};
+        if (distance < n) {
+            @call(temporal_call, backward, .{ dst, src, n });
+            return if (source_loop) dst else {};
+        }
     }
     const source_inside = overlap == .may_overlap and @intFromPtr(src) -% @intFromPtr(dst) < n;
     if (t.rep_movsb_min) |threshold| {
@@ -249,26 +270,39 @@ fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void
             const skip = w - (address & (w - 1));
             ops.repMove(dst + skip, src + skip, n - skip);
             ops.store(V, dst, head);
-            return;
+            return if (source_loop) dst else {};
         }
     }
     if (t.nt_min) |threshold| {
-        if (!source_inside and n >= threshold) return stream(dst, src, n);
+        if (!source_inside and n >= threshold) {
+            stream(dst, src, n);
+            return if (source_loop) dst else {};
+        }
     }
     if (t.copy_source_min) |threshold| {
         // This model uses forward traversal for cache-sized disjoint copies.
         // The NT check above still owns disjoint sizes above its threshold.
-        if (!source_inside and n >= threshold) return forwardSource(dst, src, n);
+        if (!source_inside and n >= threshold) return @call(
+            if (overlap == .may_overlap) tail_call else .auto,
+            forwardSource,
+            .{ @as(?*anyopaque, @ptrCast(dst)), @as(?*const anyopaque, @ptrCast(src)), n },
+        );
     }
     if (t.fwd_source_min) |threshold| {
         // NT and reverse traversal cannot serve an overlap. Keep its loads aligned.
-        if (source_inside and n >= threshold) return forwardSource(dst, src, n);
+        if (source_inside and n >= threshold) return @call(
+            if (overlap == .may_overlap) tail_call else .auto,
+            forwardSource,
+            .{ @as(?*anyopaque, @ptrCast(dst)), @as(?*const anyopaque, @ptrCast(src)), n },
+        );
     }
     // A source inside the destination requires forward traversal, even with a 4K alias.
     if (!source_inside and distance & t.alias_mask == 0) {
-        return @call(temporal_call, backward, .{ dst, src, n });
+        @call(temporal_call, backward, .{ dst, src, n });
+        return if (source_loop) dst else {};
     }
     @call(temporal_call, forward, .{ dst, src, n });
+    return if (source_loop) dst else {};
 }
 
 fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
@@ -298,8 +332,10 @@ fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
 
 // One vector per source iteration avoids the 2 KiB unroll of forward().
 // The saved endpoints permit strict source alignment without out-of-range access.
-noinline fn forwardSource(dst: [*]u8, src: [*]const u8, n: usize) void {
+noinline fn forwardSource(dest: ?*anyopaque, source: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    const dst: [*]u8 = @ptrCast(dest.?);
+    const src: [*]const u8 = @ptrCast(source.?);
     const head = ops.load(V, src);
     const tail_v = ops.load(V, src + n - w);
     var offset = w - (@intFromPtr(src) & (w - 1));
@@ -309,6 +345,7 @@ noinline fn forwardSource(dst: [*]u8, src: [*]const u8, n: usize) void {
     }
     ops.store(V, dst + n - w, tail_v);
     ops.store(V, dst, head);
+    return dst;
 }
 
 fn backward(dst: [*]u8, src: [*]const u8, n: usize) void {

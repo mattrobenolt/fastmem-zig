@@ -42,6 +42,33 @@ def require(condition, message):
         raise SystemExit(f"{cpu}: {message}")
 
 
+def check_nt_frame(code):
+    """Every path from a stack save must encounter an NT store before exit."""
+    at = dict(code)
+    following = {a: b for (a, _), (b, _) in zip(code, code[1:])}
+    for start, insn in code:
+        if not re.match(r"push|subq.*%rsp", insn):
+            continue
+        pending, visited = [start], set()
+        while pending:
+            pc = pending.pop()
+            if pc in visited:
+                continue
+            visited.add(pc)
+            text = at[pc]
+            if text.startswith("vmovntdq"):
+                continue
+            require(not text.startswith("ret"), "non-NT large path saves registers")
+            if text.startswith("j"):
+                target = int(re.search(r"0x([0-9a-f]+)", text)[1], 16)
+                require(target in at, "non-NT tail path saves registers")
+                pending.append(target)
+                if text.startswith("jmp"):
+                    continue
+            require(pc in following, "stack save reaches an unexpected exit")
+            pending.append(following[pc])
+
+
 def class_path(name, n, stats=None):
     """Follow the kernel's size dispatch with concrete RDX and unknown pointers."""
     code = body(name)
@@ -241,6 +268,12 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
     require((rep in text) == (cpu in ("sapphirerapids", "graniterapids")),
             f"{op} large path has wrong REP policy")
     large_paths[op] = {"symbol": name, "vector": register, "nt": nt, "rep": rep in text}
+if cpu == "znver5":
+    code = body("x86_64.move.largeKernel")
+    check_nt_frame(code)
+    transfers = [i for _, i in code if "<x86_64.move.forwardSource>" in i]
+    require(transfers and all(i.startswith("j") for i in transfers),
+            "forwardSource lacks a tail transfer")
 if not wide:
     require("%zmm" not in dis, "v3 uses AVX-512")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
