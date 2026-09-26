@@ -75,8 +75,10 @@ Thus `build.zig` compiles each level as a separate object.
 
 - The root of each object is `src/x86_64/level.zig`.
 - The object compiles with `-Dcpu=<level>`, ReleaseFast, LLVM, PIC, `no_builtin`, and `omit_frame_pointer`.
-- The object exports `fastmem_x86_<id>_<level>_memmove`, `_memset`, and `_name`.
-- All three symbols have hidden visibility. They never reach `.dynsym`.
+- The object exports the complete `_memmove` and `_memset` kernels, plus `_name`.
+- It also exports `_memmove_above128` and `_memset_above128` for the dispatch pointers.
+- Each name starts with `fastmem_x86_<id>_<level>`.
+- All five symbols have hidden visibility. They never reach `.dynsym`.
 - The fastmem module receives the six objects through `Module.addObject`.
 - The level objects get the `fastmem_options` of the public module.
   Thus `tuning.zig` applies the same per-model variant and experiment selection as in a comptime build for that CPU.
@@ -153,7 +155,12 @@ The first fleet version jumped through the pointer at every size.
 The G6 run 20260925T184717Z-p7-dispatch-g6 measured that at 0 to 16 bytes: copy against glibc went from 0.91 to 1.34 on c7i and from 0.85 to 1.53 on c8i.
 LLVM 21 does not fold the load into the jump (see "Zig 0.16 limitations").
 
-The x86 `memcpy` is the memmove kernel, as in the comptime builds.
+The model pointers select the internal entries with the `above128` suffix.
+These entries reuse the medium classes and large kernels, with `n > 128` as a precondition.
+They omit the scalar ladder that the baseline entry already excludes.
+The complete kernels remain available for the instruction-equivalence gate.
+
+The x86 `memcpy` uses the memmove entry, as in the comptime builds.
 At the `generic` level, `memcpy` uses the forward-only generic copy.
 
 ### Recursion
@@ -202,9 +209,12 @@ error: fastmem.dispatch.force is a test hook; the public fastmem module does not
 That step does these checks:
 
 1. `src/x86_64/check_dispatch.py` inspects the baseline codegen probe.
-   It follows each C-ABI entry with every size from 0 to 33 and the class edges up to 128.
+   It follows each C-ABI entry and runtime inline probe with every size from 0 to 128.
    Each such path must return without a pointer read, a symbol reference, an indirect branch, or an AVX instruction.
-   Sizes 129, 4096, and 64 MiB must end in the indirect jump through the pointer of the operation.
+   Sizes above 128 must end in the indirect jump through the pointer of the operation.
+   The trace covers each immediate comparison boundary and the maximum unsigned length.
+   The resolver tables must contain only bounded model entries.
+   The bounded entries must omit comparisons against sizes through 128.
    It checks that fixed sizes 1 to 128 make no call and that 129 to 256 use the pointer.
    It checks that every `fastmem_x86_*` symbol is GLOBAL HIDDEN.
 2. The same script compares each level object with the comptime codegen probe of the same CPU.
@@ -251,21 +261,177 @@ The collision tests add a baseline x86_64 row.
 - `bench test` fails the baseline variant when the guard summary names a different level.
 - `bench.toml` keeps `baseline_cpu = "x86_64"` on the x86 targets.
 
-## Large forward overlaps on c8a
+## P7b diagnosis and candidates, 2026-09-25
 
-The large run 20260925T194532Z-p7-dispatch-large measured `move/fwd-gap{1,15,17}/67108864` at 1.57 to 1.61 against compiler-rt on c8a.
-`fwd-gap4096` was 1.39 and `fwd-half` was 1.26 at the same size.
-The same rows at 16 MiB, and all rows on c7a, c7i, and c8i, are at or below 1.03.
+Base: `61e3ba4`. Worktree: `/Users/matt/code/fastmem-zig-p7b`, branch `p7b`.
+The code commits are `f43ea0f`, `6e10fda`, `8eefdf9`, and `8c268df`.
+These changes have local correctness and codegen evidence, not fleet performance acceptance.
+G6 remains pending.
 
-The dispatch does not cause it:
+The input runs reside in the P7 worktree:
 
-- In the fleet binary, `rep movsb` occurs only in the `sapphirerapids` and `graniterapids` move kernels.
-- The `znver5` level `move.largeKernel` has 232 instructions. They are identical to `x86_64.move.largeKernel` of a `-Dcpu=znver5` build of the same tree.
-- `rep_fwd_gap_min` is null in every row of `tuning.zig`, and `rep_movsb_min` is null on AMD.
-- A forward overlap takes the `forward` vector loop in both builds.
+```text
+/Users/matt/code/worktrees/fastmem-zig/pi-worktree-dc8aa4d2-57ea-4929-8422-b718f40e6324-s0-0/bench-results/20260925T223947Z-p7-dispatch-g6
+/Users/matt/code/worktrees/fastmem-zig/pi-worktree-dc8aa4d2-57ea-4929-8422-b718f40e6324-s0-0/bench-results/20260925T234846Z-c8a-fwd-comptime
+```
 
-No large-suite run of a `-Dcpu=znver5` build exists. Thus the comptime kernel has the same unmeasured cost.
-The fix belongs to the x86 kernel lane. "Fleet commands" gives the target-CPU run that confirms it.
+The first run compares pre-P7 baseline builds with P7 baseline builds.
+Its `v1` binaries contain the P7 kernels.
+The second run contains the comptime `znver5` kernel in `v0`.
+The interpretation follows the layout cautions in `docs/results/small-path-aarch64d.md`.
+Instruction counts establish paths, not cycle savings.
+
+### Zero and byte sizes on all four x86 targets
+
+The old entry tests the 128-byte limit, 16-byte class, and four-byte class before zero.
+`f43ea0f` moves zero first and the byte class second.
+All byte loads still precede every store, so overlapping moves retain their original source bytes.
+
+The following counts include the first store, or the return for zero.
+The compiler-rt counts come from the baseline `c8a/bin/v1/bench-fastmem` binary, not a target-CPU build.
+
+| Entry | Old fastmem, zero | New fastmem, zero | compiler-rt, zero | Old first store, 1–3 | New first store, 1–3 | compiler-rt first store, 1–3 |
+|---|---:|---:|---:|---:|---:|---:|
+| copy | 10 | 4 | 11 | 15 | 11 | 11 |
+| move | 10 | 4 | 8 | 15 | 11 | 13 |
+| set | 10 | 4 | 4 | 10 | 6 | 11 |
+
+Compiler-rt copy starts at `0x10a68a0`, move at `0x10a6610`, and set at `0x10a6580`.
+Only its memset has the immediate zero return in this binary.
+The baseline memcpy also pays its frame prologue and epilogue.
+The instruction trace counts the memset alignment nop before its byte loop.
+
+The new byte paths contain 14 instructions for copy/move and 11 for set.
+The zero path contains `mov`, `test`, `je`, and `ret`.
+The gate enforces these budgets in `src/x86_64/check_dispatch.py`.
+Sizes 4–128 gain extra entry tests, which remain a fleet regression risk.
+
+### c8a copy/aligned/192 and c7a backward-gap15/511,768
+
+The original P7 pointer enters the complete model kernel.
+That kernel repeats size decisions that the baseline stub already made.
+`8eefdf9` gives the pointer a bounded entry instead.
+It preserves every comptime kernel and the complete level kernels.
+
+The bounded move entry starts with this class decision on both AMD models:
+
+```asm
+cmpq $0x101, %rdx
+jae  larger
+vmovdqu64 (%rsi), %zmm16
+vmovdqu64 0x40(%rsi), %zmm17
+vmovdqu64 -0x80(%rsi,%rdx), %zmm18
+vmovdqu64 -0x40(%rsi,%rdx), %zmm19
+```
+
+The 192-byte class now takes 12 instructions through return inside the level entry.
+The 511-byte class takes 22.
+The 768-byte AMD path takes four instructions before the original large kernel.
+These counts exclude the eight-instruction baseline stub.
+
+The 511-byte case does **not** use a backward loop.
+It loads eight ZMM vectors before its first store, irrespective of overlap direction.
+The 768-byte case reaches `backward` because the positive destination distance is less than the length.
+Thus the bounded entry addresses redundant dispatch, not an alleged common backward-loop defect.
+Its effect on the listed confidence intervals remains unmeasured.
+
+### c8a 64–256 KiB disjoint copies
+
+The NT threshold is `0xc00001`, so none of these rows uses NT stores.
+In the P7 binary, the aligned address difference passes `testl $0xf00, %ecx` at `0x10231de`.
+That selects the backward loop at `0x1023220`, although forward traversal is legal.
+Compiler-rt copy uses its forward loop at `0x10a6980`.
+
+The raw medians below describe all recorded samples, not confidence intervals.
+The table does not replace the whole-interval acceptance rule.
+
+| c8a P7 row | compiler-rt ns | fastmem ns | glibc ns | compiler-rt instructions | fastmem instructions |
+|---|---:|---:|---:|---:|---:|
+| copy/aligned/65536 | 678.4 | 880.0 | 815.6 | 12,338 | 2,867 |
+| copy/aligned/262144 | 2319.9 | 3468.2 | 3047.6 | 49,202 | 11,315 |
+| move/disjoint/262144 | 2752.3 | 3467.1 | 3058.4 | 57,397 | 11,315 |
+
+Both backward implementations lose to compiler-rt despite fewer instructions.
+This supports a direction/class hypothesis rather than a dispatch-instruction explanation.
+It does not exclude a layout contribution or prove a microarchitectural cause.
+
+`8c268df` selects `forwardSource` for disjoint `znver5` sizes from 65536 bytes until NT takes precedence.
+The new `copy_source_min` tuning field is null on every other model.
+The benchmark must decide whether this policy beats the old alias heuristic on Zen 5.
+Other disjoint profiles remain regression risks, especially the 4K-alias profiles.
+
+### c8a 64 MiB forward overlaps
+
+The comptime run confirms that the dispatcher does not cause this loss.
+Its compiler-rt medians span 1.389–1.417 ms for the fixed gaps.
+Fastmem spans 2.225–2.480 ms.
+The half-length gap measures 2.138 ms for compiler-rt and 2.764 ms for fastmem.
+
+An overlap excludes NT stores before the 4K-alias test.
+It also excludes reverse traversal, which overwrites unread source bytes.
+REP remains disabled on AMD.
+The old path is therefore the temporal forward loop, not NT or the backward alias path.
+See `docs/research/x86_64-design.md`, sections 1.4–1.6.
+
+LLVM expands the old four-vector source loop into a 2 KiB iteration.
+The comptime compiler-rt loop at `0x10ac890` uses aligned source loads and a 512-byte iteration.
+Its load/store pairs alternate instead of four loads before four stores.
+The different alignment alone cannot explain the gap4096 case, where both pointers align.
+The precise hardware mechanism remains unknown.
+
+`6e10fda` introduces the source-aligned temporal candidate above `0xc00000` bytes on Zen 5 forward overlaps.
+The final implementation uses a non-inline `forwardSource` function shared with the disjoint candidate.
+LLVM emits eight load/store pairs per iteration:
+
+```asm
+vmovaps (%rsi,%rax), %zmm2
+vmovups %zmm2, (%rdi,%rax)
+# Seven more pairs at offsets 64 through 448.
+addq $0x200, %rax
+cmpq %rcx, %rax
+jb   loop
+```
+
+The function saves both endpoints before the loop.
+The loop starts at the next source-vector boundary and never reads beyond the source interval.
+The saved endpoints cover the prefix and suffix without overlap hazards.
+No new path uses NT or REP.
+Both baseline and comptime Zen 5 builds select this function.
+
+### Local evidence and limits
+
+The host is aarch64. QEMU executes AVX2, not AVX-512.
+The local guards cannot replace the model-level fleet guards.
+
+| Check | Result |
+|---|---|
+| `just test` and `zig build`, final code | Pass |
+| `zig build test-dispatch codegen-x86 --summary all` | 61/61 steps pass |
+| Baseline v3 guard after tiny entry | 28,047,836 cases pass |
+| Baseline v3 guard after bounded entries | 28,047,836 cases pass |
+| Baseline v3 guard with both source thresholds at 512 | 28,047,836 cases pass |
+| Complete level kernels versus comptime kernels | Same instructions and branch destinations, except padding |
+| `ziglint src/` | 18 existing findings outside changed files |
+
+The bounded-entry gate traces every small length and every immediate-comparison interval above 128.
+It checks the resolver tables, fixed-size inline calls, and runtime inline paths.
+The original full-kernel equivalence check remains active.
+The new helper requires explicit temporal-loop inlining on Zen 5 to keep both compilation contexts identical.
+Those loops remain inside non-inline kernels, not the public inline layer.
+
+The final codegen probe `.text` equals the `61e3ba4` probe on these CPUs:
+
+| CPU | SHA-256 |
+|---|---|
+| sapphirerapids | `052226caf653ecb969e7e6cc9a9e23fd42ba468cf9ee9f3ef872e8746ea30816` |
+| graniterapids | `b91eecc0b2b9d75eb3481a5467ad4f0439b73621939492483a659c3eb484e6a2` |
+| znver4 | `2e6e50252cd4655212d6cfd54e09001b72afee85d2359657103b3418d3313af9` |
+| x86_64_v3 | `809c8e20fc4217df7a42dfda776cd00ad9c25c46c4a7bcc5e87a06225cc1ea13` |
+| x86_64_v4 | `dc0582797311298fd6348db2d67887fc2b4078ab7714533c348f8c42db2e9ca7` |
+
+The unchanged probe includes `x86_64.move.kernel` and all its reachable code.
+Zen 5 changes intentionally.
+No AWS instance was launched by this lane.
 
 ## Zig 0.16 limitations
 
@@ -343,39 +509,55 @@ It does not test AVX-512 instructions.
 
 ## Fleet commands
 
-Run these commands from the parent checkout after the merge.
-They do not launch boxes. Launch the four x86 targets first with `just bench-up c7i c8i c7a c8a`.
+The parent owns fleet execution and performance acceptance.
+These commands use existing instances and launch none.
 
-1. Run the correctness matrix. It tests the target and baseline builds on each box.
+### Procedure
 
-```sh
-just bench-test --target c7i --target c8i --target c7a --target c8a --optimize ReleaseFast --optimize ReleaseSafe --optimize Debug
-```
-
-2. Measure G6 with the dispatched kernels. The first revision is main before P7. Its baseline binary has no dispatch, and the report says so.
+1. Select the P7b worktree.
 
 ```sh
-just bench-run --rev 8d43448 --rev WORKTREE --cpu baseline --target c7i --target c8i --target c7a --target c8a --suite standard --rounds 5 --label p7-dispatch-g6
+cd /Users/matt/code/fastmem-zig-p7b
 ```
 
-3. Measure the large sizes, which reach the REP and NT paths.
+2. Run the target and baseline correctness matrix.
 
 ```sh
-just bench-run --rev WORKTREE --cpu baseline --target c7i --target c8i --target c7a --target c8a --suite large --rounds 5 --label p7-dispatch-large
+nix develop /Users/matt/code/fastmem-zig-p7b -c just bench-test \
+  --target c7i --target c8i --target c7a --target c8a \
+  --optimize ReleaseFast --optimize ReleaseSafe --optimize Debug
 ```
 
-4. Measure the c8a forward overlaps with the comptime `znver5` kernel (`--cpu target`, the default).
-   Equal ratios confirm that the cost is in the kernel, not in the dispatch.
+3. Compare baseline builds with main on all four x86 targets.
 
 ```sh
-just bench-run --rev WORKTREE --target c8a --suite large --filter move/fwd --rounds 5 --label c8a-fwd-comptime
+nix develop /Users/matt/code/fastmem-zig-p7b -c just bench-run \
+  --rev main --rev WORKTREE --cpu baseline \
+  --target c7i --target c8i --target c7a --target c8a \
+  --suite standard --rounds 5 --label p7b-g6
 ```
 
-5. Read the results.
+4. Compare large forward overlaps with baseline c8a builds.
 
 ```sh
-just b analyze <run-dir>
+nix develop /Users/matt/code/fastmem-zig-p7b -c just bench-run \
+  --rev main --rev WORKTREE --cpu baseline --target c8a \
+  --suite large --filter move/fwd --rounds 5 --label p7b-fwd-baseline
 ```
 
-`report.md` prints the dispatch state of each variant.
-The expected levels are `sapphirerapids` on c7i, `graniterapids` on c8i, `znver4` on c7a, and `znver5` on c8a.
+5. Compare the same rows with comptime c8a builds.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-p7b -c just bench-run \
+  --rev main --rev WORKTREE --cpu target --target c8a \
+  --suite large --filter move/fwd --rounds 5 --label p7b-fwd-comptime
+```
+
+6. Analyze each run.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-p7b -c just b analyze <run-dir>
+```
+
+7. Apply the whole-interval rule to each G6 row.
+8. Reject candidates with significant regressions in other profiles.
