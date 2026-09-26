@@ -253,6 +253,10 @@ fn large(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void
     if (t.nt_min) |threshold| {
         if (!source_inside and n >= threshold) return stream(dst, src, n);
     }
+    if (t.fwd_source_min) |threshold| {
+        // NT and reverse traversal cannot serve an overlap. Keep its loads aligned.
+        if (source_inside and n >= threshold) return forwardSource(dst, src, n);
+    }
     // A source inside the destination requires forward traversal, even with a 4K alias.
     if (!source_inside and distance & t.alias_mask == 0) return backward(dst, src, n);
     forward(dst, src, n);
@@ -280,6 +284,21 @@ fn forward(dst: [*]u8, src: [*]const u8, n: usize) void {
     ops.store(V, dst + n - 3 * w, b);
     ops.store(V, dst + n - 2 * w, c);
     ops.store(V, dst + n - w, d);
+    ops.store(V, dst, head);
+}
+
+// One vector per source iteration avoids the 2 KiB unroll of forward().
+// The saved endpoints permit strict source alignment without out-of-range access.
+fn forwardSource(dst: [*]u8, src: [*]const u8, n: usize) void {
+    @disableIntrinsics();
+    const head = ops.load(V, src);
+    const tail_v = ops.load(V, src + n - w);
+    var offset = w - (@intFromPtr(src) & (w - 1));
+    while (offset < n - w) : (offset += w) {
+        const value: V = @as(*align(w) const V, @ptrCast(@alignCast(src + offset))).*;
+        ops.store(V, dst + offset, value);
+    }
+    ops.store(V, dst + n - w, tail_v);
     ops.store(V, dst, head);
 }
 
