@@ -135,6 +135,10 @@ pub const dispatch = struct {
 /// x86_64_v3 comptime build. Larger sizes call the dispatched kernel.
 // The ABI threshold experiment does not change fixed-size inlining.
 const dispatch_inline_max = 128;
+comptime {
+    if (dispatch_inline_max < x86_dispatch.small_max)
+        @compileError("the inline dispatch limit must cover the ABI small limit");
+}
 
 test {
     _ = @import("tests/fuzz.zig");

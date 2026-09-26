@@ -424,6 +424,10 @@ const Tuning = struct {
     mid_entry: []const u8,
 };
 
+fn dispatchSmallMax(experiment: X86Experiment) u32 {
+    return if (experiment == .x86f_dispatch) 64 else 128;
+}
+
 fn readTuning(b: *std.Build, variant: X86Variant, experiment: X86Experiment) Tuning {
     var t: Tuning = .{
         .variant = variant,
@@ -473,6 +477,7 @@ const Variant = struct {
 fn tuningOptions(b: *std.Build, t: Tuning, v: Variant) *std.Build.Step.Options {
     const options = b.addOptions();
     options.addOption(X86Experiment, "x86_experiment", t.experiment);
+    options.addOption(u32, "x86_dispatch_small_max", dispatchSmallMax(t.experiment));
     inline for (tuning_u32, t.u32s) |name, value| {
         options.addOption(?u32, comptime "x86_" ++ replaceDash(name), value);
     }
@@ -577,7 +582,7 @@ fn addDispatchTests(
     check.addFileArg(b.path("src/x86_64/check_dispatch.py"));
     check.addArg(b.fmt("fastmem_x86_{s}_", .{fm.instance}));
     check.addFileArg(probe.getEmittedBin());
-    check.addArg(if (fm.tuning.experiment == .x86f_dispatch) "64" else "128");
+    check.addArg(b.fmt("{d}", .{dispatchSmallMax(fm.tuning.experiment)}));
     for (dispatch_levels, fm.levelObjects(target)) |level, object| {
         const comptime_probe = for (codegen_cpus, probes) |cpu, p| {
             if (std.mem.eql(u8, cpu, level)) break p;
@@ -637,7 +642,7 @@ fn addDispatchTests(
     const run_trap = b.addSystemCommand(&.{"python3"});
     run_trap.addFileArg(b.path("src/x86_64/run_dispatch.py"));
     run_trap.addArg("--resolver-trap");
-    run_trap.addArgs(&.{ "--small-max", if (fm.tuning.experiment == .x86f_dispatch) "64" else "128" });
+    run_trap.addArgs(&.{ "--small-max", b.fmt("{d}", .{dispatchSmallMax(fm.tuning.experiment)}) });
     run_trap.addFileArg(trap_exe.getEmittedBin());
     step.dependOn(&run_trap.step);
     for ([_]std.builtin.OptimizeMode{ .ReleaseFast, .Debug }) |mode| {

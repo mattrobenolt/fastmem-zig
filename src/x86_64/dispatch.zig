@@ -8,8 +8,8 @@
 //! first call through any pointer selects the level, stores all three
 //! pointers, and tail-calls the selected kernel. Every later call loads
 //! the pointer and makes one indirect jump. The C-ABI entries handle sizes
-//! up to 128 bytes themselves and never read the pointers for them. There
-//! is no global constructor.
+//! through `small_max` locally and do not read the pointers for those sizes.
+//! There is no global constructor.
 //! Concurrent first calls store the same values, so the race is benign; the
 //! atomics only make it defined.
 const std = @import("std");

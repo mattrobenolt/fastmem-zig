@@ -81,7 +81,7 @@ pub const zen4_short = experiment == .x86f_zen4 and builtin.cpu.model == &cpu.zn
 pub const temporal_large = experiment == .x86f_temporal and builtin.cpu.model == &cpu.znver5;
 pub const source_64 = experiment == .x86f_source64 and builtin.cpu.model == &cpu.znver5;
 pub const source_early = experiment == .x86f_source and builtin.cpu.model == &cpu.znver5;
-pub const dispatch_small_max: u32 = if (experiment == .x86f_dispatch) 64 else 128;
+pub const dispatch_small_max: u32 = options.x86_dispatch_small_max;
 pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
     experiment == .medium_layout;
 pub const medium_entry = builtin.cpu.model == &cpu.graniterapids and
