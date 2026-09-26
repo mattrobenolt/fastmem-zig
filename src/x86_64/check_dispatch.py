@@ -111,10 +111,10 @@ def transfers(obj, code):
     return indirect, direct
 
 
-SMALL_SIZES = (*range(0, 34), 47, 48, 63, 64, 65, 95, 127, 128)
+SMALL_SIZES = range(129)
 
 
-def trace(obj, name, n):
+def trace(obj, name, n, *, allow_direct=False):
     """Follow `name` with RDX = n and unknown pointers, to ret or an indirect jump."""
     code = obj.body(name)
     order = [a for a, t in code if not t.startswith("R_X86_64")]
@@ -150,6 +150,8 @@ def trace(obj, name, n):
                         "jbe": below or equal, "ja": not below and not equal}.get(op)
                 require(take is not None, f"{name}/{n}: unsupported branch {insn}")
             if op == "jmp" or take:
+                if target not in at and allow_direct:
+                    return visited, obj.owner[target]
                 require(target in at, f"{name}/{n} leaves the entry: {insn}")
                 pc = target
                 continue
@@ -157,6 +159,20 @@ def trace(obj, name, n):
             flags = None  # RDX changed.
         pc = nxt
     raise SystemExit(f"x86_64 dispatch: {name}/{n} did not terminate")
+
+
+def pointer_tables(obj):
+    entries = {}
+    section = None
+    for line in run("llvm-readelf", "-rW", obj.path).splitlines():
+        header = re.match(r"Relocation section '([^']+)'", line)
+        if header:
+            section = header[1]
+        fields = line.split()
+        if section == ".rela.rodata" and len(fields) == 7 and fields[2] == "R_X86_64_64":
+            require(fields[-2:] == ["+", "0"], "dispatch table has a nonzero function offset")
+            entries[int(fields[0], 16)] = fields[4]
+    return entries
 
 
 def check_probe(obj):
@@ -189,7 +205,15 @@ def check_probe(obj):
                 budget = 11 if op != "memset" else 6
                 require(stores and stores[0] <= budget, f"{entry}/{n} exceeds the first-store budget")
                 require(len(text) <= (14 if op != "memset" else 11), f"{entry}/{n} exceeds the byte-class budget")
-        for n in (129, 4096, 1 << 26):
+        # Every decision uses an immediate comparison with unchanged RDX.
+        # The boundary points cover every unsigned interval of that tree.
+        boundaries = {129, 4096, 1 << 26, (1 << 64) - 1}
+        for insn in instructions(obj.body(entry)):
+            match = re.fullmatch(r"cmpq\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
+            if match:
+                value = int(match[1], 0)
+                boundaries.update(n for n in (value - 1, value, value + 1) if n > 128)
+        for n in sorted(boundaries):
             code, end = trace(obj, entry, n)
             indirect, direct = transfers(obj, [(0, t) for t in code])
             require(end == "indirect" and indirect == [f"x86_64.dispatch.{pointer}"] and not direct,
@@ -210,13 +234,33 @@ def check_probe(obj):
         code = obj.body(f"probeRuntime{op.capitalize()}")
         indirect, direct = transfers(obj, code)
         require(indirect == [f"x86_64.dispatch.{pointer}"], f"runtime {op} large path: {indirect}")
-    names = [f"{PREFIX}{level}_{op}" for level in LEVELS for op in ("memmove", "memset", "name")]
+        for n in SMALL_SIZES:
+            _, end = trace(obj, f"probeRuntime{op.capitalize()}", n)
+            require(end == "ret", f"inline {op}/{n} reaches a bounded pointer")
+        for n in (129, 256, 4096, (1 << 64) - 1):
+            _, end = trace(obj, f"probeRuntime{op.capitalize()}", n)
+            require(end == "indirect", f"inline {op}/{n} misses the bounded pointer")
+    names = [f"{PREFIX}{level}_{op}" for level in LEVELS
+             for op in ("memmove", "memset", "memmove_above128", "memset_above128", "name")]
     names += [f"{PREFIX}{kind}_{op}" for kind in ("resolve", "generic") for op in ("memcpy", "memmove", "memset")]
     for name in names:
         require(obj.binding.get(name) == ("GLOBAL", "HIDDEN"), f"{name} is not GLOBAL HIDDEN: {obj.binding.get(name)}")
     for op in ("memcpy", "memmove", "memset"):
-        text = "\n".join(instructions(obj.body(f"{PREFIX}resolve_{op}")))
+        text = "\n".join(t for _, t in obj.body(f"{PREFIX}resolve_{op}"))
         require("cpuid" in text and "xgetbv" in text, f"resolver {op} does not read CPUID and XCR0")
+        # LLVM lowers the three selections to indexed pointer tables.
+        tables = pointer_tables(obj)
+        for kernel in ("memcpy", "memmove", "memset"):
+            base = next((a for a, name in tables.items() if name == f"{PREFIX}generic_{kernel}"), None)
+            require(base is not None, f"missing generic {kernel} table entry")
+            relocation = ".rodata" + (f"+{base:#x}" if base else "")
+            require(f"R_X86_64_32S {relocation}" in text.splitlines(),
+                    f"resolver {op} does not read the {kernel} table")
+            for i, level in enumerate(LEVELS, 1):
+                target = "memset" if kernel == "memset" else "memmove"
+                want = f"{PREFIX}{level}_{target}_above128"
+                require(tables.get(base + 8 * i) == want,
+                        f"resolver {op} {kernel}/{level} does not install {want}")
     unexpected = sorted(n for n in obj.functions if n.startswith("fastmem_x86_") and n not in names)
     require(not unexpected, f"dispatch symbols without the instance prefix: {unexpected}")
     return evidence
@@ -246,8 +290,12 @@ def normalized(obj, level, entry):
                 owner = obj.owner[address]
                 if owner != name:
                     pending.append(owner)
-                offset = address - obj.functions[owner][0]
-                return f"<{canonical(level, owner)}+{offset:#x}>"
+                # Padding changes when the bounded entry shares a leaf.
+                # Compare branch destinations by instruction index, not byte offset.
+                body = [(a, t) for a, t in obj.body(owner)
+                        if not t.startswith(("nop", "R_X86_64"))]
+                index = next(i for i, (a, _) in enumerate(body) if a >= address)
+                return f"<{canonical(level, owner)}:i{index}>"
 
             lines.append(re.sub(r"\b(?:0x)?([0-9a-f]+) <[^>]+>", target, text))
         result[key] = lines
@@ -290,6 +338,20 @@ def main():
             for key in got:
                 require(got[key] == want[key], f"{level} {key}: the level object differs from the -Dcpu={level} build")
             counts[op] = {key: len(lines) for key, lines in sorted(got.items())}
+            bounded_name = f"{PREFIX}{level}_mem{op}_above128"
+            bounded_counts = {}
+            for n in (129, 192, 255, 256, 257, 511, 512, 513, 768, 1024, 1025, 4096):
+                code, end = trace(level_obj, bounded_name, n, allow_direct=True)
+                _, full_end = trace(level_obj, f"{PREFIX}{level}_mem{op}", n, allow_direct=True)
+                # AVX2 inlines the former mediumKernel, so it can return here.
+                require(end == full_end or full_end == f"{op}.mediumKernel",
+                        f"{level} bounded {op}/{n}: {end} != {full_end}")
+                text = [t for t in code if not t.startswith("R_X86_64")]
+                require(not any(re.match(r"(?:testq|cmpq).*%rdx", t) and
+                                (t.startswith("testq") or int(re.search(r"\$(0x[0-9a-f]+|[0-9]+)", t)[1], 0) <= 128)
+                                for t in text), f"{level} bounded {op}/{n} repeats a small-size test")
+                bounded_counts[n] = {"instructions": len(text), "end": end}
+            counts[op]["above128"] = bounded_counts
             # The large policy of tuning.zig, stated independently. No level
             # uses REP for a forward overlap: rep_fwd_gap_min is null in
             # every row, so the REP branch requires a disjoint source.

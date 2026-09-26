@@ -346,3 +346,13 @@ fn stream(dst: [*]u8, src: [*]const u8, n: usize) void {
     ops.fence();
     _ = small(8 * w, dst + n - 4 * w, src + n - 4 * w, 4 * w);
 }
+
+/// The dispatch layer handles every size through 128 bytes before this entry.
+pub noinline fn kernelAbove128(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= 128) unreachable;
+    if (comptime ops.high_available) return mediumReordered(dst, src, n);
+    if (!small(8 * w, @ptrCast(dst.?), @ptrCast(src.?), n))
+        return @call(tail_call, largeKernel, .{ dst, src, n });
+    return dst;
+}

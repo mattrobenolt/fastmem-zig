@@ -62,11 +62,11 @@ fn kernels(comptime l: Level) Kernels {
     };
     const prefix = symbol_prefix ++ @tagName(l) ++ "_";
     // x86 memcpy is the memmove kernel, as in the comptime builds.
-    const move = @extern(CopyFn, .{ .name = prefix ++ "memmove", .visibility = .hidden });
+    const move = @extern(CopyFn, .{ .name = prefix ++ "memmove_above128", .visibility = .hidden });
     return .{
         .copy = move,
         .move = move,
-        .set = @extern(SetFn, .{ .name = prefix ++ "memset", .visibility = .hidden }),
+        .set = @extern(SetFn, .{ .name = prefix ++ "memset_above128", .visibility = .hidden }),
         .name = @extern(NameFn, .{ .name = prefix ++ "name", .visibility = .hidden }),
     };
 }
