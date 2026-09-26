@@ -21,6 +21,17 @@ class AuditTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "common.copySmall.*mem.replace__anon_1"):
             audit_recursion(functions, symbols, {0x100})
 
+    def test_dispatch_roots(self):
+        # The stub jumps through a pointer: only the root reaches the kernel.
+        functions = {
+            0x100: ["100: jmpq *%rax"],
+            0x200: ["200: callq 0x100 <memcpy>"],
+        }
+        symbols = {"memcpy": symbol(0x100), "fastmem_x86_x86_64_v3_memmove": symbol(0x200)}
+        audit_recursion(functions, symbols, {0x100})
+        with self.assertRaisesRegex(AssertionError, "fastmem_x86_x86_64_v3_memmove -> memcpy"):
+            audit_recursion(functions, symbols, {0x100}, {0x200})
+
     def test_interior_target(self):
         functions = {0x100: ["100: b 0x204"], 0x200: ["200: nop", "204: bl 0x100"]}
         with self.assertRaisesRegex(AssertionError, "branch to memory entry"):

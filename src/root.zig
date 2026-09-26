@@ -7,6 +7,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const testing = std.testing;
+const options = @import("fastmem_options");
 
 const common = @import("common.zig");
 const chunk_bytes = common.chunk_bytes;
@@ -14,6 +15,7 @@ const stride = common.stride;
 // The generic Zig fallback for targets without a dedicated kernel.
 const memcpy_impl = @import("memcpy.zig");
 const memmove_impl = @import("memmove.zig");
+const generic = @import("generic.zig");
 
 // aarch64 kernels: ports of Arm Optimized Routines (see THIRD_PARTY.md).
 // The SVE pair is the G2 C-ABI baseline; the advsimd pair is the G6
@@ -34,6 +36,10 @@ const x86_tuning = @import("x86_64/tuning.zig");
 const x86_move = @import("x86_64/move.zig");
 const x86_set = @import("x86_64/set.zig");
 const on_x86 = x86_tuning.available;
+// x86_64 Linux builds without AVX2 select the x86 kernels at run time
+// (docs/runtime-dispatch.md). AVX2 builds keep the comptime selection.
+const x86_dispatch = @import("x86_64/dispatch.zig");
+const on_dispatch = x86_dispatch.enabled;
 
 const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
@@ -49,6 +55,8 @@ else if (on_aarch64)
     "aor-advsimd-5e20a93"
 else if (on_x86)
     x86_tuning.name
+else if (on_dispatch)
+    "x86-dispatch"
 else
     "zig-simd";
 
@@ -59,21 +67,72 @@ else
 
 const set_impl_name: []const u8 = if (on_aarch64_sve)
     armName(@tagName(arm_tuning.set_small))
-else if (on_aarch64 or on_x86)
+else if (on_aarch64 or on_x86 or on_dispatch)
     copy_impl_name
 else
     "zig-vector";
 
 /// Names of the kernel implementations in this build, one per operation.
+/// A dispatch build names "x86-dispatch"; `dispatch.kernelName` names the
+/// kernel that the run-time level selected.
 pub const impl = .{
     .copy = copy_impl_name,
     .move = move_impl_name,
     .set = set_impl_name,
 };
 
+/// Runtime CPU dispatch (docs/runtime-dispatch.md). It is active in x86_64
+/// Linux builds whose target CPU lacks AVX2, when build.zig links the level
+/// objects. `enabled` is false in every other build, and the functions then
+/// return null or error.Unsupported.
+pub const dispatch = struct {
+    pub const enabled = on_dispatch;
+    /// Sizes up to this bound never consult the dispatcher, on any path.
+    pub const small_max = x86_dispatch.small_max;
+    pub const Level = x86_dispatch.Level;
+    pub const Info = x86_dispatch.Info;
+
+    /// The level of the kernels. The first use selects it from CPUID.
+    pub fn level() ?Level {
+        return if (comptime enabled) x86_dispatch.level() else null;
+    }
+
+    /// The kernel implementation name of the level, as `impl` names it in
+    /// a comptime build for that CPU.
+    pub fn kernelName() ?[:0]const u8 {
+        return if (comptime enabled) x86_dispatch.kernelName() else null;
+    }
+
+    /// The CPUID and XCR0 facts that the selection reads.
+    pub fn detect() ?Info {
+        return if (comptime enabled) x86_dispatch.detect() else null;
+    }
+
+    /// Use `l` instead of the detected level: a test hook. The CPU must
+    /// support the level. It compiles only in fastmem's own test modules:
+    /// the public module never sets the `x86_test_hooks` option.
+    pub fn force(l: Level) error{Unsupported}!void {
+        if (comptime !test_hooks) @compileError(
+            "fastmem.dispatch.force is a test hook; the public fastmem module does not provide it",
+        );
+        if (comptime !enabled) return error.Unsupported;
+        return x86_dispatch.force(l);
+    }
+
+    const test_hooks = @hasDecl(options, "x86_test_hooks") and options.x86_test_hooks;
+};
+
+/// Sizes up to this bound stay inline in a dispatch build. The classes are
+/// the x86 inline ladder (x86_64/move.zig and set.zig `small`), compiled for
+/// the target CPU: SSE2 on baseline. 128 is the inline limit of the
+/// x86_64_v3 comptime build. Larger sizes call the dispatched kernel.
+const dispatch_inline_max = x86_dispatch.small_max;
+
 test {
     _ = @import("tests/fuzz.zig");
+    _ = @import("x86_64/cpuid.zig");
     if (on_x86) _ = @import("x86_64/tests.zig");
+    if (on_dispatch) _ = @import("x86_64/dispatch_tests.zig");
 }
 
 pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
@@ -113,6 +172,19 @@ pub inline fn copy(comptime T: type, dest: []T, source: []const T) void {
         x86_move.move(.disjoint, @ptrCast(dest.ptr), @ptrCast(source.ptr), bytes);
         return;
     }
+    if (comptime on_dispatch) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d_addr = @intFromPtr(dest.ptr);
+        const s_addr = @intFromPtr(source.ptr);
+        std.debug.assert(s_addr <= std.math.maxInt(usize) - bytes);
+        std.debug.assert(d_addr <= s_addr or d_addr >= s_addr + bytes);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        if (x86_move.small(dispatch_inline_max, d, s, bytes)) return;
+        _ = x86_dispatch.copyPointer()(d, s, bytes);
+        return;
+    }
     memcpy_impl.copy(T, dest, source);
 }
 
@@ -148,6 +220,16 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
             @ptrCast(source.ptr),
             source.len * @sizeOf(T),
         );
+        return;
+    }
+    if (comptime on_dispatch) {
+        std.debug.assert(dest.len >= source.len);
+        const bytes = source.len * @sizeOf(T);
+        const d: [*]u8 = @ptrCast(dest.ptr);
+        const s: [*]const u8 = @ptrCast(source.ptr);
+        // The small classes load everything before they store.
+        if (x86_move.small(dispatch_inline_max, d, s, bytes)) return;
+        _ = x86_dispatch.movePointer()(d, s, bytes);
         return;
     }
     memmove_impl.move(T, dest, source);
@@ -186,7 +268,17 @@ pub inline fn set(comptime T: type, dest: []T, value: T) void {
             return;
         }
     }
-    setFallback(T, dest, value);
+    if (comptime on_dispatch and (T == u8 or std.meta.hasUniqueRepresentation(T))) {
+        const bytes = std.mem.asBytes(&value);
+        if (T == u8 or allBytesEqual(bytes)) {
+            const len = dest.len * @sizeOf(T);
+            const d: [*]u8 = @ptrCast(dest.ptr);
+            if (x86_set.small(dispatch_inline_max, false, d, bytes[0], len)) return;
+            _ = x86_dispatch.setPointer()(d, bytes[0], len);
+            return;
+        }
+    }
+    generic.setFallback(T, dest, value);
 }
 
 fn allBytesEqual(bytes: []const u8) bool {
@@ -230,8 +322,9 @@ else if (on_aarch64)
 else
     undefined;
 
-/// Replace the memory symbols in this link with strong, hidden kernel aliases.
-/// Call once from the root comptime block. See docs/export-layer.md.
+/// Replace the memory symbols in this link with strong, hidden aliases of
+/// the `abi` entries. Call once from the root comptime block. See
+/// docs/export-layer.md.
 pub fn exportSymbols() void {
     if (builtin.target.ofmt != .elf or
         (builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .x86_64))
@@ -247,7 +340,9 @@ pub fn exportSymbols() void {
 /// C-ABI entry points with the libc signatures, each returning dest.
 /// The entries receive libc names only after exportSymbols. The benchmark
 /// measures these as fastmem_abi. Dedicated kernels handle aarch64 and AVX2.
-/// Other targets use generic Zig wrappers.
+/// x86_64 Linux builds without AVX2 get the runtime-dispatch entries: 0 to
+/// 128 bytes inline, larger sizes through the dispatcher
+/// (docs/runtime-dispatch.md). Other targets use generic Zig wrappers.
 pub const abi = struct {
     comptime {
         // A consumer can use only ABI pointers, without copy/move/set.
@@ -263,106 +358,29 @@ pub const abi = struct {
 
     pub const memcpy: LibcCopyFn = if (on_x86)
         &x86_move.kernel
+    else if (on_dispatch)
+        &x86_dispatch.memcpy
     else if (on_aarch64)
         libc_copy_fn
     else
-        &memcpyGeneric;
+        &generic.memcpy;
     pub const memmove: LibcCopyFn = if (on_x86)
         &x86_move.kernel
+    else if (on_dispatch)
+        &x86_dispatch.memmove
     else if (on_aarch64)
         libc_move_fn
     else
-        &memmoveGeneric;
+        &generic.memmove;
     pub const memset: LibcSetFn = if (on_x86)
         &x86_set.kernel
+    else if (on_dispatch)
+        &x86_dispatch.memset
     else if (on_aarch64)
         libc_set_fn
     else
-        &memsetGeneric;
-
-    fn memcpyGeneric(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
-        @disableIntrinsics();
-        if (n == 0) return dest;
-        const d: [*]u8 = @ptrCast(dest.?);
-        const s: [*]const u8 = @ptrCast(src.?);
-        copy(u8, d[0..n], s[0..n]);
-        return dest;
-    }
-
-    fn memmoveGeneric(
-        dest: ?*anyopaque,
-        src: ?*const anyopaque,
-        n: usize,
-    ) callconv(.c) ?*anyopaque {
-        @disableIntrinsics();
-        if (n == 0) return dest;
-        const d: [*]u8 = @ptrCast(dest.?);
-        const s: [*]const u8 = @ptrCast(src.?);
-        move(u8, d[0..n], s[0..n]);
-        return dest;
-    }
-
-    fn memsetGeneric(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
-        @disableIntrinsics();
-        if (n == 0) return dest;
-        const d: [*]u8 = @ptrCast(dest.?);
-        set(u8, d[0..n], @truncate(@as(c_uint, @bitCast(c))));
-        return dest;
-    }
+        &generic.memset;
 };
-
-// Portable fallback for targets without a dedicated kernel and for
-// non-uniform fill values. Local intrinsic suppression prevents LLVM
-// from replacing these loops with recursive memset calls.
-fn setFallback(comptime T: type, dest: []T, value: T) void {
-    @disableIntrinsics();
-    if (comptime (T == u8)) return setBytes(dest.ptr, value, dest.len);
-    for (dest) |*d| d.* = value;
-}
-
-/// The generic byte fill. Every size class stores an overlapping head and
-/// tail, so no length reaches a byte-store loop (issue #1). The stores are
-/// plain: the module builds with no_builtin and this function disables
-/// intrinsics, so LLVM cannot turn them back into a memset call.
-fn setBytes(d: [*]u8, value: u8, len: usize) void {
-    @disableIntrinsics();
-    const V16 = @Vector(16, u8);
-    const V32 = @Vector(32, u8);
-    // Targets without SIMD registers or fast unaligned stores (for example
-    // riscv64 baseline) still lower these stores to bytes. They are not
-    // fastmem targets; x86_64 baseline and aarch64 get real vector stores.
-    if (len >= 64) {
-        const v: V32 = @splat(value);
-        var i: usize = 0;
-        while (i + 64 <= len) : (i += 64) {
-            @as(*align(1) V32, @ptrCast(d + i)).* = v;
-            @as(*align(1) V32, @ptrCast(d + i + 32)).* = v;
-        }
-        // The last 64 bytes, overlapping the loop's final block.
-        @as(*align(1) V32, @ptrCast(d + len - 64)).* = v;
-        @as(*align(1) V32, @ptrCast(d + len - 32)).* = v;
-    } else if (len >= 32) {
-        const v: V32 = @splat(value);
-        @as(*align(1) V32, @ptrCast(d)).* = v;
-        @as(*align(1) V32, @ptrCast(d + len - 32)).* = v;
-    } else if (len >= 16) {
-        const v: V16 = @splat(value);
-        @as(*align(1) V16, @ptrCast(d)).* = v;
-        @as(*align(1) V16, @ptrCast(d + len - 16)).* = v;
-    } else if (len >= 8) {
-        const w: u64 = @as(u64, value) * 0x0101010101010101;
-        std.mem.writeInt(u64, d[0..8], w, .little);
-        std.mem.writeInt(u64, d[len - 8 ..][0..8], w, .little);
-    } else if (len >= 4) {
-        const w: u32 = @as(u32, value) * 0x01010101;
-        std.mem.writeInt(u32, d[0..4], w, .little);
-        std.mem.writeInt(u32, d[len - 4 ..][0..4], w, .little);
-    } else if (len > 0) {
-        d[0] = value;
-        d[len >> 1] = value;
-        d[len - 1] = value;
-    }
-}
 
 test "copy: all size classes" {
     const sizes = [_]usize{

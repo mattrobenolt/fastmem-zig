@@ -82,6 +82,7 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
         .set_available = @hasDecl(fastmem, "set"),
         .link_libc = builtin.link_libc,
         .impl = fastmem.impl,
+        .dispatch = dispatchSummary(),
         .detail = detail,
         .fault_address = fault_address,
         .fault_region = fault_region,
@@ -91,6 +92,13 @@ fn summary(status: []const u8, detail: []const u8, elapsed_ns: i96) void {
     writer.writeByte('\n') catch return;
     const line = writer.buffered();
     _ = linux.write(1, line.ptr, line.len);
+}
+
+/// The runtime-dispatch level and kernel (docs/runtime-dispatch.md), or
+/// null in a comptime-selected build.
+fn dispatchSummary() ?struct { level: []const u8, kernel: []const u8 } {
+    const level = fastmem.dispatch.level() orelse return null;
+    return .{ .level = @tagName(level), .kernel = fastmem.dispatch.kernelName().? };
 }
 
 fn fault(_: posix.SIG, info: *const posix.siginfo_t, _: ?*anyopaque) callconv(.c) void {
@@ -351,10 +359,19 @@ fn offsetsFor(len: u32) []const u32 {
 
 fn runArgs(init: process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 1) {
-        if (args.len != 3 or !mem.eql(u8, args[1], "--max-size")) return error.InvalidArguments;
-        max_size = try std.fmt.parseInt(u32, args[2], 10);
-        if (max_size < 1024 or max_size > 512 * mib) return error.InvalidMaxSize;
+    var i: usize = 1;
+    while (i < args.len) : (i += 2) {
+        if (i + 1 >= args.len) return error.InvalidArguments;
+        const value = args[i + 1];
+        if (mem.eql(u8, args[i], "--max-size")) {
+            max_size = try std.fmt.parseInt(u32, value, 10);
+            if (max_size < 1024 or max_size > 512 * mib) return error.InvalidMaxSize;
+        } else if (mem.eql(u8, args[i], "--x86-level")) {
+            // Test one dispatch level instead of the detected one.
+            const level = std.meta.stringToEnum(fastmem.dispatch.Level, value) orelse
+                return error.InvalidLevel;
+            try fastmem.dispatch.force(level);
+        } else return error.InvalidArguments;
     }
     try run(init.gpa);
 }

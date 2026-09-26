@@ -18,6 +18,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from fastmem_bench.build import dispatches
 from fastmem_bench.goals import evaluate
 from fastmem_bench.jsonl import IMPLEMENTATIONS, Measurement, parse
 from fastmem_bench.stability import Cells, memory_summary, memory_warning, stability
@@ -218,6 +219,8 @@ class Rounds:
     # The meta memory object of each process, keyed "<variant>/r<round>". None for v2.
     memory: dict[str, dict[str, Any] | None]
     cpus: set[str]
+    # The runtime-dispatch capability and record of each variant (record_dispatch).
+    dispatch: dict[str, dict[str, Any]]
 
 
 def add_samples(  # noqa: PLR0917 — one round's destinations
@@ -247,6 +250,43 @@ def add_samples(  # noqa: PLR0917 — one round's destinations
             cycles[key][index].append(sample["cycles"] / sample["iters"])
 
 
+def record_dispatch(
+    path: Path,
+    meta: dict[str, Any],
+    variant: str,
+    dispatch: dict[str, dict[str, Any]],
+    expected: str | None,
+) -> None:
+    """Keep the runtime-dispatch capability and record of each variant.
+
+    The capability comes from the binary (docs/runtime-dispatch.md): a
+    dispatching binary exports its resolvers, and the codegen evidence in
+    the meta record names them. Such a binary must emit the `dispatch`
+    object, with the expected level. Any other binary must not emit it.
+    build.check_dispatch_build rejects a revision with runtime dispatch
+    whose G6 x86_64 build has no resolvers.
+    """
+    record = meta.get("dispatch")
+    codegen = meta.get("codegen")
+    if codegen is None:
+        if expected is not None:
+            raise ValueError(f"{path}: no codegen evidence for the dispatch capability")
+        capable = record is not None
+    else:
+        capable = dispatches(codegen)
+        if capable != (record is not None):
+            raise ValueError(
+                f"{path}: the dispatch record ({record}) disagrees with the binary "
+                f"({'with' if capable else 'without'} dispatch resolvers)"
+            )
+    if expected is not None and record is not None and record["level"] != expected:
+        raise ValueError(f"{path}: the dispatched level is {record['level']}, not {expected}")
+    state = {"capable": capable, "record": record}
+    if variant in dispatch and dispatch[variant] != state:
+        raise ValueError(f"Dispatch level changed within {variant}")
+    dispatch[variant] = state
+
+
 def load_rounds(  # noqa: C901 — validate clusters before case intersection
     raw: Path,
     variants: list[str],
@@ -254,6 +294,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     expected_round_count: int | None = None,
     probe: dict[str, Any] | None = None,
     expected_cpu: str | None = None,
+    expected_dispatch: str | None = None,
 ) -> Rounds:
     data: Series = defaultdict(lambda: defaultdict(list))
     cycles: Series = defaultdict(lambda: defaultdict(list))
@@ -262,6 +303,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     codegen: dict[str, Any] = {}
     memory: dict[str, dict[str, Any] | None] = {}
     cpus: set[str] = set()
+    dispatch: dict[str, dict[str, Any]] = {}
     expected_rounds: set[int] | None = None
     for variant in variants:
         paths = sorted((raw / variant).glob("r*.jsonl"))
@@ -279,6 +321,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
             if expected_cpu is not None and cpu != expected_cpu:
                 raise ValueError(f"{path}: the build CPU is {cpu}, not {expected_cpu}")
             cpus.add(cpu)
+            record_dispatch(path, measurement.meta, variant, dispatch, expected_dispatch)
             memory[f"{variant}/{path.stem}"] = measurement.meta["memory"]
             evidence = measurement.meta["codegen"]
             if variant in codegen and codegen[variant] != evidence:
@@ -311,7 +354,7 @@ def load_rounds(  # noqa: C901 — validate clusters before case intersection
     }
     common_cases = {case for case, _impl in common}
     details = {case: detail for case, detail in details.items() if case in common_cases}
-    return Rounds(data, cycles, details, warnings, codegen, memory, cpus)
+    return Rounds(data, cycles, details, warnings, codegen, memory, cpus, dispatch)
 
 
 def floor_group(detail: dict[str, Any]) -> str:
@@ -336,6 +379,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     probe: dict[str, Any] | None = None,
     cpu_mode: str = "target",
     expected_cpu: str | None = None,
+    expected_dispatch: str | None = None,
 ) -> dict[str, Any]:
     validate_effect(minimum_effect)
     loaded = load_rounds(
@@ -344,6 +388,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
         expected_round_count=expected_round_count,
         probe=probe,
         expected_cpu=expected_cpu,
+        expected_dispatch=expected_dispatch,
     )
     data, details, warnings, codegen = loaded.data, loaded.details, loaded.warnings, loaded.codegen
     cells: dict[tuple[str, str, str], tuple[list[float], list[int]]] = {}
@@ -424,6 +469,7 @@ def analyze(  # noqa: C901 — paired comparisons share one cluster table
     result["outliers"] = outliers
     result["codegen"] = codegen
     result["cpu"] = {"mode": cpu_mode, "models": sorted(loaded.cpus)}
+    result["dispatch"] = loaded.dispatch
     result["memory"] = memory
     cycle_cells: Cells = {
         key: (round_medians([rounds[index] for index in sorted(rounds)]), [])

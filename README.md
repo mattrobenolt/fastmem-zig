@@ -60,11 +60,13 @@ only, the LLVM backend, Debug builds).
 |---|---|
 | x86_64 with AVX-512 | Zig vector kernels with per-model tuning: `rep movsb` and non-temporal thresholds, size-class dispatch, zmm registers without `vzeroupper` |
 | x86_64 with AVX2 (`x86_64_v3`) | the same kernels with ymm |
+| x86_64 Linux without AVX2 (`baseline`) | the kernels above, selected at run time from CPUID (`docs/runtime-dispatch.md`); the generic fallback on hosts without AVX2 |
 | aarch64 with SVE | Arm Optimized Routines `memcpy-sve` / `memset-sve`, plus per-model small-size paths |
 | aarch64 without SVE | Arm Optimized Routines AdvSIMD |
 | other targets | a generic Zig vector fallback |
 
-`fastmem.impl` names the kernel that a build selected.
+`fastmem.impl` names the kernel that a build selected. In a runtime-dispatch
+build, `fastmem.dispatch.kernelName()` names the kernel that the host selected.
 
 ## Results
 

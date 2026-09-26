@@ -86,7 +86,15 @@ def main():
             }
             assert not fortified.intersection(branches), (prefix + op, "unexpected fortified call")
     if not args.disabled:
-        audit_recursion(functions, symbols, entries)
+        # The x86_64 dispatch stubs jump through pointers, which the audit
+        # does not follow. Its level kernels, resolvers, and generic entries
+        # are roots too (docs/runtime-dispatch.md).
+        roots = {
+            value[0]
+            for name, value in symbols.items()
+            if value[2] & 15 == 2 and re.fullmatch(r"fastmem_x86_\w+", name)
+        }
+        audit_recursion(functions, symbols, entries, roots)
     ran = False
     if args.run:
         runner = linux_runner(args.arch)

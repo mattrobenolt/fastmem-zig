@@ -14,12 +14,15 @@ a kernel or make a performance claim.
 - `src/x86_64/`: the x86_64 kernels (AVX-512 and AVX2). `tuning.zig` holds
   the per-model table and `-Dx86-variant=auto` resolution.
   `check_codegen.py` is the codegen gate. `README.md` describes the design.
+  `dispatch.zig`, `cpuid.zig`, and `level.zig` are the runtime dispatch of
+  builds without AVX2 (`docs/runtime-dispatch.md`). `check_dispatch.py`
+  and `run_dispatch.py` are its gate (`zig build test-dispatch`).
 - `src/aarch64/`: ports of Arm Optimized Routines (SVE and AdvSIMD) as
   global asm, plus `small.zig` (the inline small classes) and `tuning.zig`
   (the per-model small-path table).
-- `src/memcpy.zig`, `memmove.zig`, `forward.zig`, `common.zig`: the generic
-  Zig fallback for targets without a dedicated kernel (x86_64 without AVX2,
-  other architectures).
+- `src/memcpy.zig`, `memmove.zig`, `forward.zig`, `common.zig`,
+  `generic.zig`: the generic Zig fallback for targets without a dedicated
+  kernel (other architectures, and the `generic` dispatch level on x86_64).
 - `src/export/`: `exportSymbols()` tests and binary checks, including the
   pinned aarch64 kernel bytes (`check_kernel_bytes.py`).
 - `src/tests/`: the guard-page correctness suite (`fastmem-tests`), fuzzers,
@@ -34,8 +37,8 @@ a kernel or make a performance claim.
   stacks `iam/` (a human applies it) and `base/` (the agent applies it).
   `infra/README.md` is the runbook.
 - `docs/`: `fastmem-plan.md`, `bench-design.md` (the benchmark contract),
-  `export-layer.md`, `research/` (design memos, host facts), `results/`
-  (one file per fleet measurement).
+  `export-layer.md`, `runtime-dispatch.md`, `research/` (design memos, host
+  facts), `results/` (one file per fleet measurement).
 
 ## Toolchain
 
@@ -60,7 +63,9 @@ a kernel or make a performance claim.
 
 ## Benchmark targets
 
-`bench.toml` is the source of truth. All `.xlarge`, us-west-2, account
+`bench.toml` is the source of truth. The x86 `baseline_cpu` is `x86_64`:
+its builds dispatch at run time to the level named by `zig_cpu`. All
+`.xlarge`, us-west-2, account
 396684171460 ("playground"), profile `fastmem-bench`.
 
 | Target | CPU | x86 variant / aarch64 small path |

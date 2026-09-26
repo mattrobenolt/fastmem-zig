@@ -91,6 +91,61 @@ def baseline_cpu(settings: dict[str, Any]) -> str:
     return cpu
 
 
+DISPATCH_LEVELS = ("sapphirerapids", "graniterapids", "znver4", "znver5")
+
+
+def expected_dispatch(settings: dict[str, Any], mode: str) -> str | None:
+    """The runtime-dispatch level of a G6 x86_64 build: the kernel of zig_cpu.
+
+    A baseline x86_64 build without AVX2 selects its kernels at run time
+    (docs/runtime-dispatch.md). On a fleet box the selection must equal the
+    comptime kernel of the target model. Other builds do not dispatch.
+    """
+    cpu = build_cpu(settings, mode)
+    arch = settings.get("zig_target", "").split("-")[0] or settings.get("arch")
+    if mode != "baseline" or arch != "x86_64":
+        return None
+    if cpu not in ("x86_64", "baseline", "x86_64_v2"):
+        return None
+    zig_cpu = settings["zig_cpu"]
+    return zig_cpu if zig_cpu in DISPATCH_LEVELS else None
+
+
+# A dispatching binary exports these resolvers (src/x86_64/dispatch.zig).
+DISPATCH_RESOLVER = re.compile(r"fastmem_x86_[0-9a-f]{16}_resolve_memcpy")
+
+
+def dispatches(codegen: dict[str, Any] | None) -> bool:
+    """The binary selects its kernels at run time: its codegen roots name the resolvers."""
+    return codegen is not None and any(
+        DISPATCH_RESOLVER.fullmatch(root) for root in codegen["checked_roots"]
+    )
+
+
+def supports_dispatch(source: Path) -> bool:
+    """The revision has runtime dispatch: its build declares the x86-dispatch option."""
+    build = source / "build.zig"
+    return build.is_file() and '"x86-dispatch"' in build.read_text()
+
+
+def check_dispatch_build(
+    settings: dict[str, Any], mode: str, source: Path, codegen: dict[str, Any] | None
+) -> None:
+    """A revision with runtime dispatch must dispatch in its G6 x86_64 build.
+
+    Analysis then requires the expected level from every binary that
+    dispatches (analysis.record_dispatch). A revision without the feature
+    builds a binary without resolvers, and no level applies to it.
+    """
+    if expected_dispatch(settings, mode) is None or not supports_dispatch(source):
+        return
+    if not dispatches(codegen):
+        raise RuntimeError(
+            f"{source}: the revision has runtime dispatch, but its {mode} build has no"
+            " dispatch resolvers"
+        )
+
+
 def build_cpu(settings: dict[str, Any], mode: str) -> str:
     """The -Dcpu of a build: zig_cpu for target builds, baseline_cpu for G6 builds."""
     if mode not in CPU_MODES:
@@ -175,7 +230,9 @@ def build_all(
             finally:
                 if temporary.exists():
                     shutil.rmtree(temporary)
-        return Build(source, target, prefix, key, load_codegen(prefix))
+        codegen = load_codegen(prefix)
+        check_dispatch_build(settings, cpu_mode, source.path, codegen)
+        return Build(source, target, prefix, key, codegen)
 
     return parallel(pairs, build, workers=os.cpu_count() or 1)
 

@@ -1200,6 +1200,69 @@ const Codegen = struct {
     }
 };
 
+const DispatchMeta = struct {
+    level: []const u8,
+    kernel: []const u8,
+    vendor: []const u8,
+    family: u32,
+    model: u32,
+};
+
+/// The runtime-dispatch level of a baseline x86_64 build
+/// (docs/runtime-dispatch.md). The timed calls resolved it before the meta
+/// record.
+fn dispatchMeta() DispatchMeta {
+    const info = fastmem.dispatch.detect().?;
+    return .{
+        .level = @tagName(fastmem.dispatch.level().?),
+        .kernel = fastmem.dispatch.kernelName().?,
+        .vendor = @tagName(info.vendor),
+        .family = info.family,
+        .model = info.model,
+    };
+}
+
+/// A meta record with the dispatch object after its last field. Only a
+/// dispatch build emits it. A comptime-selected build emits the record
+/// without the field, with the same code as before P7, so that the code
+/// layout of its kernels does not move.
+fn WithDispatch(comptime Base: type) type {
+    return struct {
+        base: Base,
+        dispatch: DispatchMeta,
+
+        const Self = @This();
+
+        pub fn jsonStringify(self: Self, jw: *json.Stringify) json.Stringify.Error!void {
+            try jw.beginObject();
+            inline for (@typeInfo(Base).@"struct".fields) |field| {
+                try jw.objectField(field.name);
+                try jw.write(@field(self.base, field.name));
+            }
+            try jw.objectField("dispatch");
+            try jw.write(self.dispatch);
+            try jw.endObject();
+        }
+    };
+}
+
+test "the dispatch meta object follows the last field of the record" {
+    var buffer: [256]u8 = undefined;
+    var w: Io.Writer = .fixed(&buffer);
+    const record = .{ .type = "meta", .schema = @as(u32, 3), .codegen = @as(?u8, null) };
+    try jsonLine(&w, WithDispatch(@TypeOf(record)){ .base = record, .dispatch = .{
+        .level = "znver5",
+        .kernel = "x86-avx512-compact-v3",
+        .vendor = "amd",
+        .family = 26,
+        .model = 2,
+    } });
+    const want = "{\"type\":\"meta\",\"schema\":3,\"codegen\":null,\"dispatch\":" ++
+        "{\"level\":\"znver5\",\"kernel\":\"x86-avx512-compact-v3\"," ++
+        "\"vendor\":\"amd\",\"family\":26,\"model\":2}}\n";
+    try testing.expectEqualStrings(want, w.buffered());
+}
+
 fn emitMeta(
     w: *Io.Writer,
     cfg: Config,
@@ -1209,7 +1272,7 @@ fn emitMeta(
     memory: ?MemoryMeta,
 ) !void {
     var perf_error: [512]u8 = undefined;
-    try jsonLine(w, .{
+    const record = .{
         .type = "meta",
         .schema = schema,
         .rev = std.mem.sliceTo(&options.rev_padded, 0),
@@ -1243,7 +1306,11 @@ fn emitMeta(
             .events = perf.eventNames(),
             .@"error" = perf.errorMessage(&perf_error),
         },
-    });
+    };
+    if (comptime fastmem.dispatch.enabled) {
+        const Record = WithDispatch(@TypeOf(record));
+        try jsonLine(w, Record{ .base = record, .dispatch = dispatchMeta() });
+    } else try jsonLine(w, record);
 }
 fn emitSample(w: *Io.Writer, sample: Sample) !void {
     const case = sample.case;

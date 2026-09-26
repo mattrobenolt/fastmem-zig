@@ -232,7 +232,9 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
     require(register in text, f"{op} large path lacks {register}")
     if wide:
         require("%ymm" not in text, f"{op} large path splits vectors")
-    nt = wide and (op != "set" or cpu in ("sapphirerapids", "graniterapids"))
+    # x86_64_v4 is the untuned AVX-512 row of tuning.zig: no NT and no REP.
+    fleet = cpu in ("sapphirerapids", "graniterapids", "znver4", "znver5")
+    nt = wide and fleet and (op != "set" or cpu in ("sapphirerapids", "graniterapids"))
     require(("vmovntdq" in text) == nt, f"{op} large path has wrong NT policy")
     require(("sfence" in text) == nt, f"{op} large path has wrong NT fence policy")
     rep = "stosb" if op == "set" else "movsb"

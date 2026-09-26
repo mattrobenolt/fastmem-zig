@@ -90,6 +90,18 @@ class Codegen(Record):
         return self
 
 
+class Dispatch(Record):
+    """The runtime-dispatch level of a baseline x86_64 build (docs/runtime-dispatch.md)."""
+
+    level: Literal[
+        "generic", "x86_64_v3", "x86_64_v4", "sapphirerapids", "graniterapids", "znver4", "znver5"
+    ]
+    kernel: str = Field(min_length=1)
+    vendor: Literal["intel", "amd", "other"]
+    family: int = Field(ge=0)
+    model: int = Field(ge=0)
+
+
 class Memory(Record):
     """The v3 benchmark memory: one arena at fixed offsets, with its THP state."""
 
@@ -153,6 +165,8 @@ class Meta(Record):
     resolution: dict[str, Resolution]
     codegen: Codegen | None
     memory: Memory | None = None
+    # Present only in a binary that dispatches at run time (docs/runtime-dispatch.md).
+    dispatch: Dispatch | None = None
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -179,6 +193,8 @@ class Meta(Record):
             raise ValueError("aarch64 does not report ref-cycles")
         if self.dist_file is not None and self.suite != "dist":
             raise ValueError("A histogram requires the dist suite")
+        if self.dispatch is not None and not self.target.startswith("x86_64"):
+            raise ValueError("Only x86_64 builds dispatch at run time")
         return self
 
     @model_validator(mode="after")

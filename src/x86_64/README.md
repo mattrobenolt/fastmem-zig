@@ -6,6 +6,10 @@ They contain no glibc source or disassembly.
 
 ## Dispatch
 
+A build without AVX2 selects these kernels at run time (`docs/runtime-dispatch.md`).
+`level.zig` compiles them once per level, and `dispatch.zig` selects a level from CPUID.
+A level object is instruction-identical to the comptime build for its CPU.
+
 `memcpy` and `memmove` share the C kernel.
 The inline copy path specializes the large dispatch for disjoint buffers.
 Both paths retain the 4K alias test.
@@ -130,5 +134,5 @@ Exact threshold timing requires additional threshold-minus-one, threshold, and t
 
 `bench test` covers target and baseline CPUs in ReleaseFast.
 Hardware Debug and ReleaseSafe runs remain separate checks.
-The benchmark CLI has no baseline-CPU override for the G6 timing comparison.
+`bench run --cpu baseline` measures G6 with the dispatched kernels.
 All performance gates and the AVX-512 hardware tests remain open.

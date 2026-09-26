@@ -165,7 +165,10 @@ def setup(config: Config, monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock]:
         c,
         "execute_binary",
         lambda *args, **kwargs: record(
-            cpu=args[-1], max_size=kwargs["max_size"], optimize=kwargs["optimize"]
+            cpu=args[-1],
+            max_size=kwargs["max_size"],
+            optimize=kwargs["optimize"],
+            **({"dispatch": {"level": "sapphirerapids"}} if args[-1] == "x86_64" else {}),
         ),
     )
     return fleet, builder
@@ -299,6 +302,29 @@ def test_baseline_uses_host_ceiling(config: Config, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(c, "execute_binary", execute)
     c.run_variant(config, Mock(), "intel", "baseline", "x86_64_v3", path=config.root)
     assert execute.call_args.kwargs["max_size"] == 67 * c.MIB
+
+
+@pytest.mark.parametrize(
+    ("variant", "dispatch", "error"),
+    [
+        ("baseline", {"level": "sapphirerapids"}, None),
+        ("baseline-Debug", {"level": "x86_64_v4"}, "selected x86_64_v4, expected sapphirerapids"),
+        ("baseline", None, "selected None"),
+        ("target", None, None),
+    ],
+)
+def test_baseline_checks_the_dispatched_level(
+    config: Config,
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+    dispatch: dict[str, str] | None,
+    error: str | None,
+) -> None:
+    setup(config, monkeypatch)
+    summary = record(cpu="x86_64", max_size=67 * c.MIB, dispatch=dispatch)
+    monkeypatch.setattr(c, "execute_binary", Mock(return_value=summary))
+    result = c.run_variant(config, Mock(), "intel", variant, "x86_64", path=config.root)
+    assert (error in result.get("error", "")) if error else "error" not in result
 
 
 @pytest.mark.parametrize("optimize", ["Debug", "ReleaseSafe", "ReleaseFast"])

@@ -67,6 +67,13 @@ strong kernel, and parity is the goal.
   stays one zmm move. The array form (`s[0..64].*`) splits into two ymm
   moves. Zig 0.16 has no per-function target features. A codegen test must
   check the zmm moves in each kernel.
+- `Module.addObject` on the public module propagates: every compilation
+  whose module graph contains the module links the object, also through
+  `b.dependency(...).module(...)`. `zig build-obj` merges the object into
+  its relocatable output. P7 uses this for the x86 level objects.
+- LLVM 21 does not fold a pointer load into a tail jump: an indirect tail
+  call is `mov ptr(%rip), %rax; jmp *%rax`, also from `zig cc`. The
+  self-hosted x86_64 backend rejects `@call(.always_tail, ...)`.
 - On aarch64, LLVM pairs q-register loads and stores into `ldp`/`stp` only
   when a block does all its loads before any store. Array chunk copies
   (`[32]u8`) can spill to the stack; `@Vector` chunk copies do not.
@@ -164,8 +171,11 @@ configuration that handoff ships.
 
 - `memmove` is the primary kernel. `memcpy` is a fast path of it, as in
   glibc and Arm Optimized Routines.
-- Kernel selection is comptime, from the build target CPU features. Runtime
-  dispatch (cpuid once, a function pointer) is a later, opt-in addition.
+- Kernel selection is comptime, from the build target CPU features. The
+  exception is an x86_64 Linux build without AVX2: it selects its kernels
+  at run time, from CPUID once, through one function pointer per operation
+  (`docs/runtime-dispatch.md`). It is on by default. `-Dx86-dispatch=false`
+  turns it off.
 - Kernels are organized by size class. The small classes use overlapping
   head and tail loads with branches. Mid sizes use a vector loop. Large
   sizes use `rep movsb` / `rep stosb` (x86, where the CPU and the
@@ -207,7 +217,7 @@ in `docs/bench-design.md`.
 | P4 | Inline layer | Opus design, K3 or Astra writes | G4 |
 | P5 | memset, same method | lanes | G1-G4 for set |
 | P6 | Export layer and ecosystem validation | Astra writes, Opus reviews | G5 |
-| P7 | Runtime dispatch: a baseline x86_64 build selects the AVX2 or AVX-512 kernels on hosts that have them (issue #1) | lanes | G6 |
+| P7 | Runtime dispatch: a baseline x86_64 build selects the AVX2 or AVX-512 kernels on hosts that have them (issue #1). Design and local evidence: `docs/runtime-dispatch.md` | lanes | G6 on the fleet |
 
 ## Working rules for lanes
 
