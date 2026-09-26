@@ -242,8 +242,6 @@ if wide and variant != "entry":
     expected = fingerprints["medium_first"] if medium_entry else fingerprints[variant]
     if entry_pairs:
         expected = {0: 3, 4: 4, 8: 4, 17: 4, 65: 2, 129: 3}
-    if zen4_short:
-        expected = {**expected, 0: 3, 4: 2, 8: 2}
     if short_scalar:
         expected = {**expected, 17: 2}
     for n, count in expected.items():
@@ -323,7 +321,7 @@ for op in ("move", "set"):
                     f"kernel {op}/{n} dirties the low vector bank")
         if wide and variant in reordered_variants and n in (65, 128, 129, 256):
             branches = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
-            require(branches == ((2 if n <= 128 else 3) if variant == "medium_first" or medium_entry or (zen4_short and op == "set") else (3 if n <= 128 else 4)), f"kernel {op}/{n} has excess dispatch")
+            require(branches == ((2 if n <= 128 else 3) if variant == "medium_first" or medium_entry else (3 if n <= 128 else 4)), f"kernel {op}/{n} has excess dispatch")
         paths.append(n)
     if high_regs:
         for n in (33, 63):
@@ -353,16 +351,14 @@ for op in ("move", "set"):
             if wide and op == "move" and variant in reordered_variants:
                 budget = ({1: 15, 4: 10, 8: 8, 15: 8} if variant == "tiered" else
                           {1: 13, 4: 15, 8: 15, 15: 15})[n]
-            if variant == "medium_first" or medium_entry or (zen4_short and op == "set"):
+            if variant == "medium_first" or medium_entry:
                 budget += 2
-            if zen4_short and op == "move":
-                budget = 15
             if entry_pairs and op == "move":
                 budget = 14
             if high_regs and op == "set" and variant in reordered_variants:
                 # The return-register move precedes the stores. Total work stays unchanged.
-                budget = 16 if zen4_short else 14 if variant == "medium_first" or medium_entry else 12
-                require(len(lines) <= (18 if zen4_short else 16 if variant == "medium_first" or medium_entry else 14), f"small set/{n} exceeds total instruction budget")
+                budget = 14 if variant == "medium_first" or medium_entry else 12
+                require(len(lines) <= (16 if variant == "medium_first" or medium_entry else 14), f"small set/{n} exceeds total instruction budget")
             require(stores and stores[0] <= budget, f"small {op}/{n} exceeds first-store budget")
         small_counts[op][n] = {"first_store": stores[0] if stores else None, "instructions": len(lines)}
     entry = "\n".join(i for _, i in body(f"x86_64.{op}.kernel"))

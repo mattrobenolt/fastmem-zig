@@ -72,10 +72,7 @@ No llvm-libc source was ported.
 
 ## Zig compiler-rt
 
-`src/x86_64/compact.zig` adapts `copyRange4` and the three-byte fragment from these Zig compiler-rt files:
-
-- `lib/compiler_rt/memmove.zig`
-- `lib/compiler_rt/memcpy.zig`
+`src/x86_64/compact.zig` adapts `copyRange4` and the three-byte fragment from `lib/compiler_rt/memmove.zig`.
 Upstream: https://codeberg.org/ziglang/zig
 
 Pinned commit: `24fdd5b7a4c1c8b5deb5b56756b9dbc8e08c86a8` (Zig 0.16.0).

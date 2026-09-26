@@ -72,7 +72,7 @@ pub noinline fn kernel(
 ) align(t.abi_alignment) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    const medium_first = t.medium_first or tuning.medium_entry or tuning.zen4_short;
+    const medium_first = t.medium_first or tuning.medium_entry;
     if (comptime medium_first and ops.high_available) {
         if (n >= 64) {
             @branchHint(if (tuning.entry_pairs) .unlikely else .likely);
@@ -85,13 +85,6 @@ pub noinline fn kernel(
     }
     if (n <= 16) {
         if (n == 0) return dst;
-        if (comptime tuning.zen4_short) {
-            if (n == 1) {
-                const d: [*]u8 = @ptrCast(dst.?);
-                d[0] = byte;
-                return dst;
-            }
-        }
         const d: [*]u8 = @ptrCast(dst.?);
         if (n >= 8) {
             pair(8, d, byte, n);

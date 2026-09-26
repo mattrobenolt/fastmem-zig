@@ -257,15 +257,9 @@ inline fn reordered(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
             return mediumReordered(dst, src, n);
         }
     }
-    const short_limit = if (tuning.compact_short or tuning.zen4_short) 15 else 16;
+    const short_limit = if (tuning.compact_short) 15 else 16;
     if (n <= short_limit) {
-        if (tuning.zen4_short) {
-            if (n >= 4) {
-                compact.copyQuad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
-            } else if (n != 0) {
-                compact.copyBytes(@ptrCast(dst.?), @ptrCast(src.?), n);
-            }
-        } else if (tuning.compact_short) {
+        if (tuning.compact_short) {
             if (n >= 4) {
                 compact.quad(u32, @ptrCast(dst.?), @ptrCast(src.?), n);
             } else if (n != 0) {

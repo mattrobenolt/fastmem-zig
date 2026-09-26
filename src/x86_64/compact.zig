@@ -1,7 +1,7 @@
 //! Branch-light short copies adapted from Zig compiler-rt (MIT).
 // Copyright (c) Zig contributors
 // SPDX-License-Identifier: MIT
-// Upstream: lib/compiler_rt/{memcpy,memmove}.zig, copyRange4 and copyLessThan16.
+// Upstream: lib/compiler_rt/memmove.zig, copyRange4 and copyLessThan16.
 // Commit: 24fdd5b7a4c1c8b5deb5b56756b9dbc8e08c86a8 (0.16.0).
 // Scalar/vector pointer accesses replace arrays to avoid LLVM stack spills.
 // The caller supplies the size checks. THIRD_PARTY.md contains the MIT notice.
@@ -31,26 +31,4 @@ pub inline fn quad(comptime T: type, dst: [*]u8, src: [*]const u8, n: usize) voi
     ops.store(T, dst + step, b);
     ops.store(T, dst + penultimate, c);
     ops.store(T, dst + last, d);
-}
-
-// Copy-only forms retain compiler-rt's alternating loads and stores.
-// Unlike the move helpers above, these require disjoint source and destination.
-pub inline fn copyBytes(noalias dst: [*]u8, noalias src: [*]const u8, n: usize) void {
-    dst[0] = src[0];
-    dst[n / 2] = src[n / 2];
-    dst[n - 1] = src[n - 1];
-}
-
-pub inline fn copyQuad(
-    comptime T: type,
-    noalias dst: [*]u8,
-    noalias src: [*]const u8,
-    n: usize,
-) void {
-    const step = (n & (2 * @sizeOf(T))) / 2;
-    const last = n - @sizeOf(T);
-    ops.store(T, dst, ops.load(T, src));
-    ops.store(T, dst + step, ops.load(T, src + step));
-    ops.store(T, dst + last - step, ops.load(T, src + last - step));
-    ops.store(T, dst + last, ops.load(T, src + last));
 }
