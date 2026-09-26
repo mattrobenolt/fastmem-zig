@@ -226,10 +226,11 @@ pub noinline fn kernel(
 // Its small classes match the move pairs without a new wrapper around moveKernel.
 inline fn copyPairs(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
     if (n >= 64) {
-        @branchHint(.likely);
+        @branchHint(.unlikely);
         return mediumReordered(dst, src, n);
     }
     if (n <= 3) {
+        @branchHint(.unlikely);
         if (n != 0) compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
         return dst;
     }
@@ -242,6 +243,7 @@ inline fn copyPairs(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopa
             pair(u32, d, s, n);
         }
     } else if (n <= 32) {
+        @branchHint(.likely);
         pair(@Vector(16, u8), d, s, n);
     } else {
         ops.highMove(32, 2, d, s, n);

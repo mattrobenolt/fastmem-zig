@@ -75,13 +75,9 @@ pub noinline fn kernel(
     const medium_first = t.medium_first or tuning.medium_entry;
     if (comptime medium_first and ops.high_available) {
         if (n >= 64) {
-            @branchHint(if (tuning.entry_pairs) .unlikely else .likely);
+            @branchHint(.likely);
             return mediumReordered(dst, value, n);
         }
-    }
-    // This check stays below the medium return, so medium calls pay no new predicate.
-    if (comptime tuning.entry_pairs and ops.high_available) {
-        if (n == 0) return dst;
     }
     if (n <= 16) {
         if (n == 0) return dst;

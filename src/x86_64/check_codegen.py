@@ -302,6 +302,16 @@ for n in range(65):
             require(move_stats["taken_branches"] <= taken_budget,
                     f"small move/{n} exceeds taken-branch budget")
 
+# The pairs experiment must not hide extra taken branches behind medium_entry.
+if entry_pairs and high_regs:
+    for name in ("x86_64.move.kernel", "x86_64.move.moveKernel"):
+        for n in range(4, 64):
+            stats = {}
+            class_path(name, n, stats)
+            budget = 1 if n < 8 else 0 if n <= 16 else 1 if n <= 32 else 2
+            require(stats["taken_branches"] <= budget,
+                    f"pairs {name}/{n} exceeds taken-branch budget")
+
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.kernel" if high_regs else f"x86_64.{op}.mediumKernel"
