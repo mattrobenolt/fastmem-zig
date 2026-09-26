@@ -20,7 +20,7 @@ __memcpy_aarch64_sve": the cntb hoist and `.p2align` layout).
 | `src/aarch64/memcpy_sve.zig` | `string/aarch64/memcpy-sve.S` | Faithful translation to Zig container-level global asm; symbols renamed to `fastmem_sve_copy` / `fastmem_sve_move` with hidden visibility |
 | `src/aarch64/memset_sve.zig` | `string/aarch64/memset-sve.S` | Same; symbol `fastmem_sve_set`; the runtime DCZID_EL0 check on the ZVA path is kept |
 | `src/aarch64/memcpy_advsimd.zig` | `string/aarch64/memcpy-advsimd.S` | Same; symbols `fastmem_advsimd_copy` / `fastmem_advsimd_move` |
-| `src/aarch64/memset_advsimd.zig` | `string/aarch64/memset.S` | Same; symbol `fastmem_advsimd_set`; the runtime DCZID_EL0 check on the ZVA path is kept |
+| `src/aarch64/memset_advsimd.zig` | `string/aarch64/memset.S`; the >128 tail follows `string/aarch64/memset-sve.S` (no SVE instructions) | Same; symbol `fastmem_advsimd_set`; the runtime DCZID_EL0 check on the ZVA path is kept |
 
 Port-level deviations (each is documented in the file header): the
 `asmdefs.h` macros (`ENTRY` / `ENTRY_ALIAS` / `END`, register aliases,
