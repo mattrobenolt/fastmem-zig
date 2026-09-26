@@ -157,3 +157,241 @@ Neither record establishes a universal replacement for the hybrid head.
 ReleaseFast `install asm` builds pass for all seven CPU models, plus `x86_64_v3`.
 The baseline binaries and disassembly reside in `.bench-cache/small-moves/base/`.
 No AWS instance was launched.
+
+### Candidate changes
+
+Commits: `c36cd2e` changes x86. `802f5e3` changes aarch64 and adds the focused correctness matrix.
+`ec217f9` records the initial diagnosis.
+These commits are candidates, not seven-target performance acceptance.
+
+The x86 ABI move entry is now `x86_64.move.moveKernel`.
+The copy entry remains `x86_64.move.kernel`, with identical bytes on all four fleet models.
+The new entry uses these classes:
+
+- Zero returns without any access.
+- Sizes 1–3 use the existing byte triple, with its size decision first.
+- Sizes 4–7 use two 4-byte endpoints.
+- Sizes 8–16 use two 8-byte endpoints.
+- Sizes 17–32 use two 16-byte endpoints.
+- Sizes 33–63 use two 32-byte endpoints.
+- Sizes above 63 retain the existing medium and large transfer bodies.
+
+The Granite Rapids entry retains its medium-first decision.
+AVX-512 ABI classes use high registers at 33–63 bytes and need no `vzeroupper`.
+The baseline dispatcher uses four SSE2 endpoints at those sizes.
+Complete level entries and the inline move layer use the new classes too.
+The bounded dispatch entries above 128 bytes remain unchanged.
+
+Counts below include return and exclude the caller.
+Each cell gives old/new executed instructions.
+The concrete-length tracer in `src/x86_64/check_dispatch.py` produced the counts from the saved benchmark binaries.
+
+| CPU | 0 | 1–3 | 4–7 | 8–16 | 17–32 | 33–63 | 64 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SPR | 8/6 | 16/14 | 19/14 | 19/14 | 19/14 | 19/14 | 12/12 |
+| GNR | 10/8 | 18/16 | 21/14 | 21/14 at 8, 19/14 at 16 | 19/14 | 19/14 | 10/10 |
+| Zen 4 | 10/6 | 18/14 | 12/14 | 10/14 | 12/14 | 12/14 | 12/12 |
+| Zen 5 | 8/6 | 16/14 | 19/14 | 19/14 | 19/14 | 19/14 | 12/12 |
+
+Zen 4 is a specific regression risk.
+Its original pair classes already avoid duplicate compact transfers.
+The candidate trades extra decisions at 4–63 bytes for fewer decisions at 0–3 bytes.
+Instruction counts alone cannot accept that trade.
+
+The aarch64 ABI move default changes from hybrid to NEON on V1, V2, and V3.
+The scalar tree below 16 bytes stays byte-identical.
+An exact 16-byte class executes one vector load and one store.
+Sizes 17–32 use the existing NEON endpoint design.
+Sizes above 32 enter the shared NEON mid block directly.
+The mid and long bodies do not change.
+
+The V3 candidate keeps `fastmem_sve_move` at `0x10a5180` in `.bench-cache/small-moves/final/neoverse_v3/bin/bench-fastmem`.
+Its new block starts at `0x10a5200`:
+
+```asm
+cmp    x2, #0x20
+b.hi   fastmem_sve_copy_gt64
+ldr    q0, [x1]
+cmp    x2, #0x10
+b.eq   exact16
+add    x4, x1, x2
+ldur   q1, [x4, #-0x10]
+add    x5, x0, x2
+str    q0, [x0]
+stur   q1, [x5, #-0x10]
+ret
+exact16:
+str    q0, [x0]
+ret
+```
+
+The internal label name `copy_gt64` does not restrict this assembly branch.
+It names the existing 33–128-byte block, which already handles this range for the NEON copy head.
+Both loads precede both stores for every overlap direction.
+The accesses stay inside the source and destination intervals.
+
+At 16 bytes, the ABI instruction count falls from 13 to 10.
+At 17–32 bytes, it rises from 13 to 14 despite the local timing improvement.
+At 33–64 bytes, V2/V3 fall from 21 to 20 instructions.
+V1 instead changes from 13 SVE instructions to 20 NEON instructions.
+That V1 class requires fleet measurements.
+
+### Rejected Arm experiments and inline scope
+
+The tiny-first Arm experiment saves two instructions at 1–3 bytes but does not improve local timing there.
+It increases disjoint 4–15-byte calls from 3 to 4 cycles.
+The experiment was rejected.
+Its source remains only in `.bench-cache/small-moves/arm-tiny-first.zig`.
+
+A plain NEON pair fixes gap31 but retains duplicate stores at exactly 16 bytes.
+Local forward-gap1/16 rises from 11.49 to 12.83 cycles.
+The exact-16 class removes that regression.
+
+The same exact-16 split in the inline layer improves forward-gap1/16 from 12.87 to 11.29 cycles.
+It also increases disjoint and gap31 inline 24/31-byte calls from 3 to 4 cycles.
+An unlikely branch hint does not remove that regression.
+The supervisor accepted an ABI-only Arm fix and deferred the runtime inline exact-16 change.
+The existing inline NEON classes remain unchanged.
+A fixed 16-byte inline call already compiles to one transfer.
+
+### Final local V3 timing
+
+Run directory: `bench-results/20260926-local-small-moves/`.
+Final samples are `final-control-{0..5}.jsonl` and `final-{0..5}.jsonl`.
+The control is `6922b55`. The candidate contains `c36cd2e` and `802f5e3`.
+Both binaries use `-Dcpu=neoverse_v3 -Doptimize=ReleaseFast -Drev=cmp`.
+
+Each process uses one sample per implementation, a 5 ms sample target, and a 1 ms warmup.
+Six process pairs alternate A/B order on the first permitted CPU through `os.sched_setaffinity`.
+The selected profiles are disjoint and both directions of gap1 and gap31.
+They cover every standard size, including sizes above 64 bytes.
+
+These are exploratory local medians, not fleet confidence intervals.
+The local resolver selects glibc 2.42, not the fleet glibc 2.40.
+The raw metadata has no harness codegen attachment or A/A replica.
+Therefore, these samples do not establish G2 or G3 acceptance.
+
+| ABI case | Base cycles | Candidate cycles | Local glibc cycles | Local compiler-rt cycles |
+|---|---:|---:|---:|---:|
+| disjoint/16 | 6.278 | 4.007 | 6.277 | 10.040 |
+| disjoint/24 | 6.275 | 4.002 | 6.276 | 10.041 |
+| disjoint/32 | 8.376 | 4.003 | 8.366 | 14.001 |
+| fwd-gap1/16 | 11.488 | 11.307 | 11.483 | 20.697 |
+| bwd-gap1/16 | 11.574 | 11.423 | 11.571 | 21.590 |
+| fwd-gap31/24 | 12.174 | 4.002 | 12.081 | 10.209 |
+| bwd-gap31/24 | 11.219 | 4.002 | 11.220 | 9.717 |
+| fwd-gap1/15 | 12.360 | 12.291 | 11.543 | 14.481 |
+
+The last row remains approximately 1.065 times local glibc.
+Thus this lane does not close the complete 0–16-byte target, even locally.
+The unchanged inline disjoint/24 and gap31/24 cases remain at 3.00 cycles.
+No selected ABI median rises by more than 5% at any standard size.
+That observation is not a statistical regression gate.
+
+The unchanged inline disjoint/1 MiB median rises from 45,704 to 48,168 cycles, or 5.4%.
+The lane does not dismiss that shift as noise.
+The fleet A/A run must distinguish layout or system effects from a repeatable regression.
+
+### Local validation and byte preservation
+
+| Check | Result |
+|---|---|
+| `zig build test test-export test-dispatch codegen-x86 --summary all` | 348/348 steps, 37/37 unit tests |
+| `zig build install` | Pass |
+| ReleaseFast `install` for all seven `bench.toml` CPUs | Pass |
+| Native guards, V1/V2/V3 builds on this V3 host | 28,047,836 cases each, pass |
+| QEMU guards, `x86_64_v3` build | 28,047,836 cases, pass |
+| QEMU guards, baseline build with detected v3 dispatch | 28,047,836 cases, pass |
+| `ziglint src/` | 18 existing findings, no additional findings |
+| Arm kernel-byte gate | Only move hashes deliberately changed |
+| Copy/set ABI kernel bytes, all seven CPUs | Identical to `6922b55` |
+| Fixed copy/set probes, four x86 fleet CPUs plus v3 | 512/512 byte-identical per CPU |
+| Runtime copy/set graphs on those x86 CPUs | Identical instructions and destinations after address normalization |
+
+Runtime probe bytes contain different relative call displacements because move changes the object layout.
+No copy or set instruction changes beyond those displacements.
+The complete copy/set graphs retain their original instructions.
+The Arm copy/set hashes in `GOLDEN` remain unchanged.
+The two new Arm move hashes retain the original 192-byte symbol size.
+
+The focused unit test covers every length from 0 through 64.
+It checks gaps 0, 1, 16, 31, and 33 in both directions at four offsets.
+It compares all surrounding bytes through ABI and inline paths and checks the zero-length null-pointer return.
+The x86 codegen gate now traces every small move length and rejects pointer-order tests, stack saves, and AVX-512 cleanup.
+The dispatch gate compares each complete move entry against the corresponding comptime entry.
+
+Evidence logs reside in `.bench-cache/small-moves/`.
+The native Arm guards prove execution on V3, not performance or hardware behavior on V1/V2.
+The QEMU guards do not execute AVX-512.
+Fleet guards and cross-family review remain mandatory.
+
+### Fleet procedure
+
+1. Select the lane worktree.
+
+```sh
+cd /Users/matt/code/fastmem-zig-small-moves
+```
+
+2. Run correctness on the existing fleet.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just bench-test \
+  --target c7i --target c8i --target c7a --target c8a \
+  --target c7g --target c8g --target c9g \
+  --optimize ReleaseFast --optimize ReleaseSafe --optimize Debug
+```
+
+3. Compare the standard suite on all seven targets.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just bench-run \
+  --rev main --rev WORKTREE --cpu target \
+  --target c7i --target c8i --target c7a --target c8a \
+  --target c7g --target c8g --target c9g \
+  --suite standard --rounds 6 --label small-moves-standard
+```
+
+4. Compare the filtered 24-byte forward-gap31 case.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just bench-run \
+  --rev main --rev WORKTREE --cpu target \
+  --target c7i --target c8i --target c7a --target c8a \
+  --target c7g --target c8g --target c9g \
+  --suite standard --filter move/fwd-gap31/24 --rounds 6 \
+  --label small-moves-gap31-24
+```
+
+5. Compare the filtered 15-byte backward-gap1 case.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just bench-run \
+  --rev main --rev WORKTREE --cpu target \
+  --target c7i --target c8i --target c7a --target c8a \
+  --target c7g --target c8g --target c9g \
+  --suite standard --filter move/bwd-gap1/15 --rounds 6 \
+  --label small-moves-gap1-15
+```
+
+6. Compare the baseline dispatch builds.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just bench-run \
+  --rev main --rev WORKTREE --cpu baseline \
+  --target c7i --target c8i --target c7a --target c8a \
+  --suite standard --rounds 6 --label small-moves-dispatch
+```
+
+7. Analyze each returned run directory.
+
+```sh
+nix develop /Users/matt/code/fastmem-zig-small-moves -c just b analyze <run-dir>
+```
+
+8. Reject significant regressions, including copy, set, inline, and sizes above 64 bytes.
+9. Inspect Zen 4 at 4–63 bytes and V1 at 33–64 bytes before acceptance.
+10. Keep item 1 open until every required comparison meets the whole-interval rule.
+
+These commands launch no instances.
+The parent owns fleet execution, cross-family review, and final acceptance.

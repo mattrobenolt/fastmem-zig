@@ -136,7 +136,10 @@ Thus they are the same code for every level.
 | 16 to 63 | four 16-byte moves (`compact.quad`) | 23 / 25 |
 | 64 to 128 | eight 16-byte moves | 26 / 22 |
 
-Copy and move share the classes: every class loads all its bytes before its first store.
+Copy retains the compact classes in the table.
+Move uses scalar endpoint pairs through 16 bytes and vector endpoint pairs through 32 bytes.
+Move uses four SSE2 endpoints from 33 through 63 bytes.
+Both operations load every source byte before the first store.
 The entry tests the tiny class first, then the 128-byte limit.
 Only the tiny class tests zero.
 The large path costs six instructions:
@@ -159,7 +162,8 @@ These entries reuse the medium classes and large kernels, with `n > 128` as a pr
 They omit the scalar ladder that the baseline entry already excludes.
 The complete kernels remain available for the instruction-equivalence gate.
 
-The x86 `memcpy` uses the memmove entry, as in the comptime builds.
+Above 128 bytes, x86 copy and move use the same bounded level entry.
+Their complete comptime entries differ at small sizes.
 At the `generic` level, `memcpy` uses the forward-only generic copy.
 
 ### Recursion
@@ -178,7 +182,8 @@ In a Debug build without module `no_builtin`, `Info.select` called `memcpy` for 
 ## Inline layer
 
 A dispatch build cannot inline AVX2 code into baseline code.
-Thus `fastmem.copy`, `move`, and `set` use the x86 inline ladder (`move.small`, `set.small`) up to 128 bytes.
+Thus the inline operations use their x86 classes up to 128 bytes.
+Copy uses `move.small`. Move uses `move.moveSmall`. Set uses `set.small`.
 128 bytes is the inline limit of the `x86_64_v3` comptime build.
 The ladder compiles for the consumer CPU: SSE2 on baseline.
 Larger sizes call through the pointer directly, without the stub.
