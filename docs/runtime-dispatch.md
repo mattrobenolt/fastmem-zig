@@ -128,21 +128,25 @@ Thus they are the same code for every level.
 
 | Size | Class | Instructions to `ret` (copy / set) |
 |---|---|---|
-| 0 | none | 10 / 10 |
-| 1 to 3 | three bytes (`compact.bytes`) | 18 / 15 |
-| 4 to 15 | four 4-byte moves (`compact.quad`) | 21 / 20 |
-| 16 to 63 | four 16-byte moves (`compact.quad`) | 21 / 24 |
-| 64 to 128 | eight 16-byte moves | 24 / 21 |
+| 0 | immediate return | 4 / 4 |
+| 1 to 3 | three bytes (`compact.bytes`) | 14 / 11 |
+| 4 to 15 | four 4-byte moves (`compact.quad`) | 23 / 22 |
+| 16 to 63 | four 16-byte moves (`compact.quad`) | 25 / 27 |
+| 64 to 128 | eight 16-byte moves | 28 / 24 |
 
 Copy and move share the classes: every class loads all its bytes before its first store.
-A size above 128 bytes costs two compares, the pointer load, and an indirect jump:
+The entry tests zero first, then 1 to 3 bytes, then the 128-byte limit.
+The large path costs eight instructions:
 
 ```text
+testq  %rdx, %rdx
+je     empty
+cmpq   $4, %rdx
+jb     bytes
 cmpq   $0x80, %rdx
-ja     large
-...
-large: movq   copy_fn(%rip), %rax
-       jmpq   *%rax
+jbe    small
+movq   copy_fn(%rip), %rax
+jmpq   *%rax
 ```
 
 The first fleet version jumped through the pointer at every size.

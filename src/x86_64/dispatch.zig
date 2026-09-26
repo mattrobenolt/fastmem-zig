@@ -106,6 +106,11 @@ pub const small_max = 128;
 
 pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n == 0) return dest;
+    if (n < 4) {
+        compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
+        return dest;
+    }
     if (n <= small_max) {
         copySmall(dest, src, n);
         return dest;
@@ -115,6 +120,11 @@ pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) 
 
 pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n == 0) return dest;
+    if (n < 4) {
+        compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
+        return dest;
+    }
     if (n <= small_max) {
         copySmall(dest, src, n);
         return dest;
@@ -124,6 +134,15 @@ pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c)
 
 pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (n == 0) return dest;
+    if (n < 4) {
+        const d: [*]u8 = @ptrCast(dest.?);
+        const value: u8 = @truncate(@as(c_uint, @bitCast(c)));
+        d[0] = value;
+        d[n / 2] = value;
+        d[n - 1] = value;
+        return dest;
+    }
     if (n <= small_max) {
         setSmall(dest, @truncate(@as(c_uint, @bitCast(c))), n);
         return dest;
@@ -133,15 +152,10 @@ pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
 
 const V16 = @Vector(16, u8); // ziglint-ignore: Z006
 
-/// 0 to 128 bytes. Every class loads all its bytes before its first store,
-/// so memmove uses it too. The classes from compact.zig (compiler-rt) keep
-/// the 0-16 byte path at two compares.
+/// 4 to 128 bytes. Each class loads all its bytes before its first store.
+/// The entry handles zero and byte classes before these vector gates.
 inline fn copySmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) void {
-    if (n < 16) {
-        if (n >= 4) return compact.quad(u32, @ptrCast(dest.?), @ptrCast(src.?), n);
-        if (n != 0) compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
-        return;
-    }
+    if (n < 16) return compact.quad(u32, @ptrCast(dest.?), @ptrCast(src.?), n);
     const d: [*]u8 = @ptrCast(dest.?);
     const s: [*]const u8 = @ptrCast(src.?);
     if (n < 64) return compact.quad(V16, d, s, n);
@@ -158,18 +172,9 @@ inline fn copySmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) void {
     }
 }
 
-/// 0 to 128 bytes with overlapping stores, in the same classes as copySmall.
+/// 4 to 128 bytes with overlapping stores, in the same classes as copySmall.
 inline fn setSmall(dest: ?*anyopaque, value: u8, n: usize) void {
-    if (n < 16) {
-        if (n >= 4) return quadStore(u32, @ptrCast(dest.?), @as(u32, value) * 0x01010101, n);
-        if (n != 0) {
-            const d: [*]u8 = @ptrCast(dest.?);
-            d[0] = value;
-            d[n / 2] = value;
-            d[n - 1] = value;
-        }
-        return;
-    }
+    if (n < 16) return quadStore(u32, @ptrCast(dest.?), @as(u32, value) * 0x01010101, n);
     const d: [*]u8 = @ptrCast(dest.?);
     const v: V16 = @splat(value);
     if (n < 64) return quadStore(V16, d, v, n);

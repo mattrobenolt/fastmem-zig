@@ -171,6 +171,7 @@ def check_probe(obj):
         abi = {"memcpy": "copy", "memmove": "move", "memset": "set"}[op]
         require(obj.functions[f"probe_abi_{abi}"][0] == obj.functions[entry][0], f"abi.{op} is not the entry")
         paths = {}
+        first_stores = {}
         for n in SMALL_SIZES:
             code, end = trace(obj, entry, n)
             text = [t for t in code if not t.startswith("R_X86_64")]
@@ -179,13 +180,22 @@ def check_probe(obj):
             require(not any(re.match(r"(call|jmp)q?\s+\*", t) for t in text), f"{entry}/{n} branches indirectly")
             require("%ymm" not in " ".join(text) and "%zmm" not in " ".join(text), f"{entry}/{n} uses AVX")
             paths[n] = len(text)
+            stores = [i + 1 for i, insn in enumerate(text)
+                      if re.search(r", [^%]*\([^)]*\)$", insn)]
+            first_stores[n] = stores[0] if stores else None
+            if n == 0:
+                require(not stores and len(text) <= 4, f"{entry}/0 exceeds the immediate-return budget")
+            elif n < 4:
+                budget = 11 if op != "memset" else 6
+                require(stores and stores[0] <= budget, f"{entry}/{n} exceeds the first-store budget")
+                require(len(text) <= (14 if op != "memset" else 11), f"{entry}/{n} exceeds the byte-class budget")
         for n in (129, 4096, 1 << 26):
             code, end = trace(obj, entry, n)
             indirect, direct = transfers(obj, [(0, t) for t in code])
             require(end == "indirect" and indirect == [f"x86_64.dispatch.{pointer}"] and not direct,
                     f"{entry}/{n} does not jump through {pointer}: {end} {indirect}")
             paths[n] = len([t for t in code if not t.startswith("R_X86_64")])
-        evidence[op] = {"instructions_by_size": paths}
+        evidence[op] = {"instructions_by_size": paths, "first_store_by_size": first_stores}
     for op, pointer in (("copy", "copy_fn"), ("move", "move_fn"), ("set", "set_fn")):
         for n in range(1, FIXED_MAX + 1):
             code = obj.body(f"probe_{op}_{n}")
