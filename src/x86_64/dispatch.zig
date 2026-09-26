@@ -16,6 +16,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("fastmem_options");
 const cpuid = @import("cpuid.zig");
+const x86_move = @import("move.zig");
 const compact = @import("compact.zig");
 const ops = @import("ops.zig");
 const generic = @import("../generic.zig");
@@ -125,10 +126,7 @@ pub fn memmove(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c)
         compact.bytes(@ptrCast(dest.?), @ptrCast(src.?), n);
         return dest;
     }
-    if (n <= small_max) {
-        copySmall(dest, src, n);
-        return dest;
-    }
+    if (x86_move.moveSmall(small_max, @ptrCast(dest.?), @ptrCast(src.?), n)) return dest;
     return @call(tail, movePointer(), .{ dest, src, n });
 }
 

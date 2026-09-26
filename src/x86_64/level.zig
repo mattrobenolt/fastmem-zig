@@ -16,7 +16,7 @@ const kernel_name = std.fmt.comptimePrint("{s}", .{tuning.name});
 
 comptime {
     if (!tuning.available) @compileError("a dispatch level object requires AVX2");
-    @export(&move.kernel, .{ .name = prefix ++ "memmove", .visibility = .hidden });
+    @export(&move.moveKernel, .{ .name = prefix ++ "memmove", .visibility = .hidden });
     @export(&set.kernel, .{ .name = prefix ++ "memset", .visibility = .hidden });
     @export(&move.kernelAbove128, .{ .name = prefix ++ "memmove_above128", .visibility = .hidden });
     @export(&set.kernelAbove128, .{ .name = prefix ++ "memset_above128", .visibility = .hidden });

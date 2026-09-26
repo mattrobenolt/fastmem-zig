@@ -67,7 +67,85 @@ pub inline fn small(comptime max: u32, dst: [*]u8, src: [*]const u8, n: usize) b
     return true;
 }
 
+// Move-only classes avoid duplicate compact transfers on dependent calls.
+// Copy retains its measured entry and inline ladder.
+pub inline fn moveSmall(comptime max: u32, dst: [*]u8, src: [*]const u8, n: usize) bool {
+    if (n <= 3 and n <= max) {
+        if (n != 0) compact.bytes(dst, src, n);
+        return true;
+    }
+    if (n > max) return false;
+    if (n >= 64) return small(max, dst, src, n);
+    if (n <= 16) {
+        if (n >= 8) {
+            pair(u64, dst, src, n);
+        } else {
+            pair(u32, dst, src, n);
+        }
+    } else if (n <= 32) {
+        pair(@Vector(16, u8), dst, src, n);
+    } else {
+        if (comptime tuning.available) {
+            pair(@Vector(32, u8), dst, src, n);
+        } else {
+            const a = ops.load(@Vector(16, u8), src);
+            const b = ops.load(@Vector(16, u8), src + 16);
+            const c = ops.load(@Vector(16, u8), src + n - 32);
+            const d = ops.load(@Vector(16, u8), src + n - 16);
+            ops.store(@Vector(16, u8), dst, a);
+            ops.store(@Vector(16, u8), dst + 16, b);
+            ops.store(@Vector(16, u8), dst + n - 32, c);
+            ops.store(@Vector(16, u8), dst + n - 16, d);
+        }
+    }
+    return true;
+}
+
+pub noinline fn moveKernel(
+    dst: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (comptime ops.high_available and (t.medium_first or tuning.medium_entry)) {
+        if (n >= 64) return mediumReordered(dst, src, n);
+    }
+    // Zero permits null pointers, so form only non-optional pointers after it.
+    if (n <= 3) {
+        if (n != 0) compact.bytes(@ptrCast(dst.?), @ptrCast(src.?), n);
+        return dst;
+    }
+    const d: [*]u8 = @ptrCast(dst.?);
+    const s: [*]const u8 = @ptrCast(src.?);
+    if (n >= 64) {
+        if (comptime ops.high_available) return mediumReordered(dst, src, n);
+        if (!small(8 * w, d, s, n)) return @call(tail_call, largeKernel, .{ dst, src, n });
+        return dst;
+    }
+    if (n <= 16) {
+        if (n >= 8) {
+            pair(u64, d, s, n);
+        } else {
+            pair(u32, d, s, n);
+        }
+    } else if (n <= 32) {
+        pair(@Vector(16, u8), d, s, n);
+    } else {
+        if (comptime ops.high_available) {
+            ops.highMove(32, 2, d, s, n);
+        } else {
+            pair(@Vector(32, u8), d, s, n);
+        }
+    }
+    return dst;
+}
+
 pub inline fn move(comptime overlap: Overlap, dst: [*]u8, src: [*]const u8, n: usize) void {
+    if (comptime overlap == .may_overlap) {
+        if (moveSmall(tuning.inline_max, dst, src, n)) return;
+        _ = moveKernel(dst, src, n);
+        return;
+    }
     // A short-first decision skips the vector ladder without new scalar classes.
     if (comptime tuning.inline_short_first) {
         if (n < 16 and n <= tuning.inline_max) {

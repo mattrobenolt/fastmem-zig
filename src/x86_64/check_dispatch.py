@@ -271,7 +271,7 @@ def check_probe(obj):
 
 
 def canonical(level, name):
-    name = re.sub(rf"^{re.escape(PREFIX)}{level}_mem(move|set)$", r"\1.kernel", name)
+    name = re.sub(rf"^{re.escape(PREFIX)}{level}_mem(move|set)$", lambda m: "move.moveKernel" if m[1] == "move" else "set.kernel", name)
     return name.removeprefix("x86_64.")
 
 
@@ -337,7 +337,7 @@ def main():
         counts = {}
         for op in ("move", "set"):
             got = normalized(level_obj, level, f"{PREFIX}{level}_mem{op}")
-            want = normalized(comptime_obj, level, f"x86_64.{op}.kernel")
+            want = normalized(comptime_obj, level, f"x86_64.{op}." + ("moveKernel" if op == "move" else "kernel"))
             require(got.keys() == want.keys(), f"{level} {op}: functions {sorted(got)} != {sorted(want)}")
             for key in got:
                 require(got[key] == want[key], f"{level} {key}: the level object differs from the -Dcpu={level} build")
@@ -368,7 +368,7 @@ def main():
     # The comparison is sensitive: two different levels must differ.
     if len(triples) >= 6:
         first = normalized(Object(triples[1]), triples[0], f"{PREFIX}{triples[0]}_memmove")
-        other = normalized(Object(triples[5]), triples[0], "x86_64.move.kernel")
+        other = normalized(Object(triples[5]), triples[0], "x86_64.move.moveKernel")
         require(first != other, f"{triples[0]} matches the {triples[3]} probe: the comparison is blind")
     print(json.dumps({"status": "pass", **evidence}))
 

@@ -228,7 +228,7 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         const d: [*]u8 = @ptrCast(dest.ptr);
         const s: [*]const u8 = @ptrCast(source.ptr);
         // The small classes load everything before they store.
-        if (x86_move.small(dispatch_inline_max, d, s, bytes)) return;
+        if (x86_move.moveSmall(dispatch_inline_max, d, s, bytes)) return;
         _ = x86_dispatch.movePointer()(d, s, bytes);
         return;
     }
@@ -365,7 +365,7 @@ pub const abi = struct {
     else
         &generic.memcpy;
     pub const memmove: LibcCopyFn = if (on_x86)
-        &x86_move.kernel
+        &x86_move.moveKernel
     else if (on_dispatch)
         &x86_dispatch.memmove
     else if (on_aarch64)

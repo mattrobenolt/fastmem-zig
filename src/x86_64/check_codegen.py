@@ -176,11 +176,23 @@ if short_scalar:
     text = class_path("x86_64.move.kernel", 1)
     require(len(text.splitlines()) == 14, "move/1 lacks the scalar byte path")
 if inline_short_first:
-    for op in ("Copy", "Move"):
+    for op in ("Copy",):
         for n, count in ((1, 5), (4, 3), (8, 2), (15, 2)):
             text = class_path(f"probeRuntime{op}", n)
             actual = len(re.findall(r"^j(?!mp)\w+", text, re.MULTILINE))
             require(actual == count, f"inline {op}/{n} has {actual} branches, expected {count}")
+# The move-only entry never tests pointer order in its small classes.
+# Concrete lengths trace the complete path, including zero and every boundary.
+for n in range(65):
+    text = class_path("x86_64.move.moveKernel", n)
+    require(not re.search(r"\b(?:call\w*|push\w*)\b", text), f"small move/{n} is not a leaf")
+    require(not re.search(r"(?:cmp|sub)q.*%(?:rdi|rsi)", text),
+            f"small move/{n} tests pointer order")
+    if high_regs:
+        budget = (8 if medium_entry or variant == "medium_first" else 6) if n == 0 else 16 if n < 4 else 18
+        require(len(text.splitlines()) <= budget, f"small move/{n} exceeds instruction budget")
+        require("vzeroupper" not in text, f"small move/{n} needs vector cleanup")
+
 kernel_counts = {}
 for op in ("move", "set"):
     name = f"x86_64.{op}.kernel" if high_regs else f"x86_64.{op}.mediumKernel"
@@ -244,7 +256,7 @@ for op in ("move", "set"):
 
 for op, kernel in (("copy", "move"), ("move", "move"), ("set", "set")):
     code = body(f"probe_abi_{op}")
-    kernel_address = syms[f"x86_64.{kernel}.kernel"][0]
+    kernel_address = syms["x86_64.move.moveKernel" if op == "move" else f"x86_64.{kernel}.kernel"][0]
     if code[0][0] != kernel_address:
         require(len(code) == 1 and code[0][1].startswith("jmp"), f"ABI {op} is not one direct branch")
         require(f"0x{kernel_address:x} " in code[0][1], f"ABI {op} branches elsewhere")
