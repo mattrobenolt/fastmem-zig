@@ -96,3 +96,64 @@ fastmem_abi / compiler-rt (G6):
    final-standard vs final-baseline shows the dispatch and comptime paths
    equal (move/fwd rows fixed 1.00-1.01); the remaining >16K copy rows are
    the temporal loop.
+
+## Small-move investigation, 2026-09-25
+
+Base: `6922b55`. Worktree: `/Users/matt/code/fastmem-zig-small-moves`.
+The lane has no fleet acceptance yet.
+
+### Diagnosis
+
+The x86 overlap-dispatch hypothesis is false for 0–64 bytes.
+`src/x86_64/move.zig` reaches `source_inside` and the alias test only through `largeKernel`.
+Every small class loads its complete source before its first store.
+Gaps 0, 1, 16, 31, and 33 select identical instructions in both directions.
+Identity moves still execute the transfers.
+
+The SPR benchmark kernel starts at `0x10935f0` in `.bench-cache/small-moves/base/spr/bin/bench-fastmem`.
+Its 4–15 class executes four dword loads and four stores, including duplicate endpoints.
+Its 16–63 class executes four XMM loads and four stores.
+The compact offset calculation adds five instructions to each class.
+At 16 bytes, all four vector transfers reference the same address.
+Granite Rapids adds its medium-first decision before the same small classes.
+Zen 4 uses scalar endpoint pairs below 16 and vector endpoint pairs through 64.
+Zen 5 uses the compact classes, like SPR.
+
+The SPR compiler-rt `memmoveFast` entry is `memmove` at `0x10a9120` in the same binary.
+Its 0–15 classes match the compact strategy.
+Its 16–63 path also saves registers and spills vectors to its stack.
+At 64 bytes, compiler-rt tests direction and enters its vector-loop setup.
+
+The glibc x86 reference starts at `0x196380` in `.bench-cache/glibc/libc-x86_64-linux-gnu.so.6`.
+It uses endpoint pairs for 4–7, 8–15, 16–31, and 32–63 bytes.
+It performs no overlap decision through 64 bytes.
+Its smaller classes pay more size decisions than fastmem, but avoid compact duplicate transfers.
+The cached disassembly remains under `.bench-cache/glibc/`.
+
+The V3 benchmark move entry starts at `0x10a5180` in `.bench-cache/small-moves/base/v3/bin/bench-fastmem`.
+The scalar tree covers 0–15 bytes with byte triples and 4-byte or 8-byte endpoint pairs.
+The hybrid head then uses two predicated SVE transfers through twice the runtime vector length.
+V1 has a 32-byte vector length on the fleet. V2 and V3 have 16-byte vectors.
+The next class uses four NEON vectors through 64 bytes.
+All listed gaps and both directions follow identical paths below 65 bytes.
+The inline classes in `src/aarch64/small.zig` use scalar and NEON pairs instead of SVE.
+
+The V3 compiler-rt entry is `memmove` at `0x10a53a0` in that binary.
+Its byte path takes 14 instructions through return. Fastmem takes 15, including BTI.
+Compiler-rt uses four dword transfers for 4–15 bytes and four vectors for 16–63 bytes.
+Its vector class also allocates a stack frame and stores vector snapshots there.
+The glibc SVE reference starts at `0xaee80` in `.bench-cache/glibc/libc-aarch64-linux-gnu.so.6`.
+Its small predicated path has no taken branch, unlike the fastmem hybrid head.
+
+Instruction counts do not explain every gap-dependent timing result.
+Repeated calls create dependencies between previous stores and subsequent source loads, even when each individual call is disjoint.
+`docs/results/small-path-aarch64c.md` records the byte-size SVE forwarding failures and the rejected SVE inline experiment.
+`docs/results/small-path-aarch64d.md` records layout sensitivity and the hybrid head cost at 17–32 bytes.
+Neither record establishes a universal replacement for the hybrid head.
+
+### Initial local evidence
+
+`nix develop /Users/matt/code/fastmem-zig-small-moves -c just test` passes at the base.
+ReleaseFast `install asm` builds pass for all seven CPU models, plus `x86_64_v3`.
+The baseline binaries and disassembly reside in `.bench-cache/small-moves/base/`.
+No AWS instance was launched.
