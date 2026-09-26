@@ -58,7 +58,11 @@ const generic_copy: CopyFn = if (small_max < 128) &genericCopyAboveSmall else &g
 const generic_move: CopyFn = if (small_max < 128) &genericMoveAboveSmall else &generic.memmove;
 const generic_set: SetFn = if (small_max < 128) &genericSetAboveSmall else &generic.memset;
 
-noinline fn genericCopyAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn genericCopyAboveSmall(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= small_max) unreachable;
     if (n <= 128) {
@@ -68,7 +72,11 @@ noinline fn genericCopyAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: 
     return @call(tail, genericCopyLarge, .{ dest, src, n });
 }
 
-noinline fn genericMoveAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn genericMoveAboveSmall(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     if (n <= small_max) unreachable;
     if (n <= 128) {
@@ -79,12 +87,20 @@ noinline fn genericMoveAboveSmall(dest: ?*anyopaque, src: ?*const anyopaque, n: 
 }
 
 // Keep generic loop frames off the bounded SSE2 return paths.
-noinline fn genericCopyLarge(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn genericCopyLarge(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     return generic.memcpy(dest, src, n);
 }
 
-noinline fn genericMoveLarge(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
+noinline fn genericMoveLarge(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
     return generic.memmove(dest, src, n);
 }

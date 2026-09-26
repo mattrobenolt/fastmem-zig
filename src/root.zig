@@ -397,7 +397,9 @@ pub const abi = struct {
 };
 
 test "implementation names distinguish the move-only small classes" {
-    if (on_x86 and x86_tuning.entry_pairs and x86_tuning.high_regs and builtin.zig_backend == .stage2_llvm) {
+    if (on_x86 and x86_tuning.entry_pairs and x86_tuning.high_regs and
+        builtin.zig_backend == .stage2_llvm)
+    {
         try testing.expectEqualStrings(impl.copy, impl.move);
     } else if (on_x86 or on_dispatch or (on_aarch64_sve and arm_tuning.move_small == .neon)) {
         try testing.expect(!std.mem.eql(u8, impl.copy, impl.move));

@@ -71,7 +71,15 @@ pub const selected: Tuning = .{
 // Zen 4 short classes lost at 17-256 B and stay opt-in.
 const experiment = options.x86_experiment;
 const auto_experiment = switch (experiment) {
-    .auto, .x86f_pairs, .x86f_chunks, .x86f_zen4, .x86f_source, .x86f_dispatch, .x86f_temporal, .x86f_source64 => true,
+    .auto,
+    .x86f_pairs,
+    .x86f_chunks,
+    .x86f_zen4,
+    .x86f_source,
+    .x86f_dispatch,
+    .x86f_temporal,
+    .x86f_source64,
+    => true,
     else => false,
 };
 // Fleet candidates retain all unrelated measured selections.
@@ -134,7 +142,8 @@ pub const experiment_suffix = switch (experiment) {
     .auto, .none, .medium_layout, .medium_entry, .small_paths => "",
     else => "+" ++ @tagName(experiment),
 };
-const model_suffix = if (entry_pairs or medium_chunks or source_early or source_64 or temporal_large)
+const model_suffix = if (entry_pairs or medium_chunks or
+    source_early or source_64 or temporal_large)
     experiment_suffix
 else
     "";
