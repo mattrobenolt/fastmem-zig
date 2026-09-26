@@ -42,6 +42,33 @@ def require(condition, message):
         raise SystemExit(f"{cpu}: {message}")
 
 
+def check_nt_frame(code):
+    """Every path from a stack save must encounter an NT store before exit."""
+    at = dict(code)
+    following = {a: b for (a, _), (b, _) in zip(code, code[1:])}
+    for start, insn in code:
+        if not re.match(r"push|subq.*%rsp", insn):
+            continue
+        pending, visited = [start], set()
+        while pending:
+            pc = pending.pop()
+            if pc in visited:
+                continue
+            visited.add(pc)
+            text = at[pc]
+            if text.startswith("vmovntdq"):
+                continue
+            require(not text.startswith("ret"), "non-NT large path saves registers")
+            if text.startswith("j"):
+                target = int(re.search(r"0x([0-9a-f]+)", text)[1], 16)
+                require(target in at, "non-NT tail path saves registers")
+                pending.append(target)
+                if text.startswith("jmp"):
+                    continue
+            require(pc in following, "stack save reaches an unexpected exit")
+            pending.append(following[pc])
+
+
 def class_path(name, n, stats=None):
     """Follow the kernel's size dispatch with concrete RDX and unknown pointers."""
     code = body(name)
@@ -241,6 +268,31 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
     require((rep in text) == (cpu in ("sapphirerapids", "graniterapids")),
             f"{op} large path has wrong REP policy")
     large_paths[op] = {"symbol": name, "vector": register, "nt": nt, "rep": rep in text}
+if cpu == "znver5":
+    code = body("x86_64.move.largeKernel")
+    check_nt_frame(code)
+    transfers = [i for _, i in code if "<x86_64.move.forwardSource>" in i]
+    require(len(transfers) >= 2 and all(i.startswith("j") for i in transfers),
+            "forwardSource lacks disjoint and overlap tail transfers")
+    source = body("x86_64.move.forwardSource")
+    text = "\n".join(i for _, i in source)
+    require(not re.search(r"vmovnt|sfence|rep\s", text), "forwardSource uses NT or REP")
+    loops = []
+    for address, insn in source:
+        branch = re.match(r"j\w+\s+0x([0-9a-f]+)", insn)
+        if branch and int(branch[1], 16) < address:
+            loops.append([i for a, i in source if int(branch[1], 16) <= a <= address])
+    require(loops, "forwardSource lacks a loop")
+    for loop in loops:
+        loads = [i for i in loop if re.search(r"\([^)]*\), %[xyz]mm", i)]
+        stores = [i for i in loop if re.search(r"%[xyz]mm\d+, .*\(", i)]
+        require(loads and stores, "forwardSource loop lacks vector memory operations")
+        require(all(re.match(r"vmovaps\s+.*\), %zmm\d+$", i) for i in loads),
+                "forwardSource loop lacks aligned full-width loads")
+        require(all(re.match(r"vmovups\s+%zmm\d+,", i) for i in stores),
+                "forwardSource loop lacks temporal full-width stores")
+    large_paths["forward_source"] = {"aligned_loads": True, "nt": False,
+                                     "loop_count": len(loops), "tail_transfers": len(transfers)}
 if not wide:
     require("%zmm" not in dis, "v3 uses AVX-512")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,

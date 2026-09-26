@@ -198,3 +198,18 @@ fn stream(dst: [*]u8, value: u8, n: usize) void {
     ops.store(V, dst + n - 2 * w, v);
     ops.store(V, dst + n - w, v);
 }
+
+/// The dispatch layer handles every size through 128 bytes before this entry.
+pub noinline fn kernelAbove128(
+    dst: ?*anyopaque,
+    value: c_int,
+    n: usize,
+) align(t.abi_alignment) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= 128) unreachable;
+    if (comptime ops.high_available) return mediumReordered(dst, value, n);
+    const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
+    if (!small(8 * w, true, @ptrCast(dst.?), byte, n))
+        return @call(tail_call, largeKernel, .{ dst, value, n });
+    return dst;
+}
