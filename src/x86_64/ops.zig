@@ -73,7 +73,7 @@ pub inline fn repSet(dst: [*]u8, value: u8, n: usize) void {
 pub const high_available = tuning.high_regs and builtin.zig_backend == .stage2_llvm;
 
 fn highCopyText(comptime bytes: u32, comptime count: u32) []const u8 {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(300000);
     comptime var text: []const u8 = "";
     const reg = if (bytes == 64) "zmm" else "ymm";
     inline for (.{ "load", "store" }) |phase| {
@@ -110,7 +110,7 @@ pub inline fn highMove(
     n: usize,
 ) void {
     if (comptime !high_available) @compileError("highMove requires LLVM and AVX-512BW");
-    if (comptime count == 16) {
+    if (comptime count > 8) {
         asm volatile (highCopyText(bytes, count)
             :
             : [dst] "r" (dst),
@@ -156,6 +156,7 @@ pub inline fn highMove(
 }
 
 fn highSetText(comptime bytes: u32, comptime count: u32) []const u8 {
+    @setEvalBranchQuota(300000);
     const reg = if (bytes == 64) "zmm" else "ymm";
     comptime var text: []const u8 = "vpbroadcastb %[value], %%" ++ reg ++ "16\n";
     inline for (0..count) |i| {

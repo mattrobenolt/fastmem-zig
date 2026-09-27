@@ -65,4 +65,6 @@ if variant == "ymm_medium":
     check(mutate("%ymm", "%zmm", "x86_64.set.kernel"), [variant], "lacks %ymm")
 if variant == "straight_1k":
     check(mutate("%zmm31", "%zmm30", "x86_64.move.kernel"), [variant], "1 KiB class")
+if variant != "entry":
+    check(mutate("0x40(%rsi)", "0x41(%rsi)", "x86_64.move.kernel"), [variant], "wrong source bytes")
 print(f"x86 gate mutation tests ({cpu}/{variant}): {checks} passed")

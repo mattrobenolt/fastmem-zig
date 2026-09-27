@@ -55,8 +55,10 @@ pub const selected: Tuning = .{
     .abi_move_max = if (variant == .straight_1k) 1024 else defaults.abi_move_max,
     .rep_fwd_gap_min = options.x86_rep_fwd_gap_min orelse defaults.rep_fwd_gap_min,
     .rep_movsb_min = options.x86_rep_movsb_min orelse defaults.rep_movsb_min,
-    .nt_min = options.x86_nt_min orelse defaults.nt_min,
-    .fwd_source_min = options.x86_fwd_source_min orelse defaults.fwd_source_min,
+    .nt_min = options.x86_nt_min orelse
+        if (temporal_large) 0x4000001 else defaults.nt_min,
+    .fwd_source_min = options.x86_fwd_source_min orelse
+        if (source_64) 65536 else if (source_early) 1048576 else defaults.fwd_source_min,
     .copy_source_min = options.x86_copy_source_min orelse defaults.copy_source_min,
     .rep_stosb_min = options.x86_rep_stosb_min orelse defaults.rep_stosb_min,
     .memset_nt_min = options.x86_memset_nt_min orelse defaults.memset_nt_min,
@@ -68,7 +70,26 @@ pub const selected: Tuning = .{
 // on Granite Rapids, the short-first inline dispatch on Sapphire Rapids. The
 // Zen 4 short classes lost at 17-256 B and stay opt-in.
 const experiment = options.x86_experiment;
-const auto_experiment = experiment == .auto;
+const auto_experiment = switch (experiment) {
+    .auto,
+    .x86f_pairs,
+    .x86f_chunks,
+    .x86f_zen4,
+    .x86f_source,
+    .x86f_dispatch,
+    .x86f_temporal,
+    .x86f_source64,
+    => true,
+    else => false,
+};
+// Fleet candidates retain all unrelated measured selections.
+pub const entry_pairs = experiment == .x86f_pairs and builtin.cpu.model == &cpu.graniterapids;
+pub const medium_chunks = experiment == .x86f_chunks and intel_model;
+pub const zen4_short = experiment == .x86f_zen4 and builtin.cpu.model == &cpu.znver4;
+pub const temporal_large = experiment == .x86f_temporal and builtin.cpu.model == &cpu.znver5;
+pub const source_64 = experiment == .x86f_source64 and builtin.cpu.model == &cpu.znver5;
+pub const source_early = experiment == .x86f_source and builtin.cpu.model == &cpu.znver5;
+pub const dispatch_small_max: u32 = options.x86_dispatch_small_max;
 pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
     experiment == .medium_layout;
 pub const medium_entry = builtin.cpu.model == &cpu.graniterapids and
@@ -108,7 +129,7 @@ pub const high_regs = variant != .entry and avx512 and
 pub const reordered = high_regs and variant != .high_regs;
 pub const compact_short = variant != .tiered;
 pub const small_masked_set = options.x86_small_masked_set;
-pub const name: []const u8 = if (reordered)
+const base_name: []const u8 = if (reordered)
     "x86-avx512-" ++ @tagName(variant) ++ "-v3"
 else if (high_regs)
     "x86-avx512-high-regs-v2"
@@ -117,8 +138,21 @@ else if (vec == 64)
 else
     "x86-avx2-entry-v2";
 
-// Copy and set retain their identifiers. Move has a separate small entry.
-pub const move_name = name ++ "+move-pairs-v1";
+pub const experiment_suffix = switch (experiment) {
+    .auto, .none, .medium_layout, .medium_entry, .small_paths => "",
+    else => "+" ++ @tagName(experiment),
+};
+const model_suffix = if (entry_pairs or medium_chunks or
+    source_early or source_64 or temporal_large)
+    experiment_suffix
+else
+    "";
+pub const name = base_name ++ model_suffix;
+pub const set_name = base_name ++ if (medium_chunks) experiment_suffix else "";
+pub const move_name = if (entry_pairs and high_regs and builtin.zig_backend == .stage2_llvm)
+    name
+else
+    base_name ++ "+move-pairs-v1" ++ if (zen4_short) experiment_suffix else model_suffix;
 
 comptime {
     if (available) {

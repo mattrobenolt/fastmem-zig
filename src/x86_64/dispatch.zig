@@ -8,8 +8,8 @@
 //! first call through any pointer selects the level, stores all three
 //! pointers, and tail-calls the selected kernel. Every later call loads
 //! the pointer and makes one indirect jump. The C-ABI entries handle sizes
-//! up to 128 bytes themselves and never read the pointers for them. There
-//! is no global constructor.
+//! through `small_max` locally and do not read the pointers for those sizes.
+//! There is no global constructor.
 //! Concurrent first calls store the same values, so the race is benign; the
 //! atomics only make it defined.
 const std = @import("std");
@@ -54,27 +54,94 @@ const Kernels = struct {
     name: NameFn,
 };
 
+const generic_copy: CopyFn = if (small_max < 128) &genericCopyAboveSmall else &generic.memcpy;
+const generic_move: CopyFn = if (small_max < 128) &genericMoveAboveSmall else &generic.memmove;
+const generic_set: SetFn = if (small_max < 128) &genericSetAboveSmall else &generic.memset;
+
+noinline fn genericCopyAboveSmall(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        copySmall(dest, src, n);
+        return dest;
+    }
+    return @call(tail, genericCopyLarge, .{ dest, src, n });
+}
+
+noinline fn genericMoveAboveSmall(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        copySmall(dest, src, n);
+        return dest;
+    }
+    return @call(tail, genericMoveLarge, .{ dest, src, n });
+}
+
+// Keep generic loop frames off the bounded SSE2 return paths.
+noinline fn genericCopyLarge(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    return generic.memcpy(dest, src, n);
+}
+
+noinline fn genericMoveLarge(
+    dest: ?*anyopaque,
+    src: ?*const anyopaque,
+    n: usize,
+) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    return generic.memmove(dest, src, n);
+}
+
+fn genericSetAboveSmall(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    if (n <= small_max) unreachable;
+    if (n <= 128) {
+        setSmall(dest, @truncate(@as(c_uint, @bitCast(c))), n);
+        return dest;
+    }
+    return @call(tail, generic.memset, .{ dest, c, n });
+}
+
 fn kernels(comptime l: Level) Kernels {
     if (l == .generic) return .{
-        .copy = &generic.memcpy,
-        .move = &generic.memmove,
-        .set = &generic.memset,
+        .copy = generic_copy,
+        .move = generic_move,
+        .set = generic_set,
         .name = &genericName,
     };
     const prefix = symbol_prefix ++ @tagName(l) ++ "_";
     // x86 memcpy is the memmove kernel, as in the comptime builds.
-    const move = @extern(CopyFn, .{ .name = prefix ++ "memmove_above128", .visibility = .hidden });
+    const move = @extern(CopyFn, .{
+        .name = prefix ++ "memmove_above_small",
+        .visibility = .hidden,
+    });
     return .{
         .copy = move,
         .move = move,
-        .set = @extern(SetFn, .{ .name = prefix ++ "memset_above128", .visibility = .hidden }),
+        .set = @extern(SetFn, .{
+            .name = prefix ++ "memset_above_small",
+            .visibility = .hidden,
+        }),
         .name = @extern(NameFn, .{ .name = prefix ++ "name", .visibility = .hidden }),
     };
 }
 
 fn genericName() callconv(.c) [*:0]const u8 {
     @disableIntrinsics();
-    return "zig-simd";
+    return "zig-simd" ++ if (small_max == 64) "+above64" else "";
 }
 
 var copy_fn: CopyFn = &resolveCopy;
@@ -93,9 +160,9 @@ comptime {
         @export(&resolveCopy, .{ .name = p ++ "resolve_memcpy", .visibility = hidden });
         @export(&resolveMove, .{ .name = p ++ "resolve_memmove", .visibility = hidden });
         @export(&resolveSet, .{ .name = p ++ "resolve_memset", .visibility = hidden });
-        @export(&generic.memcpy, .{ .name = p ++ "generic_memcpy", .visibility = hidden });
-        @export(&generic.memmove, .{ .name = p ++ "generic_memmove", .visibility = hidden });
-        @export(&generic.memset, .{ .name = p ++ "generic_memset", .visibility = hidden });
+        @export(generic_copy, .{ .name = p ++ "generic_memcpy", .visibility = hidden });
+        @export(generic_move, .{ .name = p ++ "generic_memmove", .visibility = hidden });
+        @export(generic_set, .{ .name = p ++ "generic_memset", .visibility = hidden });
     }
 }
 
@@ -103,7 +170,7 @@ comptime {
 /// they use the loop-free classes below, compiled for the consumer CPU
 /// (SSE2 on baseline) and the same for every level. Larger sizes load the
 /// pointer and make one indirect jump. The first large call resolves.
-pub const small_max = 128;
+pub const small_max = @import("tuning.zig").dispatch_small_max;
 
 pub fn memcpy(dest: ?*anyopaque, src: ?*const anyopaque, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
@@ -194,20 +261,20 @@ inline fn quadStore(comptime T: type, d: [*]u8, v: T, n: usize) void {
 }
 
 /// The large paths of the inline layer call the pointers directly, with
-/// no entry jump. The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// no entry jump. The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn copyPointer() CopyFn {
     return @atomicLoad(CopyFn, &copy_fn, .monotonic);
 }
 
-/// The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn movePointer() CopyFn {
     return @atomicLoad(CopyFn, &move_fn, .monotonic);
 }
 
-/// The returned function requires n > 128.
-/// A call with n <= 128 has undefined behavior in ReleaseFast.
+/// The returned function requires n > small_max.
+/// A call with n <= small_max has undefined behavior in ReleaseFast.
 pub inline fn setPointer() SetFn {
     return @atomicLoad(SetFn, &set_fn, .monotonic);
 }

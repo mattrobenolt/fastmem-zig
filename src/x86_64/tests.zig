@@ -17,12 +17,12 @@ fn pattern(bytes: []u8) void {
 
 const lengths = [_]u32{
     // Scalar and vector classes.
-    0,    1,     2,     3,     4,     7,    8,    15,   16,   31,   32,
-    63,   64,    65,    127,   128,   129,  255,  256,  257,
+    0,    1,    2,    3,    4,     7,     8,     15,    16,   31,   32,
+    63,   64,   65,   127,  128,   129,   255,   256,   257,
     // Loop and string thresholds.
-     511,  512,
-    513,  767,   768,   769,   1023,  1024, 1025, 2048, 2049, 4095, 4096,
-    4097, 16383, 16384, 16385, 32768,
+     383,  384,
+    385,  511,  512,  513,  767,   768,   769,   1023,  1024, 1025, 2048,
+    2049, 4095, 4096, 4097, 16383, 16384, 16385, 32768,
 };
 const gaps = [_]u32{
     0,    1,    31,   33,   63,   64,   128,  255,  256,
@@ -43,7 +43,7 @@ test "x86: class edges and 4K alias overlap in both directions" {
                     const source = offset + if (backward) @as(u32, 0) else gap;
                     const dest = offset + if (backward) gap else @as(u32, 0);
                     for (0..n) |i| expected[dest + i] = original[source + i];
-                    const result = move.kernel(got[dest..].ptr, got[source..].ptr, n);
+                    const result = move.moveKernel(got[dest..].ptr, got[source..].ptr, n);
                     try testing.expectEqual(@as(?*anyopaque, @ptrCast(got[dest..].ptr)), result);
                     try testing.expectEqualSlices(u8, &expected, &got);
                 }
@@ -85,13 +85,15 @@ test "x86: every ABI length through 1 KiB and overlapping vector fragment" {
     for (0..1025) |n| {
         for ([_]u32{ 0, 1, 15, 16, 31, 32, 63, 64, 127 }) |gap| {
             for ([_]bool{ false, true }) |backward| {
-                var got = original;
-                var expected = original;
-                const source = 1 + if (backward) @as(u32, 0) else gap;
-                const dest = 1 + if (backward) gap else @as(u32, 0);
-                for (0..n) |i| expected[dest + i] = original[source + i];
-                _ = move.kernel(got[dest..].ptr, got[source..].ptr, n);
-                try testing.expectEqualSlices(u8, &expected, &got);
+                inline for (.{ move.moveKernel, move.kernel }) |kernel| {
+                    var got = original;
+                    var expected = original;
+                    const source = 1 + if (backward) @as(u32, 0) else gap;
+                    const dest = 1 + if (backward) gap else @as(u32, 0);
+                    for (0..n) |i| expected[dest + i] = original[source + i];
+                    _ = kernel(got[dest..].ptr, got[source..].ptr, n);
+                    try testing.expectEqualSlices(u8, &expected, &got);
+                }
             }
         }
     }

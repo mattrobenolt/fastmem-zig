@@ -63,7 +63,7 @@ else if (on_aarch64)
 else if (on_x86)
     x86_tuning.name
 else if (on_dispatch)
-    "x86-dispatch"
+    "x86-dispatch" ++ x86_tuning.experiment_suffix
 else
     "zig-simd";
 
@@ -79,21 +79,23 @@ const move_impl_name: []const u8 = if (on_aarch64_sve)
 else if (on_x86)
     x86_tuning.move_name
 else if (on_dispatch)
-    "x86-dispatch+move-pairs-v1"
+    "x86-dispatch+move-pairs-v1" ++ x86_tuning.experiment_suffix
 else
     copy_impl_name;
 
 const set_impl_name: []const u8 = if (on_aarch64_sve)
     armName(@tagName(arm_tuning.set_small))
+else if (on_x86)
+    x86_tuning.set_name
 else if (on_aarch64)
     "aor-advsimd-5e20a93+set-tail-sve-v1"
-else if (on_x86 or on_dispatch)
+else if (on_dispatch)
     copy_impl_name
 else
     "zig-vector";
 
 /// Names of the kernel implementations in this build, one per operation.
-/// Dispatch builds name copy/set "x86-dispatch" and move "x86-dispatch+move-pairs-v1".
+/// Dispatch names identify the stub family and any selected experiment.
 /// `dispatch.kernelName` identifies the selected level and its move policy.
 pub const impl = .{
     .copy = copy_impl_name,
@@ -146,7 +148,12 @@ pub const dispatch = struct {
 /// the x86 inline ladder (x86_64/move.zig and set.zig `small`), compiled for
 /// the target CPU: SSE2 on baseline. 128 is the inline limit of the
 /// x86_64_v3 comptime build. Larger sizes call the dispatched kernel.
-const dispatch_inline_max = x86_dispatch.small_max;
+// The ABI threshold experiment does not change fixed-size inlining.
+const dispatch_inline_max = 128;
+comptime {
+    if (on_dispatch and dispatch_inline_max < x86_dispatch.small_max)
+        @compileError("the inline dispatch limit must cover the ABI small limit");
+}
 
 test {
     _ = @import("tests/fuzz.zig");
@@ -403,7 +410,11 @@ pub const abi = struct {
 };
 
 test "implementation names distinguish the move-only small classes" {
-    if (on_x86 or on_dispatch or (on_aarch64_sve and arm_tuning.move_small == .neon)) {
+    if (on_x86 and x86_tuning.entry_pairs and x86_tuning.high_regs and
+        builtin.zig_backend == .stage2_llvm)
+    {
+        try testing.expectEqualStrings(impl.copy, impl.move);
+    } else if (on_x86 or on_dispatch or (on_aarch64_sve and arm_tuning.move_small == .neon)) {
         try testing.expect(!std.mem.eql(u8, impl.copy, impl.move));
     }
     if (on_x86) try testing.expectEqualStrings(x86_tuning.move_name, impl.move);

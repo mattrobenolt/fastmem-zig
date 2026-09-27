@@ -1,9 +1,10 @@
 """Check the x86_64 runtime dispatch of a baseline build (docs/runtime-dispatch.md).
 
 Arguments: the symbol prefix (fastmem_x86_<instance>_), the baseline codegen
-probe object, then one triple per level: LEVEL LEVEL_OBJECT COMPTIME_PROBE_OBJECT.
+probe object, the ABI small limit, then one triple per level:
+LEVEL LEVEL_OBJECT COMPTIME_PROBE_OBJECT.
 
-1. Each C-ABI entry handles 0 to 128 bytes itself: every such size returns
+1. Each C-ABI entry handles sizes through the configured ABI limit. Every such size returns
    without a pointer read, a symbol reference, or an AVX instruction. Larger
    sizes load the pointer of the operation and jump through it.
 2. The inline classes stay inline up to 128 bytes; larger sizes jump or call
@@ -19,6 +20,7 @@ import re
 import subprocess
 import sys
 
+SMALL_MAX = 128
 INLINE_MAX = 128
 FIXED_MAX = 256
 
@@ -188,7 +190,7 @@ def check_probe(obj):
         require(obj.functions[f"probe_abi_{abi}"][0] == obj.functions[entry][0], f"abi.{op} is not the entry")
         paths = {}
         first_stores = {}
-        for n in SMALL_SIZES:
+        for n in range(SMALL_MAX + 1):
             code, end = trace(obj, entry, n)
             text = [t for t in code if not t.startswith("R_X86_64")]
             require(end == "ret", f"{entry}/{n} does not return in the entry: {end}")
@@ -211,12 +213,12 @@ def check_probe(obj):
                 require(len(text) <= budget, f"{entry}/{n} exceeds the small-class budget")
         # Every decision uses an immediate comparison with unchanged RDX.
         # The boundary points cover every unsigned interval of that tree.
-        boundaries = {129, 4096, 1 << 26, (1 << 64) - 1}
+        boundaries = {SMALL_MAX + 1, 4096, 1 << 26, (1 << 64) - 1}
         for insn in instructions(obj.body(entry)):
             match = re.fullmatch(r"cmpq\s+\$(0x[0-9a-f]+|[0-9]+), %rdx", insn)
             if match:
                 value = int(match[1], 0)
-                boundaries.update(n for n in (value - 1, value, value + 1) if n > 128)
+                boundaries.update(n for n in (value - 1, value, value + 1) if n > SMALL_MAX)
         for n in sorted(boundaries):
             code, end = trace(obj, entry, n)
             indirect, direct = transfers(obj, [(0, t) for t in code])
@@ -245,7 +247,7 @@ def check_probe(obj):
             _, end = trace(obj, f"probeRuntime{op.capitalize()}", n)
             require(end == "indirect", f"inline {op}/{n} misses the bounded pointer")
     names = [f"{PREFIX}{level}_{op}" for level in LEVELS
-             for op in ("memmove", "memset", "memmove_above128", "memset_above128", "name")]
+             for op in ("memmove", "memset", "memmove_above_small", "memset_above_small", "name")]
     names += [f"{PREFIX}{kind}_{op}" for kind in ("resolve", "generic") for op in ("memcpy", "memmove", "memset")]
     for name in names:
         require(obj.binding.get(name) == ("GLOBAL", "HIDDEN"), f"{name} is not GLOBAL HIDDEN: {obj.binding.get(name)}")
@@ -262,9 +264,22 @@ def check_probe(obj):
                     f"resolver {op} does not read the {kernel} table")
             for i, level in enumerate(LEVELS, 1):
                 target = "memset" if kernel == "memset" else "memmove"
-                want = f"{PREFIX}{level}_{target}_above128"
+                want = f"{PREFIX}{level}_{target}_above_small"
                 require(tables.get(base + 8 * i) == want,
                         f"resolver {op} {kernel}/{level} does not install {want}")
+    if SMALL_MAX == 64:
+        for op in ("memcpy", "memmove", "memset"):
+            counts = {}
+            for n in range(65, 129):
+                code, end = trace(obj, f"{PREFIX}generic_{op}", n, allow_direct=True)
+                require(end == "ret", f"generic {op}/{n} leaves its SSE2 class")
+                text = "\n".join(code)
+                require(not re.search(r"push|pop|call|%[yz]mm|%rsp", text),
+                        f"generic {op}/{n} has a frame, call, or AVX instruction")
+                require(len(code) <= (17 if op == "memset" else 20),
+                        f"generic {op}/{n} exceeds its bounded instruction budget")
+                counts[n] = len(code)
+            evidence[f"generic_{op}"] = counts
     unexpected = sorted(n for n in obj.functions if n.startswith("fastmem_x86_") and n not in names)
     require(not unexpected, f"dispatch symbols without the instance prefix: {unexpected}")
     return evidence
@@ -323,17 +338,29 @@ POLICY = {
 
 
 def main():
-    global PREFIX  # noqa: PLW0603 — one checker invocation, one prefix
+    global PREFIX, SMALL_MAX  # noqa: PLW0603 — one checker invocation, one prefix
     PREFIX = sys.argv[1]
     require(re.fullmatch(r"fastmem_x86_[0-9a-f]{16}_", PREFIX), f"bad symbol prefix {PREFIX}")
     probe = Object(sys.argv[2])
-    triples = sys.argv[3:]
+    SMALL_MAX = int(sys.argv[3])
+    require(SMALL_MAX in (64, 128), "invalid small limit")
+    triples = sys.argv[4:]
     require(len(triples) % 3 == 0 and triples, "expected LEVEL LEVEL_OBJECT PROBE_OBJECT triples")
     LEVELS.extend(triples[0::3])
     evidence = {"stubs": check_probe(probe), "levels": {}}
     for level, level_path, comptime_path in zip(triples[0::3], triples[1::3], triples[2::3]):
         level_obj = Object(level_path)
         comptime_obj = Object(comptime_path)
+        move_name = "x86_64.move.moveKernel"
+        if move_name not in comptime_obj.functions:
+            # Identical copy/move pairs can share the copy entry symbol.
+            start, size = comptime_obj.functions["x86_64.move.kernel"]
+            require(comptime_obj.functions["probe_abi_move"][0] == start and
+                    comptime_obj.functions["probe_abi_copy"][0] == start,
+                    f"{level}: missing move entry is not an ABI alias")
+            comptime_obj.functions[move_name] = (start, size)
+            for address in range(start, start + size):
+                comptime_obj.owner[address] = move_name
         counts = {}
         for op in ("move", "set"):
             got = normalized(level_obj, level, f"{PREFIX}{level}_mem{op}")
@@ -342,9 +369,11 @@ def main():
             for key in got:
                 require(got[key] == want[key], f"{level} {key}: the level object differs from the -Dcpu={level} build")
             counts[op] = {key: len(lines) for key, lines in sorted(got.items())}
-            bounded_name = f"{PREFIX}{level}_mem{op}_above128"
+            bounded_name = f"{PREFIX}{level}_mem{op}_above_small"
             bounded_counts = {}
-            for n in (129, 192, 255, 256, 257, 511, 512, 513, 768, 1024, 1025, 4096):
+            for n in (SMALL_MAX + 1, 127, 128, 129, 192, 255, 256, 257, 511, 512, 513, 768, 1024, 1025, 4096):
+                if n <= SMALL_MAX:
+                    continue
                 code, end = trace(level_obj, bounded_name, n, allow_direct=True)
                 _, full_end = trace(level_obj, f"{PREFIX}{level}_mem{op}", n, allow_direct=True)
                 # AVX2 inlines the former mediumKernel, so it can return here.
@@ -352,10 +381,10 @@ def main():
                         f"{level} bounded {op}/{n}: {end} != {full_end}")
                 text = [t for t in code if not t.startswith("R_X86_64")]
                 require(not any(re.match(r"(?:testq|cmpq).*%rdx", t) and
-                                (t.startswith("testq") or int(re.search(r"\$(0x[0-9a-f]+|[0-9]+)", t)[1], 0) <= 128)
+                                (t.startswith("testq") or int(re.search(r"\$(0x[0-9a-f]+|[0-9]+)", t)[1], 0) <= SMALL_MAX)
                                 for t in text), f"{level} bounded {op}/{n} repeats a small-size test")
                 bounded_counts[n] = {"instructions": len(text), "end": end}
-            counts[op]["above128"] = bounded_counts
+            counts[op]["above_small"] = bounded_counts
             # The large policy of tuning.zig, stated independently. No level
             # uses REP for a forward overlap: rep_fwd_gap_min is null in
             # every row, so the REP branch requires a disjoint source.
