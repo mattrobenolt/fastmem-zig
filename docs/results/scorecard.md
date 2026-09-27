@@ -553,3 +553,87 @@ Each NT store has a separate assembly barrier and pointer operand in `ops.stream
 The SPR candidate will group transfers and interleave two pages, with 256 bytes per page per iteration.
 This is an independent loop design, not a translation of the inspected binary.
 The Zen 5 candidate will group fill stores and broadcast outside the loop.
+
+### Candidate and local evidence
+
+Commit `48e155c` implements the candidate.
+SPR retains its 53.5 MiB copy/move threshold and all overlap decisions.
+Its NT loop processes independent 8 KiB tiles through one leaf call per tile.
+Each inner step transfers 256 bytes from each page and prefetches eight source cache lines, 512 bytes ahead.
+The tile leaf uses high AVX-512 registers and has no stack frame.
+The outer loop fences once before its temporal remainder.
+
+Zen 5 selects NT fills at 32 MiB.
+Its NT loop broadcasts once and stores eight aligned cache lines per iteration.
+One fence precedes its temporal remainder and final 64-byte store.
+The large entry uses a conditional tail transfer, without a stack frame or additional call on temporal fills.
+
+The codegen gate now follows both NT helper graphs.
+Mutation tests reject absent NT stores, fences, or prefetches.
+They also reject an incorrect Zen 5 threshold or broadcast count.
+The dispatch gate checks the updated Zen 5 fill policy and equality with the comptime kernels.
+
+| Local check | Result |
+|---|---|
+| `zig build test test-export test-dispatch codegen-x86 --summary all` | 350/350 steps, 38/38 tests |
+| ReleaseFast `install`, all seven fleet CPUs | Pass |
+| ReleaseFast `install`, `x86_64_v3` | Pass |
+| `qemu-x86_64 -cpu max`, static musl v3 guard binary, through 1 MiB | 28,047,836 cases, pass |
+| `ziglint src/` | 18 existing findings, no new findings |
+| Arm kernel-byte gate | All existing pins pass |
+
+The GNU guard binary first failed because this Arm host lacks `/lib64/ld-linux-x86-64.so.2`.
+A static musl build supplied the successful QEMU run.
+QEMU does not execute the changed AVX-512 paths.
+Fleet correctness remains mandatory.
+
+### Preservation proof and explicit exceptions
+
+All comparison binaries use `-Doptimize=ReleaseFast -Drev=largent`.
+The control source is `418197e`.
+Evidence resides in `.bench-cache/largent/` in the lane worktree.
+The scripts are `identity.py` and `fixed.py`.
+Their outputs are `identity.log` and `fixed.log`.
+`install.log` records the whole-section comparisons.
+
+The entire benchmark `.text` section matches exactly on these models:
+
+- Granite Rapids
+- Zen 4
+- Neoverse V1
+- Neoverse V2
+- Neoverse V3
+- `x86_64_v3`
+
+All 768 fixed probes match exact instruction bytes on each x86 fleet model, v3, and v4.
+SPR copy/move temporal graphs retain the same instructions and register allocation.
+The proof normalizes addresses and padding, then excludes only the NT successor of the existing threshold decision.
+The copy specialization reverses that decision from `jb` to `jae`, so the temporal path falls through instead.
+SPR set and the complete Zen 5 copy/move graphs also match after address and padding normalization.
+
+Zen 5 set necessarily adds one comparison and conditional branch above 512 bytes.
+LLVM also changes register allocation and schedules the broadcast and return-register assignment differently.
+Its temporal transfer body retains all 63 instructions after register-role normalization.
+The stores, loop strides, unroll factors, and branch graph remain unchanged.
+The proof checks the exact setup sequences separately.
+The supervisor accepted these differences instead of another temporal wrapper.
+Thus the affected models do not claim literal byte identity for every path through 16 MiB.
+
+No AWS command ran in this lane.
+Neither candidate has a measured speedup yet.
+Two-page traversal can lose to another stream count or prefetch distance on SPR.
+Zen 5 temporal calls also require a regression check because their large-entry branch and register allocation change.
+
+### Parent fleet procedure
+
+Run the comparison from the lane worktree.
+
+```sh
+cd /Users/matt/code/worktrees/fastmem-zig/pi-worktree-7bf04d56-9652-4f7a-9f4b-f22d893ead5d-s0-0
+nix develop /Users/matt/code/worktrees/fastmem-zig/pi-worktree-7bf04d56-9652-4f7a-9f4b-f22d893ead5d-s0-0 -c just bench-run \
+  --rev 418197e --rev WORKTREE --suite large --rounds 6 --label largent \
+  --target c7i --target c8i --target c7a --target c8a
+```
+
+Reject significant regressions, including the 16 MiB controls.
+Run the standard suite on Zen 5 before final acceptance of its added large-entry branch.
