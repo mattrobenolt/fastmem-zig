@@ -522,3 +522,34 @@ A byte comparison against the preceding candidate covers the ABI kernels on all 
 Only V1 move differs, and its bytes match the pre-`802f5e3` binary exactly.
 The evidence resides in `.bench-cache/small-moves/v1-carveout/`.
 `ziglint src/` reports the same 18 existing findings.
+
+## Large NT candidate, 2026-09-27
+
+The baseline is `418197e`, measured in `bench-results/20260927T175720Z-final-large/`.
+The assigned gaps are SPR copy/move at 64 MiB and Zen 5 set at 64 MiB.
+This candidate has no fleet performance acceptance.
+
+### Diagnosis
+
+`src/x86_64/tuning.zig` gives Zen 5 no memset NT threshold at the baseline.
+Its 64 MiB fill uses temporal stores, not the NT loop.
+The candidate will select NT at 32 MiB and retain temporal stores through 16 MiB.
+The supervisor approved one additional threshold branch for large Zen 5 fills.
+The existing small classes and temporal transfer body must remain unchanged.
+
+The inspected binary is `.bench-cache/glibc/libc-x86_64-linux-gnu.so.6` in the main checkout.
+Only behavioral observations follow. No glibc code enters this candidate.
+
+- Memmove aligns NT destinations to 64 bytes after a temporal head store (`0x19673c`–`0x196753`).
+- Its NT body interleaves two or four pages (`0x196780`, `0x196940`).
+- Each page advances 128 bytes per inner iteration, with source prefetches ahead of the loads.
+- One fence follows the bulk loop, before the temporal remainder (`0x196852`, `0x196a62`).
+- Memset broadcasts the byte once at entry (`0x196c04`).
+- Its NT loop writes four aligned cache lines per iteration, without prefetch (`0x196d55`).
+- Its fence precedes four temporal tail stores (`0x196d7c`).
+
+Fastmem instead uses one contiguous copy stream and one source prefetch per 256 bytes.
+Each NT store has a separate assembly barrier and pointer operand in `ops.streamStore`.
+The SPR candidate will group transfers and interleave two pages, with 256 bytes per page per iteration.
+This is an independent loop design, not a translation of the inspected binary.
+The Zen 5 candidate will group fill stores and broadcast outside the loop.
