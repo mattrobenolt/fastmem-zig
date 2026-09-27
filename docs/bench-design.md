@@ -689,7 +689,21 @@ The quick runtime sizes are:
 8, 32, 64, 256, 1024, 4096, 16384, 262144
 ```
 
-The large runtime sizes are 1, 4, 16, and 64 MiB.
+The large runtime sizes for every operation are:
+
+- 1 MiB
+- 4 MiB
+- 16 MiB
+- 64 MiB
+
+The large suite also includes these fill-only sizes:
+
+- 24 MiB
+- 32 MiB
+- 48 MiB
+
+The extra fill sizes bracket the experimental Zen 5 NT threshold at 32 MiB.
+Both aligned and misaligned profiles apply.
 Large remains a separate suite.
 The const suite uses the `copy/const/<size>`, `move/const/<size>`, and `set/const/<size>` profiles at these sizes:
 
@@ -1123,12 +1137,14 @@ Canaries detect writes into accessible padding, but cannot detect reads into tha
 ### Size ceilings
 
 The default ceiling depends on the comptime CPU model.
-Each x86 ceiling is at least 1.25 times the largest recorded NT threshold and uses a whole MiB.
-The threshold evidence is in `docs/research/hosts/README.md`.
+Each x86 ceiling exceeds the largest active NT threshold and uses a whole MiB.
+The threshold evidence is in `docs/research/hosts/README.md` and `src/x86_64/tuning.zig`.
+Zen 5 uses 33 MiB to cover its 32 MiB copy and fill thresholds.
 
 | CPU family | Ceiling |
 |---|---|
-| znver4, znver5 | 16 MiB |
+| znver4 | 16 MiB |
+| znver5 | 33 MiB |
 | sapphirerapids | 67 MiB |
 | graniterapids | 302 MiB |
 | Graviton and standalone baseline CPUs | 1 MiB |

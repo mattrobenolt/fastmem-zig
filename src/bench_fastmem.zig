@@ -38,6 +38,8 @@ const standard_sizes = [_]u32{
 };
 const quick_sizes = [_]u32{ 8, 32, 64, 256, 1024, 4096, 16384, 262144 };
 const large_sizes = [_]u32{ 1 << 20, 4 << 20, 16 << 20, 64 << 20 };
+// Bracket the Zen 5 fill candidate's 32 MiB NT threshold without extra move cases.
+const large_set_sizes = [_]u32{ 24 << 20, 32 << 20, 48 << 20 };
 const const_sizes = [_]u32{ 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256 };
 const max_size = 1 << 30;
 const seq_len = 4096;
@@ -662,6 +664,16 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
             }
         }
     }
+    if (cfg.suite == .large) {
+        for (large_set_sizes) |size| {
+            for ([_][]const u8{ "aligned", "misaligned" }, [_]u32{ 0, 3 }) |profile, offset| {
+                var case = try fixedCase(arena, .set, profile, size);
+                case.src_off = if (offset == 0) 0 else 1;
+                case.dst_off = offset;
+                try addCase(arena, &cases, cfg, case);
+            }
+        }
+    }
     if (cfg.suite == .standard) {
         try addConstCases(arena, &cases, cfg);
         for ([_]Op{ .copy, .move, .set }) |op| {
@@ -671,6 +683,24 @@ fn buildCases(arena: Allocator, io: Io, cfg: Config) ![]Case {
     }
     if (cases.items.len == 0) return error.NoMatchingCases;
     return cases.items;
+}
+
+test "large fills bracket the NT threshold without extra copy or move cases" {
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const cases = try buildCases(arena.allocator(), testing.io, .{ .suite = .large });
+    try testing.expectEqual(66, cases.len);
+    var extra: u32 = 0;
+    for (cases) |case| {
+        if (mem.findScalar(u32, &large_set_sizes, case.max_len) != null) {
+            try testing.expectEqual(Op.set, case.op);
+            const misaligned = mem.eql(u8, case.profile, "misaligned");
+            try testing.expectEqual(@as(u32, if (misaligned) 1 else 0), case.src_off);
+            try testing.expectEqual(@as(u32, if (misaligned) 3 else 0), case.dst_off);
+            extra += 1;
+        }
+    }
+    try testing.expectEqual(6, extra);
 }
 
 const Buffers = struct {

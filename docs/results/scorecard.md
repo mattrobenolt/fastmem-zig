@@ -533,12 +533,22 @@ This candidate has no fleet performance acceptance.
 
 `src/x86_64/tuning.zig` gives Zen 5 no memset NT threshold at the baseline.
 Its 64 MiB fill uses temporal stores, not the NT loop.
-The candidate will select NT at 32 MiB and retain temporal stores through 16 MiB.
+The candidate selects NT at 32 MiB and retains temporal stores below 32 MiB.
+This threshold is experimental, not protection for a measured 16 MiB fill win.
 The supervisor approved one additional threshold branch for large Zen 5 fills.
 The existing small classes and temporal transfer body must remain unchanged.
 
 The inspected binary is `.bench-cache/glibc/libc-x86_64-linux-gnu.so.6` in the main checkout.
 Only behavioral observations follow. No glibc code enters this candidate.
+The glibc NT fill body is unreachable on c8a.
+Its `rep_stosb_threshold` is `0xffffffffffffffff`, per `docs/research/hosts/c8a/ld-diagnostics.txt:224`.
+The branch at `0x196c47` therefore cannot reach either REP or the NT threshold check.
+Section 1.8 of `docs/research/x86_64-design.md` documents the same AMD policy.
+
+The c8a 64 MiB loss is temporal versus temporal, not NT versus NT.
+The assigned `final-large` run reports 1.37–1.38 there and 1.02–1.03 at 16 MiB.
+These ratios do not establish a temporal fill win at 16 MiB.
+The NT candidate can still improve 64 MiB, but its crossover needs measurements.
 
 - Memmove aligns NT destinations to 64 bytes after a temporal head store (`0x19673c`–`0x196753`).
 - Its NT body interleaves two or four pages (`0x196780`, `0x196940`).

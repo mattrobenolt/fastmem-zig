@@ -347,6 +347,8 @@ def validate_case(meta: Meta, sample: Sample) -> None:
         "const": set(CONST_SIZES),
         "dist": set(),
     }
+    if sample.op == "set":
+        sizes["large"].update({24 << 20, 32 << 20, 48 << 20})
     if sample.profile == "const":
         if meta.suite not in {"standard", "const"} or sample.size not in CONST_SIZES:
             raise ValueError("Const case is outside the selected suite")

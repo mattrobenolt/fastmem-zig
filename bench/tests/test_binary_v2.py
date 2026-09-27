@@ -96,7 +96,42 @@ def test_native_histogram_and_standard_coverage(tmp_path: Path) -> None:
     } <= cases
     result = invoke("--suite", "large", "--list")
     records = [json.loads(line) for line in result.stdout.splitlines()]
-    assert {row["size"] for row in records[1:-1]} == {1 << 20, 4 << 20, 16 << 20, 64 << 20}
+    original_sizes = {1 << 20, 4 << 20, 16 << 20, 64 << 20}
+    extra_sizes = {24 << 20, 32 << 20, 48 << 20}
+    assert records[-1]["cases"] == 66
+    for op in ("copy", "move", "set"):
+        assert {row["size"] for row in records[1:-1] if row["op"] == op} == (
+            original_sizes | extra_sizes if op == "set" else original_sizes
+        )
+
+
+def test_native_threshold_fills_parse() -> None:
+    result = invoke(
+        "--suite",
+        "large",
+        "--filter",
+        "set/aligned/",
+        "--filter",
+        "set/misaligned/",
+        "--samples",
+        "1",
+        "--sample-ms",
+        "1",
+        "--warmup-ms",
+        "0",
+    )
+    assert result.returncode == 0, result.stderr
+    measurement = parse_text(result.stdout)
+    assert measurement.end["cases"] == 14
+    assert {row["size"] for row in measurement.samples} == {
+        1 << 20,
+        4 << 20,
+        16 << 20,
+        24 << 20,
+        32 << 20,
+        48 << 20,
+        64 << 20,
+    }
 
 
 @pytest.mark.parametrize("histogram", ["{}", '{"24": -1}', '{"1073741825": 1}', '{"24": "bad"}'])
