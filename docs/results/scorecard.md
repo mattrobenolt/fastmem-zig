@@ -634,16 +634,130 @@ Neither candidate has a measured speedup yet.
 Two-page traversal can lose to another stream count or prefetch distance on SPR.
 Zen 5 temporal calls also require a regression check because their large-entry branch and register allocation change.
 
+### Review follow-up
+
+Opus found no NT correctness defect across 272,408 modeled cases.
+The review identified the missing Zen 5 guard coverage and the incorrect AMD glibc diagnosis.
+Commit `69d8d1f` raises both Zen 5 guard ceilings to 33 MiB.
+Commit `cfc851d` adds threshold samples and corrects the diagnosis above.
+This follow-up does not change any kernel source.
+The earlier whole-benchmark `.text` proof applies to the original kernel candidate, before the new benchmark cases.
+
+The guard matrix still contains 28,047,948 cases at either 16 or 33 MiB.
+Only its two sparse sizes above 1 MiB change.
+They become 33 MiB minus one byte and 33 MiB, through runtime and ABI paths.
+The first size also exercises a misaligned slice adjacent to the end guard.
+Peak data allocation rises from approximately 160 MiB to 330 MiB.
+
+One native V3 run took 68.39 seconds at 16 MiB and 70.52 seconds at 33 MiB.
+These wall times describe local test cost, not Zen 5 performance.
+The fleet timeout remains 600 seconds.
+Debug and emulated runtimes can differ.
+
+The large suite adds aligned and misaligned fills at these sizes:
+
+- 24 MiB
+- 32 MiB
+- 48 MiB
+
+The suite now has 66 cases, including 14 fill cases.
+Copy and move retain their original four sizes.
+The schema accepts the additional sizes only for fills.
+Unit tests and native JSONL tests cover the six new cases.
+
+The control revision is `5bce447da69077a3c99b1282e22229c921edff02`.
+It contains the revised benchmark and guards on top of `418197e`, without any kernel change.
+Its complete codegen-probe `.text` matches `418197e` for all four x86 fleet models, v3, and v4.
+Both revisions therefore emit the same cases, and the A/B isolates the kernel candidate.
+The original `418197e` binary cannot emit the new threshold samples.
+
+### Temporal fill cause: unresolved hypothesis
+
+The cause of the Zen 5 temporal loss remains unknown.
+Both baseline AMD binaries use 32 ZMM stores per main iteration, or 2 KiB.
+The loop starts at `0x1094fb0` on Zen 4 and `0x10950f0` on Zen 5 in the saved baseline binaries.
+Both also have a four-store remainder loop.
+The glibc temporal loop uses four ZMM stores per iteration, or 256 bytes.
+Unroll factor alone therefore does not explain the difference between models.
+
+The host diagnostics report the same 16 MiB shared-cache size on both AMD targets, at line 219.
+Their reported L1 data sizes differ: 32 KiB on c7a and 48 KiB on c8a, at line 218.
+These facts do not establish a causal explanation.
+
+The hypothesis is that the larger unroll interacts differently with Zen 5 instruction delivery or store throughput.
+An independent temporal-only 256-byte loop can test that hypothesis against the 2 KiB loop on both AMD targets.
+That experiment must retain destination alignment and the same memory layout.
+It must include the new threshold sizes and report cycles and instructions.
+A Zen 5 improvement without a Zen 4 improvement will support, but not prove, the hypothesis.
+The current NT candidate bypasses the loss above its threshold and does not fix the temporal loop below it.
+A separate tuning-only comparison must also distinguish NT policy gains from gains due to `streamGrouped` itself.
+
+### Follow-up validation
+
+| Local check | Result |
+|---|---|
+| `zig build test test-export test-dispatch codegen-x86 --summary all` | 350/350 steps, 39/39 tests |
+| ReleaseFast `install`, all seven fleet CPUs | Pass |
+| Control `test codegen-x86 install` | 354/354 steps, 39/39 tests |
+| Python suite | 251 tests pass |
+| Python lint, format, and type checks | Pass |
+| Native guards at 16 and 33 MiB | 28,047,948 cases each, pass |
+| QEMU v3 guard with forced NT thresholds at 8192 bytes | 28,047,836 cases, pass |
+| `ziglint src/` | 18 existing findings, no new findings |
+| Arm kernel-byte gate | All pins unchanged |
+
+The QEMU build uses `-Dx86-nt-min=8192 -Dx86-memset-nt-min=8192` and a static musl target.
+Disassembly confirms YMM NT stores, the 8192-byte comparisons, and fences in all three operations.
+The guard matrix includes 8191, 8192, and 8193 bytes and extends through 1 MiB.
+This run exercises the existing AVX2 NT paths, not the new AVX-512 helpers.
+Only the fleet can execute those helpers with the revised 33 MiB ceiling.
+Evidence resides in `.bench-cache/largent/followup/`.
+
 ### Parent fleet procedure
 
-Run the comparison from the lane worktree.
+Select the lane worktree.
 
 ```sh
-cd /Users/matt/code/worktrees/fastmem-zig/pi-worktree-7bf04d56-9652-4f7a-9f4b-f22d893ead5d-s0-0
-nix develop /Users/matt/code/worktrees/fastmem-zig/pi-worktree-7bf04d56-9652-4f7a-9f4b-f22d893ead5d-s0-0 -c just bench-run \
-  --rev 418197e --rev WORKTREE --suite large --rounds 6 --label largent \
+WT=/Users/matt/code/worktrees/fastmem-zig/pi-worktree-7bf04d56-9652-4f7a-9f4b-f22d893ead5d-s0-0
+cd "$WT"
+```
+
+Run correctness on SPR and Zen 5.
+
+```sh
+nix develop "$WT" -c just bench-test \
+  --target c7i --target c8a \
+  --optimize ReleaseFast --optimize ReleaseSafe --optimize Debug
+```
+
+Compare the revised large suite against the matched control.
+
+```sh
+nix develop "$WT" -c just bench-run \
+  --rev 5bce447da69077a3c99b1282e22229c921edff02 --rev WORKTREE \
+  --suite large --rounds 6 --label largent \
   --target c7i --target c8i --target c7a --target c8a
 ```
 
-Reject significant regressions, including the 16 MiB controls.
-Run the standard suite on Zen 5 before final acceptance of its added large-entry branch.
+Check standard-suite regressions on both affected models.
+
+```sh
+nix develop "$WT" -c just bench-run \
+  --rev 5bce447da69077a3c99b1282e22229c921edff02 --rev WORKTREE \
+  --suite standard --rounds 6 --label largent-standard \
+  --target c7i --target c8a
+```
+
+If a separate crossover run is necessary, select both fill profiles explicitly.
+
+```sh
+nix develop "$WT" -c just bench-run \
+  --rev 5bce447da69077a3c99b1282e22229c921edff02 --rev WORKTREE \
+  --suite large --rounds 6 --label largent-set-bracket --target c8a \
+  --filter set/aligned/ --filter set/misaligned/
+```
+
+Avoid `--filter set/`, because substring matching also selects `copy/page-offset/`.
+Analyze each returned run directory with `just b analyze`.
+Reject significant regressions, including the 16 and 24 MiB fill controls.
+Keep hardware correctness and performance acceptance open until these runs pass.
