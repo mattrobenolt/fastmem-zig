@@ -45,12 +45,19 @@ const on_aarch64_sve = on_aarch64 and builtin.cpu.has(.aarch64, .sve);
 
 const arm_tuning = @import("aarch64/tuning.zig");
 
+// "+midpair-v1" marks the copy/move mid-block rework (armg,
+// docs/results/armg-mid-paths.md): the neon mid block carries the
+// ldp/stp pair shape at 33..64 and the V3 copy head falls through to
+// it. The set bytes are unchanged on SVE builds, so set keeps the plain
+// name. The V1 hybrid move head checks 128 itself ("+mid128-v1"). The
+// generic set tail follows memset-sve.S and its small tree is inverted
+// ("+set-tail-sve-v1").
 fn armName(comptime small: []const u8) []const u8 {
     return "aor-sve-5e20a93+small-" ++ small;
 }
 
 const copy_impl_name: []const u8 = if (on_aarch64_sve)
-    armName(@tagName(arm_tuning.copy_small))
+    armName(@tagName(arm_tuning.copy_small)) ++ "+midpair-v1"
 else if (on_aarch64)
     "aor-advsimd-5e20a93"
 else if (on_x86)
@@ -61,10 +68,14 @@ else
     "zig-simd";
 
 const move_impl_name: []const u8 = if (on_aarch64_sve)
-    armName(if (arm_tuning.move_small == .neon)
-        "neon-exact16-v1"
+    if (arm_tuning.move_small == .neon)
+        // The move mid block is the chunk shape on V3, pair elsewhere.
+        "aor-sve-5e20a93+small-neon-exact16-v1" ++
+            (if (arm_tuning.move_mid == .chunk) "+midchunk-v1" else "+midpair-v1")
+    else if (arm_tuning.move_small == .hybrid)
+        "aor-sve-5e20a93+small-hybrid+mid128-v1"
     else
-        @tagName(arm_tuning.move_small))
+        armName(@tagName(arm_tuning.move_small)) ++ "+midpair-v1"
 else if (on_x86)
     x86_tuning.move_name
 else if (on_dispatch)
@@ -74,7 +85,9 @@ else
 
 const set_impl_name: []const u8 = if (on_aarch64_sve)
     armName(@tagName(arm_tuning.set_small))
-else if (on_aarch64 or on_x86 or on_dispatch)
+else if (on_aarch64)
+    "aor-advsimd-5e20a93+set-tail-sve-v1"
+else if (on_x86 or on_dispatch)
     copy_impl_name
 else
     "zig-vector";
@@ -395,10 +408,12 @@ test "implementation names distinguish the move-only small classes" {
     }
     if (on_x86) try testing.expectEqualStrings(x86_tuning.move_name, impl.move);
     if (on_aarch64_sve and arm_tuning.move_small == .neon) {
-        try testing.expectEqualStrings("aor-sve-5e20a93+small-neon-exact16-v1", impl.move);
+        const want = "aor-sve-5e20a93+small-neon-exact16-v1" ++
+            (if (arm_tuning.move_mid == .chunk) "+midchunk-v1" else "+midpair-v1");
+        try testing.expectEqualStrings(want, impl.move);
     }
     if (on_aarch64_sve and arm_tuning.move_small == .hybrid) {
-        try testing.expectEqualStrings("aor-sve-5e20a93+small-hybrid", impl.move);
+        try testing.expectEqualStrings("aor-sve-5e20a93+small-hybrid+mid128-v1", impl.move);
     }
 }
 
