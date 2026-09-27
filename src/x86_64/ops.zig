@@ -40,6 +40,69 @@ pub inline fn streamStore(dst: [*]u8, value: vector) void {
           [dst] "r" (dst),
         : .{ .memory = true });
 }
+// One barrier covers eight transfers, so offsets stay in memory operands.
+// Two independent page streams expose more outstanding source cache misses.
+pub noinline fn streamCopyPages(dst: [*]u8, src: [*]const u8) void {
+    @disableIntrinsics();
+    if (comptime !high_available) @compileError("streamCopyPages requires high AVX-512 registers");
+    var d = dst;
+    var s = src;
+    var remaining: u64 = 4096;
+    // Keep LLVM from expanding the fixed tile into sixteen assembly blocks.
+    asm volatile ("1:\n" ++ streamCopyPagesText() ++
+            "add $256, %[dst]\nadd $256, %[src]\nsub $256, %[remaining]\njnz 1b"
+        : [dst] "=&r" (d),
+          [src] "=&r" (s),
+          [remaining] "=&r" (remaining),
+        : [dst_in] "0" (d),
+          [src_in] "1" (s),
+          [remaining_in] "2" (remaining),
+        : .{
+          .zmm16 = true,
+          .zmm17 = true,
+          .zmm18 = true,
+          .zmm19 = true,
+          .zmm20 = true,
+          .zmm21 = true,
+          .zmm22 = true,
+          .zmm23 = true,
+          .memory = true,
+        });
+}
+
+fn streamCopyPagesText() []const u8 {
+    comptime var text: []const u8 = "";
+    inline for (0..2) |page| {
+        inline for (0..4) |line| {
+            const ahead = page * 4096 + line * 64 + 512;
+            text = text ++ fmt.comptimePrint("prefetcht0 {d}(%[src])\n", .{ahead});
+        }
+    }
+    inline for (.{ "load", "store" }) |phase| {
+        inline for (0..8) |i| {
+            const offset = (i / 4) * 4096 + (i % 4) * 64;
+            text = text ++ if (comptime mem.eql(u8, phase, "load"))
+                fmt.comptimePrint("vmovdqu64 {d}(%[src]), %%zmm{d}\n", .{ offset, 16 + i })
+            else
+                fmt.comptimePrint("vmovntdq %%zmm{d}, {d}(%[dst])\n", .{ 16 + i, offset });
+        }
+    }
+    return text;
+}
+
+// Group a full 512-byte fill behind one barrier and one address operand.
+pub inline fn streamSetBlock(dst: [*]u8, value: vector) void {
+    comptime var text: []const u8 = "";
+    inline for (0..8) |i| {
+        text = text ++ fmt.comptimePrint("vmovntdq %[value], {d}(%[dst])\n", .{i * 64});
+    }
+    asm volatile (text
+        :
+        : [value] "v" (value),
+          [dst] "r" (dst),
+        : .{ .memory = true });
+}
+
 pub inline fn fence() void {
     asm volatile ("sfence" ::: .{ .memory = true });
 }

@@ -529,6 +529,7 @@ fn backward(dst: [*]u8, src: [*]const u8, n: usize) void {
 
 fn stream(dst: [*]u8, src: [*]const u8, n: usize) void {
     @disableIntrinsics();
+    if (comptime tuning.nt_copy_pages and ops.high_available) return streamPages(dst, src, n);
     ops.store(V, dst, ops.load(V, src));
     var offset = w - (@intFromPtr(dst) & (w - 1));
     while (offset <= n - 4 * w) : (offset += 4 * w) {
@@ -544,6 +545,24 @@ fn stream(dst: [*]u8, src: [*]const u8, n: usize) void {
     }
     ops.fence();
     _ = small(8 * w, dst + n - 4 * w, src + n - 4 * w, 4 * w);
+}
+
+// Independent 8 KiB tiles use four cache lines from each page per step.
+// The extra 512-byte bound keeps every prefetch inside the source interval.
+noinline fn streamPages(dst: [*]u8, src: [*]const u8, n: usize) void {
+    @disableIntrinsics();
+    const page = 4096;
+    ops.store(V, dst, ops.load(V, src));
+    var offset: u64 = w - (@intFromPtr(dst) & (w - 1));
+    while (n - offset >= 2 * page + 512) : (offset += 2 * page) {
+        ops.streamCopyPages(dst + offset, src + offset);
+    }
+    // The temporal remainder can overlap the last streamed cache line.
+    ops.fence();
+    while (offset < n - w) : (offset += w) {
+        ops.storeAligned(dst + offset, ops.load(V, src + offset));
+    }
+    ops.store(V, dst + n - w, ops.load(V, src + n - w));
 }
 
 /// The dispatch layer handles every size through its small limit before this entry.

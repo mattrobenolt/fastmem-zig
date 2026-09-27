@@ -331,7 +331,7 @@ POLICY = {
     "sapphirerapids": _INTEL,
     "graniterapids": _INTEL,
     "znver4": _AMD,
-    "znver5": _AMD,
+    "znver5": {"move": {"rep": False, "nt": True}, "set": {"rep": False, "nt": True}},
     "x86_64_v3": _NONE,
     "x86_64_v4": _NONE,
 }

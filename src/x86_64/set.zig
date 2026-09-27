@@ -177,14 +177,21 @@ noinline fn mediumKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) 
 
 noinline fn largeKernel(dst: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
     @disableIntrinsics();
+    if (comptime tuning.nt_set_grouped and ops.high_available) {
+        if (t.memset_nt_min) |threshold| {
+            if (n >= threshold) return @call(.always_tail, streamGrouped, .{ dst, value, n });
+        }
+    }
     large(@ptrCast(dst.?), @truncate(@as(c_uint, @bitCast(value))), n);
     return dst;
 }
 
 fn large(dst: [*]u8, value: u8, n: usize) void {
     @disableIntrinsics();
-    if (t.memset_nt_min) |threshold| {
-        if (n >= threshold) return stream(dst, value, n);
+    if (comptime !(tuning.nt_set_grouped and ops.high_available)) {
+        if (t.memset_nt_min) |threshold| {
+            if (n >= threshold) return stream(dst, value, n);
+        }
     }
     if (t.rep_stosb_min) |threshold| {
         if (n > threshold) return ops.repSet(dst, value, n);
@@ -223,6 +230,23 @@ fn stream(dst: [*]u8, value: u8, n: usize) void {
     ops.store(V, dst + n - 3 * w, v);
     ops.store(V, dst + n - 2 * w, v);
     ops.store(V, dst + n - w, v);
+}
+
+noinline fn streamGrouped(dest: ?*anyopaque, value: c_int, n: usize) callconv(.c) ?*anyopaque {
+    @disableIntrinsics();
+    const dst: [*]u8 = @ptrCast(dest.?);
+    const byte: u8 = @truncate(@as(c_uint, @bitCast(value)));
+    const v: V = @splat(byte);
+    ops.store(V, dst, v);
+    var offset: u64 = w - (@intFromPtr(dst) & (w - 1));
+    while (n - offset >= 8 * w) : (offset += 8 * w) {
+        ops.streamSetBlock(dst + offset, v);
+    }
+    // Order the NT stores before any overlapping temporal tail store.
+    ops.fence();
+    while (offset < n - w) : (offset += w) ops.storeAligned(dst + offset, v);
+    ops.store(V, dst + n - w, v);
+    return dest;
 }
 
 /// The dispatch layer handles every size through its small limit before this entry.
