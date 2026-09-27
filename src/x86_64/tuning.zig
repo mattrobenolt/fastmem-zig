@@ -35,11 +35,17 @@ const defaults: Tuning = if (builtin.cpu.model == &cpu.sapphirerapids) .{
     .nt_min = 0xf100000,
     .rep_stosb_min = 2048,
     .memset_nt_min = 0xf100000,
-} else if (builtin.cpu.model == &cpu.znver4 or builtin.cpu.model == &cpu.znver5) .{
-    // AMD uses temporal stores at exactly 12 MiB. Neither AMD model uses REP.
+} else if (builtin.cpu.model == &cpu.znver4) .{
+    // Zen 4 retains temporal stores at exactly 12 MiB. Neither AMD model uses REP.
     .nt_min = 0xc00001,
-    .fwd_source_min = if (builtin.cpu.model == &cpu.znver5) 0xc00001 else null,
-    .copy_source_min = if (builtin.cpu.model == &cpu.znver5) 65536 else null,
+    .fwd_source_min = null,
+    .copy_source_min = null,
+} else if (builtin.cpu.model == &cpu.znver5) .{
+    // Temporal stores win at 16 MiB. NT stores win at 64 MiB.
+    // The composite tests a 32 MiB threshold. See docs/results/p3-x86f.md.
+    .nt_min = 0x2000000,
+    .fwd_source_min = 0xc00001,
+    .copy_source_min = 65536,
 } else if (builtin.cpu.model == &cpu.skylake_avx512 or
     builtin.cpu.model == &cpu.cascadelake or
     builtin.cpu.model == &cpu.icelake_client or
@@ -82,13 +88,19 @@ const auto_experiment = switch (experiment) {
     => true,
     else => false,
 };
-// Fleet candidates retain all unrelated measured selections.
-pub const entry_pairs = experiment == .x86f_pairs and builtin.cpu.model == &cpu.graniterapids;
-pub const medium_chunks = experiment == .x86f_chunks and intel_model;
+// Fleet candidates retain all unrelated measured selections. auto takes the
+// measured winners (docs/results/p3-x86f.md): pairs on GNR, chunks on Intel,
+// source+64KiB on Zen 5, temporal below 32 MiB on Zen 5.
+pub const entry_pairs = builtin.cpu.model == &cpu.graniterapids and
+    (auto_experiment or experiment == .x86f_pairs);
+pub const medium_chunks = intel_model and
+    (auto_experiment or experiment == .x86f_chunks);
 pub const zen4_short = experiment == .x86f_zen4 and builtin.cpu.model == &cpu.znver4;
 pub const temporal_large = experiment == .x86f_temporal and builtin.cpu.model == &cpu.znver5;
-pub const source_64 = experiment == .x86f_source64 and builtin.cpu.model == &cpu.znver5;
-pub const source_early = experiment == .x86f_source and builtin.cpu.model == &cpu.znver5;
+pub const source_64 = builtin.cpu.model == &cpu.znver5 and
+    (auto_experiment or experiment == .x86f_source64);
+pub const source_early = builtin.cpu.model == &cpu.znver5 and
+    (auto_experiment or experiment == .x86f_source64 or experiment == .x86f_source);
 pub const dispatch_small_max: u32 = options.x86_dispatch_small_max;
 pub const medium_layout = builtin.cpu.model == &cpu.graniterapids and
     experiment == .medium_layout;

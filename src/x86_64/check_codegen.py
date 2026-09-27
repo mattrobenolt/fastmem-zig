@@ -13,13 +13,35 @@ parser.add_argument("--experiment", default="auto",
                     choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch", "x86f_temporal", "x86f_source64"))
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
-auto = args.experiment == "auto" or args.experiment.startswith("x86f_")
-entry_pairs = cpu == "graniterapids" and args.experiment == "x86f_pairs"
-medium_chunks = cpu in ("sapphirerapids", "graniterapids") and args.experiment == "x86f_chunks"
-zen4_short = cpu == "znver4" and args.experiment == "x86f_zen4"
-medium_entry = cpu == "graniterapids" and (auto or args.experiment == "medium_entry")
-short_scalar = cpu == "znver4" and args.experiment == "small_paths"
-inline_short_first = cpu == "sapphirerapids" and (auto or args.experiment == "small_paths")
+
+
+def resolve_policy(cpu, experiment):
+    """Mirror the per-model composition in tuning.zig, not the experiment label."""
+    auto = experiment == "auto" or experiment.startswith("x86f_")
+    return {
+        "entry_pairs": cpu == "graniterapids" and auto,
+        "medium_chunks": cpu in ("sapphirerapids", "graniterapids") and auto,
+        "zen4_short": cpu == "znver4" and experiment == "x86f_zen4",
+        "medium_entry": cpu == "graniterapids" and (auto or experiment == "medium_entry"),
+        "short_scalar": cpu == "znver4" and experiment == "small_paths",
+        "inline_short_first": cpu == "sapphirerapids" and (auto or experiment == "small_paths"),
+        "source_64": cpu == "znver5" and auto,
+        "nt_min": ((0x4000001 if experiment == "x86f_temporal" else 0x2000000)
+                   if cpu == "znver5" else {
+                       "sapphirerapids": 0x3580000,
+                       "graniterapids": 0xf100000,
+                       "znver4": 0xc00001,
+                   }.get(cpu)),
+    }
+
+
+policy = resolve_policy(cpu, args.experiment)
+entry_pairs = policy["entry_pairs"]
+medium_chunks = policy["medium_chunks"]
+zen4_short = policy["zen4_short"]
+medium_entry = policy["medium_entry"]
+short_scalar = policy["short_scalar"]
+inline_short_first = policy["inline_short_first"]
 compact_variants = ("compact", "ymm_medium", "straight_1k")
 reordered_variants = ("tiered", *compact_variants, "medium_first")
 dis = subprocess.check_output(["llvm-objdump", "-dr", "--no-show-raw-insn", artifact], text=True)
@@ -408,6 +430,18 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
     require((rep in text) == (cpu in ("sapphirerapids", "graniterapids")),
             f"{op} large path has wrong REP policy")
     large_paths[op] = {"symbol": name, "vector": register, "nt": nt, "rep": rep in text}
+    if cpu in ("znver4", "znver5") and op != "set":
+        # Pin the actual length comparisons, not only the presence of an NT loop.
+        limits = [int(value, 0) for value in re.findall(
+            r"^cmpq\s+\$(0x[0-9a-f]+|[0-9]+), %rdx$", text, re.MULTILINE)
+            if int(value, 0) >= 65536]
+        expected = [policy["nt_min"]]
+        if cpu == "znver5":
+            expected.append(65536)
+            if op == "move":
+                expected.append(65536 if policy["source_64"] else 0xc00001)
+        require(limits == expected, f"{op} large thresholds {limits} differ from {expected}")
+        large_paths[op]["length_thresholds"] = limits
 if cpu == "znver5":
     code = body("x86_64.move.largeKernel")
     check_nt_frame(code)
@@ -436,6 +470,8 @@ if cpu == "znver5":
 if not wide:
     require("%zmm" not in dis, "v3 uses AVX-512")
 print(json.dumps({"cpu": cpu, "status": "pass", "fixed_cases": 3 * fixed_max,
-                  "kernel_classes": kernel_counts, "abi": "direct alias", "variant": variant, "experiment": args.experiment, "large_paths": large_paths, "small_paths": small_counts,
+                  "kernel_classes": kernel_counts, "abi": "direct alias", "variant": variant,
+                  "experiment": args.experiment, "resolved_policy": policy,
+                  "large_paths": large_paths, "small_paths": small_counts,
                   "vector": "zmm" if wide else "ymm", "vzeroupper": "inline/large only" if high_regs else "medium/inline/large",
                   "mem_symbol_references": 0}))

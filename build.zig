@@ -548,7 +548,9 @@ fn addX86Codegen(
         check.addFileArg(obj.getEmittedBin());
         check.addArgs(&.{ "--experiment", @tagName(experiment) });
         step.dependOn(&check.step);
-        if (std.mem.eql(u8, cpu, "sapphirerapids") or std.mem.eql(u8, cpu, "graniterapids")) {
+        if (std.mem.eql(u8, cpu, "sapphirerapids") or std.mem.eql(u8, cpu, "graniterapids") or
+            std.mem.eql(u8, cpu, "znver4") or std.mem.eql(u8, cpu, "znver5"))
+        {
             const mutations = b.addSystemCommand(&.{"python3"});
             mutations.addFileArg(b.path("src/x86_64/test_check_codegen.py"));
             mutations.addArg(cpu);

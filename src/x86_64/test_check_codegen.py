@@ -1,4 +1,4 @@
-"""Mutation tests for the x86 gate with an Intel probe object."""
+"""Mutation tests for the x86 gate with a fleet probe object."""
 import contextlib
 import io
 from pathlib import Path
@@ -46,7 +46,31 @@ def mutate(old, new, symbol="x86_64.move.copyLarge"):
     return "\n".join(lines)
 
 
-pointer_order = check(dis, [variant])["tests_pointer_order"]
+gate = check(dis, [variant])
+pointer_order = gate["tests_pointer_order"]
+resolve_policy = gate["resolve_policy"]
+for experiment in ("auto", "x86f_pairs", "x86f_chunks", "x86f_source", "x86f_source64",
+                   "x86f_temporal", "x86f_zen4", "x86f_dispatch"):
+    for model in ("sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3", "x86_64_v4"):
+        policy = resolve_policy(model, experiment)
+        assert policy["entry_pairs"] == (model == "graniterapids")
+        assert policy["medium_chunks"] == (model in ("sapphirerapids", "graniterapids"))
+        assert policy["medium_entry"] == (model == "graniterapids")
+        assert policy["source_64"] == (model == "znver5")
+        assert policy["zen4_short"] == (model == "znver4" and experiment == "x86f_zen4")
+        if model == "znver4":
+            assert policy["nt_min"] == 0xc00001
+        elif model == "znver5":
+            assert policy["nt_min"] == (0x4000001 if experiment == "x86f_temporal" else 0x2000000)
+        else:
+            assert policy["nt_min"] == {"sapphirerapids": 0x3580000, "graniterapids": 0xf100000}.get(model)
+        checks += 1
+for experiment in ("none", "medium_layout", "medium_entry", "small_paths"):
+    for model in ("sapphirerapids", "graniterapids", "znver4", "znver5"):
+        policy = resolve_policy(model, experiment)
+        assert not policy["entry_pairs"] and not policy["medium_chunks"] and not policy["source_64"]
+        assert policy["medium_entry"] == (model == "graniterapids" and experiment == "medium_entry")
+        checks += 1
 assert not pointer_order("leaq -0x4(%rdx), %rdi\nsubq %rcx, %rdi")
 assert not pointer_order("movl %edx, %edi\nsubq %rsi, %rdi")
 assert pointer_order("cmpq %rsi, %rdi")
@@ -56,7 +80,15 @@ check(dis, [], "2")
 for wrong in ("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"):
     if wrong != variant:
         check(dis, [wrong], f"{cpu}:")
-check(mutate("movsb", "nop"), [variant], "copy large path has wrong REP policy")
+if cpu in ("sapphirerapids", "graniterapids"):
+    check(mutate("movsb", "nop"), [variant], "copy large path has wrong REP policy")
+if cpu in ("znver4", "znver5"):
+    threshold = hex(gate["policy"]["nt_min"])
+    check(mutate(f"${threshold}, %rdx", "$0x1234567, %rdx"),
+          [variant], "copy large thresholds")
+if cpu == "znver5":
+    check(mutate("$0x10000, %rdx", "$0x100000, %rdx", "x86_64.move.largeKernel"),
+          [variant], "move large thresholds")
 check(mutate("vmovntdq", "vmovdqa64"), [variant], "copy large path has wrong NT policy")
 check(mutate("sfence", "nop"), [variant], "copy large path has wrong NT fence policy")
 check(mutate("%zmm", "%ymm"), [variant], "copy large path lacks %zmm")
