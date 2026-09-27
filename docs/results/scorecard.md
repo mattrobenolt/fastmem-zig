@@ -85,9 +85,8 @@ fastmem_abi / compiler-rt (G6):
    1.04 -> 0.96, c9g 17-64 B 0.99 -> 0.80. Neoverse V1 keeps the SVE small
    path (the NEON classes lost there at 48-64 B). vs compiler-rt: move 0-16 B
    0.76-0.96 on x86, 0.52-0.76 on Graviton.
-2. c8i copy 0-64 B (1.15-1.23 vs glibc; the medium-entry cost from
-   p3-x86e). Copy/move 257-1K on Intel (1.06-1.11). Small copy 0-16 B on
-   c7i (0.69) and c8i (1.15) vs glibc is the next inline-layer item.
+2. c8i copy 0-64 B: fixed by x86f pairs (1.12/1.14 -> 0.87/0.96). c7i
+   copy 65-256/257-1K: fixed by x86f chunks (1.10/1.09 -> 0.92/1.05).
 3. c7a set 65-256 (1.10) and copy 17-64 vs compiler-rt (1.13-1.15).
 4. Baseline builds vs glibc at 65-256 B (1.13-1.59): the dispatched level
    entry skips the scalar ladder, and the remaining gap to the comptime
