@@ -99,7 +99,9 @@ const auto_experiment = switch (experiment) {
 // Fleet candidates retain all unrelated measured selections. auto takes the
 // measured winners (docs/results/p3-x86f.md): pairs on GNR, chunks on Intel,
 // source+64KiB on Zen 5, temporal below 32 MiB on Zen 5.
-pub const temporal_set_256 = experiment == .x86g_temporal and builtin.cpu.model == &cpu.znver5;
+// Fleet: x86g-temporal-256 (2026-09-28): c8a set 32 MiB 1.11 -> 0.99.
+pub const temporal_set_256 = builtin.cpu.model == &cpu.znver5 and
+    (experiment == .auto or experiment == .x86g_temporal);
 pub const medium_fallthrough = experiment == .x86g_medium and
     builtin.cpu.model == &cpu.graniterapids;
 pub const entry_pairs = builtin.cpu.model == &cpu.graniterapids and
