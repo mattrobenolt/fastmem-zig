@@ -76,7 +76,8 @@ Baseline G6: c7i: copyFAIL, moveFAIL, setPASS | c8i: copyFAIL, moveFAIL, setPASS
 5. c7a A/A p90 11.9%: its noisiness remains.
 6. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
    0.89-1.03; set 0.44-1.12. The 0.90 target is met on x86 copy, not on the
-   Gravitons.
+   Gravitons. c7g move fwd-gap31 16-31 B vs compiler-rt (1.74-1.77): the V1
+   hybrid head; the two fixes trade away other rows, so it stays open.
 
 ## Large NT, 2026-09-27 (largent, 13c9509)
 
