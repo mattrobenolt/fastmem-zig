@@ -1,9 +1,10 @@
 """Pin the aarch64 instruction bytes.
 
 Current pins cover the neon mid blocks (pair for copy/gt64, chunk for
-V3 move) with the 65..128 tail split at 96 (armh), the V3 copy head
-whose 33+ sizes fall through into the mid96 dispatch, and the V1 hybrid
-move head that routes (2*VL, 128] directly to the SVE mid block.
+V3 move), the V3 copy head whose 33+ sizes fall through into the mid96
+dispatch with a 65..128 tail split at 96 that only it uses (armh), and
+the V1 hybrid move head that routes (2*VL, 128] directly to the SVE mid
+block.
 Update GOLDEN only in a commit that deliberately changes kernel bytes.
 """
 
@@ -27,19 +28,19 @@ GOLDEN = {
     },
     "neoverse_v3": {
         "set": (336, "6a38736588879006b6c9ae1bfc52574b34696143e7e3310538f0075b4e8347b0"),
-        "copy": (672, "23e270694f41589037cdcacf7fa75236bff161f3f215e8a416a23f68517407e5"),
+        "copy": (736, "ee99afd1483a5eeba290f4b1f4af4c69eec08b8f1c4beb392f7467c266dd0ff4"),
         "move": (192, "5765bd80e82562e777e81834cae4a95d3aa85afe6d606edf4f1602fb7ad1b3ea"),
     },
 }
 # Set matches V1. The V2 copy symbol carries the neon mid blocks (the move
-# head branches into them); the V2 move head bytes match main exactly.
-# V1 and generic are unchanged by the 65..128 tail split: V1 emits no
-# neon mid block. The V3 move hash shifted on branch targets only (the
-# mid96 block moved the shared body's addresses); its head shape is
-# unchanged.
+# head branches into them). V2 is byte-identical to main: the 65..128
+# tail split serves only the V3 copy fall-through (review of 0cb3bf3),
+# and V1 emits no neon mid block. The V3 move hash shifted on branch
+# targets only (the mid96 block moved the shared body's addresses); its
+# head shape is unchanged.
 GOLDEN["neoverse_v2"] = {
     **GOLDEN["neoverse_v1"],
-    "copy": (528, "4f121334cc43535e307fd44e0c4634abe30dda707fa8a530d4a3944f6dee13cf"),
+    "copy": (480, "3545b39c5d5bab497f8993f2735ea49fa0fdc69d59abe4eef12f1d82d2914bb7"),
     "move": (192, "d83d946a28edb3ee6f8918234a3eb7b05eb9f6e0aad47d05f4f5e045179b1479"),
 }
 

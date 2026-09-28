@@ -80,18 +80,20 @@ const move_mid_chunk = tuning.move_mid == .chunk and move_v == .neon;
 // the copy head directly, which needs the SVE mid absent.
 const v3_copy_fallthrough = tuning.on_neoverse_v3 and copy_v == .neon and !need_sve_mid;
 
-// The 65..128 tail of the neon mid block is split at 96 bytes: each
-// sub-class runs its own self-contained block, so neither pays the
-// other's boundary compare (the single-block shape put a taken b.ls on
-// 65..96 and a not-taken one on 97..128, on top of the entry branch).
-// The V3 copy fall-through dispatches 96/64 itself (ge16 checks 128),
-// which brings 97..128 to 20 instructions and 2 taken branches against
-// the 21/2 of glibc's __memcpy_sve (fleet c9g copy
+// The V3 copy fall-through dispatches 96/64 itself (ge16 checks 128)
+// and uses a 65..128 tail split at 96 bytes: each sub-class runs its
+// own self-contained block, so neither pays the other's boundary
+// compare (the single-block shape puts a taken b.ls on 65..96 and a
+// not-taken one on 97..128, on top of the entry branch). That brings
+// the copy fall-through at 97..128 to 20 instructions and 2 taken
+// branches against the 21/2 of glibc's __memcpy_sve (fleet c9g copy
 // misaligned/cross-lane 127 measured 1.09-1.13x glibc in run
 // 20260927T162241Z-final-standard; the data path is already
-// instruction-identical, so the gap was pure dispatch overhead). The
-// gt32 and mov_gt32 entries keep their shape and branch into the split
-// tail; their 33..64 paths are byte-shape-identical to before.
+// instruction-identical, so the gap was dispatch overhead). The
+// gt32/mov_gt32 entries keep the single upstream block: routing them
+// through the split would cost the move path one taken branch at
+// 97..128 (review of 0cb3bf3), and with the split gated to the
+// fall-through, V2's bytes are identical to main.
 
 // Upstream small head: one predicated pair covers 0..2*VL.
 const head_sve =
@@ -280,9 +282,14 @@ fn head_hybrid(comptime p: []const u8) []const u8 {
     , .{p});
 }
 
-// Hybrid head with a NEON 16..32 class (tuning.CopySmall.hybrid_n32):
-// the tree below 16, one overlapping 16-byte pair at 16..32 (the move
-// flavor keeps its exact-16 single transfer), the SVE pair above 32.
+// Hybrid head with a NEON 16..31 class (tuning.CopySmall.hybrid_n32):
+// the tree below 16, one overlapping 16-byte pair at 16..31 (the move
+// flavor keeps its exact-16 single transfer), the SVE pair at 32..2*VL.
+// The 32 test sits after the 2*VL test, so 65..128 executes
+// byte-identically to main (review of ce61677: the b.ls shape added two
+// instructions to those rows, which already fail G2 on c7g) and n = 32
+// keeps the SVE pair (fleet fwd-gap31/32: inline NEON 6.15 ns vs the
+// abi pair's 5.59).
 // Motivation: on Neoverse V1 the predicated pair at 16..31 costs
 // 4.7-5.7 ns per call under the gap31 profiles (its masked stores do
 // not forward and the cost varies with lane count and address
@@ -290,9 +297,10 @@ fn head_hybrid(comptime p: []const u8) []const u8 {
 // 1.16 ns (fleet run 20260927T162241Z-final-standard: c7g move
 // fwd-gap31/24 = 5.61 ns abi vs 1.16 inline; glibc's __memmove_sve runs
 // the identical SVE pair and pays the same, so only G3 breaks). The
-// 33+ fall-through keeps the hybrid dispatch unchanged apart from the
-// added cmp32/b.ls pair. Not the default anywhere; the fleet A/Bs it on
-// V1 (branch fleet3/armh-move-neon32, docs/results/armh-graviton-gaps.md).
+// 33..2*VL pays one extra not-taken cmp32/b.lo pair; the 33+
+// fall-through is otherwise unchanged. Not the default anywhere; the
+// fleet A/Bs it on V1 (branch fleet3/armh-move-neon32,
+// docs/results/armh-graviton-gaps.md).
 fn head_hybrid_n32(comptime p: []const u8) []const u8 {
     const pair = if (comptime std.mem.eql(u8, p, "mov"))
         // Move flavor: one exact transfer at 16 bytes, like the neon
@@ -449,7 +457,8 @@ const mid_sve =
 const mid_neon = (if (v3_copy_fallthrough) mid_neon_v3_entry else "") ++
     mid_neon_pair ++
     (if (move_mid_chunk) mid_neon_move_chunk else "") ++
-    mid_neon_tail;
+    mid_neon_tail ++
+    (if (v3_copy_fallthrough) mid_neon_v3_tail else "");
 
 // Fall-through target of the V3 copy head's ge16: n in 33..128 with
 // the 128 check already done. Dispatches 96/64 and runs the 33..64 pair
@@ -457,7 +466,9 @@ const mid_neon = (if (v3_copy_fallthrough) mid_neon_v3_entry else "") ++
 // instructions with 2 taken branches against the 21/2 of glibc's
 // __memcpy_sve (fleet c9g copy misaligned/cross-lane 127 sat at
 // 1.09-1.13x glibc with an instruction-identical data path — the gap
-// was dispatch overhead, see docs/results/armh-graviton-gaps.md).
+// was dispatch overhead, see docs/results/armh-graviton-gaps.md). Only
+// this fall-through uses the split tail; gt32/mov_gt32 keep the single
+// upstream 65..128 block so the move path stays byte-identical to main.
 const mid_neon_v3_entry =
     \\
     \\    .p2align 4
@@ -527,18 +538,38 @@ const mid_neon_move_chunk =
     \\
 ;
 
-// 65..128, split at 96. The entry label keeps its old name and callers
-// (gt32, mov_gt32): it is now a two-instruction dispatch into the
-// sub-class blocks. 65..96 loses the taken b.ls it used to pay; 97..128
-// loses the shared block's boundary compare. Both blocks load every
-// register before any store, so the move entries share them for any
-// overlap, like the single block before.
+// 65..128 for the gt32/mov_gt32 entries: the single upstream block,
+// keeping the move path byte-identical to main (the split below costs
+// the move entries one taken branch at 97..128 — review of 0cb3bf3).
+// The split blocks serve only mid96, the V3 copy fall-through: each
+// sub-class runs its own block, so 97..128 pays no boundary compare and
+// 65..96 pays no taken b.ls. All blocks load every register before any
+// store, so the move entries that share them stay correct for any
+// overlap.
 const mid_neon_tail =
     \\    .p2align 4
     \\    // Copy 65..128 bytes.
     \\.Lfm_sve_cpy65_128:
+    \\    add    x4, x1, x2
+    \\    add    x5, x0, x2
+    \\    ldp    q0, q1, [x1]
+    \\    ldp    q2, q3, [x4, -32]
+    \\    ldp    q4, q5, [x1, 32]
     \\    cmp    x2, 96
-    \\    b.hi    .Lfm_sve_cpy97_128
+    \\    b.ls    .Lfm_sve_cpy96n
+    \\    ldp    q6, q7, [x4, -64]
+    \\    stp    q6, q7, [x5, -64]
+    \\.Lfm_sve_cpy96n:
+    \\    stp    q0, q1, [x0]
+    \\    stp    q4, q5, [x0, 32]
+    \\    stp    q2, q3, [x5, -32]
+    \\    ret
+    \\
+;
+
+const mid_neon_v3_tail =
+    \\    .p2align 4
+    \\    // Copy 65..96 bytes (from mid96).
     \\.Lfm_sve_cpy65_96:
     \\    add    x4, x1, x2
     \\    add    x5, x0, x2
@@ -551,7 +582,7 @@ const mid_neon_tail =
     \\    ret
     \\
     \\    .p2align 4
-    \\    // Copy 97..128 bytes.
+    \\    // Copy 97..128 bytes (from mid96).
     \\.Lfm_sve_cpy97_128:
     \\    add    x4, x1, x2
     \\    add    x5, x0, x2
