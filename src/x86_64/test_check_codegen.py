@@ -114,7 +114,6 @@ if gate["temporal_set_256"] and variant != "entry":
           [variant], "Zen5 temporal fill must have four aligned stores")
     check(mutate("$0x100,", "$0x200,", "x86_64.set.largeKernel"),
           [variant], "Zen5 temporal fill must advance 256 bytes")
-if gate["temporal_set_256"] and variant != "entry":
     check(mutate("0xc0(", "0x100(", "x86_64.set.largeKernel"),
           [variant], "Zen5 temporal fill has wrong offsets")
 print(f"x86 gate mutation tests ({cpu}/{variant}): {checks} passed")
