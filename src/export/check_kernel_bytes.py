@@ -1,9 +1,10 @@
 """Pin the aarch64 instruction bytes.
 
 Current pins cover the neon mid blocks (pair for copy/gt64, chunk for
-V3 move), the V3 copy head whose 33+ sizes fall through into the mid
-block, and the V1 hybrid move head that routes (2*VL, 128] directly to
-the SVE mid block.
+V3 move), the V3 copy head whose 33+ sizes fall through into the mid96
+dispatch with a 65..128 tail split at 96 that only it uses (armh), and
+the V1 hybrid move head that routes (2*VL, 128] directly to the SVE mid
+block.
 Update GOLDEN only in a commit that deliberately changes kernel bytes.
 """
 
@@ -27,12 +28,16 @@ GOLDEN = {
     },
     "neoverse_v3": {
         "set": (336, "6a38736588879006b6c9ae1bfc52574b34696143e7e3310538f0075b4e8347b0"),
-        "copy": (576, "37fa773d19775ac0dbc1bfa97afc8f49aa972f9bdb4c8db8c2f6776ffc07e2a7"),
-        "move": (192, "03a6d23391a776613742c5d3205f822a9602263394d849dd1acb88b7b5d1d131"),
+        "copy": (736, "ee99afd1483a5eeba290f4b1f4af4c69eec08b8f1c4beb392f7467c266dd0ff4"),
+        "move": (192, "5765bd80e82562e777e81834cae4a95d3aa85afe6d606edf4f1602fb7ad1b3ea"),
     },
 }
 # Set matches V1. The V2 copy symbol carries the neon mid blocks (the move
-# head branches into them); the V2 move head bytes match main exactly.
+# head branches into them). V2 is byte-identical to main: the 65..128
+# tail split serves only the V3 copy fall-through (review of 0cb3bf3),
+# and V1 emits no neon mid block. The V3 move hash shifted on branch
+# targets only (the mid96 block moved the shared body's addresses); its
+# head shape is unchanged.
 GOLDEN["neoverse_v2"] = {
     **GOLDEN["neoverse_v1"],
     "copy": (480, "3545b39c5d5bab497f8993f2735ea49fa0fdc69d59abe4eef12f1d82d2914bb7"),
