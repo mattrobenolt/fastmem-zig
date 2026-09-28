@@ -254,13 +254,30 @@ def variant_key(variant: str, optimize: str) -> str:
     default=("ReleaseFast",),
     type=click.Choice(["ReleaseFast", "Debug", "ReleaseSafe"]),
     show_default=True,
-    help="Repeat to test multiple optimization modes.",
+    help=(
+        "Repeat to test multiple optimization modes. Debug/ReleaseSafe on a "
+        "non-main revision duplicate the main run: the kernel-bytes pin "
+        "(zig build test-export) proves a variant's kernels are unchanged. "
+        "Use --all-modes for one of those."
+    ),
+)
+@click.option(
+    "--all-modes",
+    "all_modes",
+    is_flag=True,
+    help="Run every mode on every revision (slowest; for a final gate before a merge).",
 )
 @click.pass_obj
 def test_fleet(
-    config: Config, targets: tuple[str, ...], launch: bool, optimizes: tuple[str, ...]
+    config: Config,
+    targets: tuple[str, ...],
+    launch: bool,
+    optimizes: tuple[str, ...],
+    all_modes: bool,
 ) -> None:
     """Run target-CPU and baseline-CPU correctness binaries on each box."""
+    if all_modes:
+        optimizes = ("ReleaseFast", "ReleaseSafe", "Debug")
     optimizes = tuple(dict.fromkeys(optimizes))
     fleet = Fleet(config)
     names = config.select(targets)

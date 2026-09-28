@@ -16,6 +16,7 @@ from ec2bench.config import Config
 from ec2bench.facts import collect
 from ec2bench.fleet import Fleet, expiry, tags
 from ec2bench.parallel import Outcome, parallel, progress
+from ec2bench.runs import watch as watch_run
 
 console = Console()
 
@@ -140,6 +141,14 @@ def ssh(config: Config, target: str, command: tuple[str, ...]) -> None:
     """Open a shell or execute a command on one target."""
     fleet = Fleet(config)
     sys.exit(box_for(fleet, fleet.one(target), fleet.outputs()).shell(command))
+
+
+@cli.command()
+@click.argument("path")
+@click.option("--timeout", "timeout_s", type=int, default=6 * 3600, show_default="6h")
+def watch(path: str, timeout_s: int) -> None:
+    """Exit when the run directory's summary.json exists or the timeout passes."""
+    sys.exit(watch_run(path, timeout_s))
 
 
 @cli.command()

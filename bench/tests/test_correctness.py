@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -401,3 +402,20 @@ def test_debug_execution_timeout(tmp_path: Path) -> None:
     )
     assert result["status"] == "pass"
     assert box.run.call_args.kwargs["timeout"] == 3600
+
+
+def test_watch_exits_when_summary_exists(tmp_path: Path) -> None:
+    from ec2bench.runs import watch
+
+    (tmp_path / "summary.json").write_text("{}")
+    assert watch(str(tmp_path), 1) == 0
+    assert watch(str(tmp_path / "missing"), 0) == 1
+
+
+def test_all_modes_flag(config: Config) -> None:
+    from fastmem_bench.correctness import test_fleet
+
+    ctx = click.Context(test_fleet)
+    ctx.ensure_object(type("C", (), {}))
+    params = {p.name: p for p in test_fleet.params}
+    assert "all_modes" in params and params["all_modes"].is_flag
