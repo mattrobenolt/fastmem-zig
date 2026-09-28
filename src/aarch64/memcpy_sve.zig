@@ -58,7 +58,9 @@ const enabled = builtin.cpu.arch == .aarch64 and
 const copy_v = tuning.copy_small;
 const move_v = tuning.move_small;
 // The move NEON head has an exact 16-byte class, unlike copy.
-const aliased = copy_v == move_v and move_v != .neon;
+// The NEON-headed and hybrid_n32 move entries have classes the copy
+// entry lacks (exact-16; the NEON 16..32 block), so they never alias.
+const aliased = copy_v == move_v and move_v != .neon and move_v != .hybrid_n32;
 // The hybrid head routes n > 2*VL straight to the SVE mid block (its
 // 128-byte check sits in the head), so hybrid needs mid_sve too.
 const need_sve_mid = copy_v != .neon or move_v != .neon;
@@ -278,11 +280,79 @@ fn head_hybrid(comptime p: []const u8) []const u8 {
     , .{p});
 }
 
+// Hybrid head with a NEON 16..32 class (tuning.CopySmall.hybrid_n32):
+// the tree below 16, one overlapping 16-byte pair at 16..32 (the move
+// flavor keeps its exact-16 single transfer), the SVE pair above 32.
+// Motivation: on Neoverse V1 the predicated pair at 16..31 costs
+// 4.7-5.7 ns per call under the gap31 profiles (its masked stores do
+// not forward and the cost varies with lane count and address
+// alignment), where the inline layer's NEON pair runs the same cases in
+// 1.16 ns (fleet run 20260927T162241Z-final-standard: c7g move
+// fwd-gap31/24 = 5.61 ns abi vs 1.16 inline; glibc's __memmove_sve runs
+// the identical SVE pair and pays the same, so only G3 breaks). The
+// 33+ fall-through keeps the hybrid dispatch unchanged apart from the
+// added cmp32/b.ls pair. Not the default anywhere; the fleet A/Bs it on
+// V1 (branch fleet3/armh-move-neon32, docs/results/armh-graviton-gaps.md).
+fn head_hybrid_n32(comptime p: []const u8) []const u8 {
+    const pair = if (comptime std.mem.eql(u8, p, "mov"))
+        // Move flavor: one exact transfer at 16 bytes, like the neon
+        // move head.
+        \\    ldr    q0, [x1]
+        \\    cmp    x2, 16
+        \\    b.eq    .Lfm_sve_{s}_one
+        \\    add    x4, x1, x2
+        \\    ldur    q1, [x4, -16]
+        \\    add    x5, x0, x2
+        \\    str    q0, [x0]
+        \\    stur    q1, [x5, -16]
+        \\    ret
+        \\.Lfm_sve_{s}_one:
+        \\    str    q0, [x0]
+        \\    ret
+        \\
+    else
+        \\    add    x4, x1, x2
+        \\    ldr    q0, [x1]
+        \\    ldr    q1, [x4, -16]
+        \\    add    x5, x0, x2
+        \\    str    q0, [x0]
+        \\    str    q1, [x5, -16]
+        \\    ret
+        \\
+    ;
+    return std.fmt.comptimePrint(
+        \\    cmp    x2, 16
+        \\    b.hs    .Lfm_sve_{s}_ge16
+        \\
+    , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
+        \\    .p2align 4
+        \\.Lfm_sve_{s}_ge16:
+        \\    cmp    x2, 32
+        \\    b.ls    .Lfm_sve_{s}_n32
+        \\    cntb    x6
+        \\    cmp    x2, 128
+        \\    b.hi    .Lfm_sve_cpy_long
+        \\    cmp    x2, x6, lsl 1
+        \\    b.hi    .Lfm_sve_cpy32_128
+        \\    whilelo p0.b, xzr, x2
+        \\    whilelo p1.b, x6, x2
+        \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
+        \\    ld1b    z1.b, p1/z, [x1, 1, mul vl]
+        \\    st1b    z0.b, p0, [x0, 0, mul vl]
+        \\    st1b    z1.b, p1, [x0, 1, mul vl]
+        \\    ret
+        \\
+        \\    .p2align 4
+        \\.Lfm_sve_{s}_n32:
+    , .{ p, p, p }) ++ std.fmt.comptimePrint(pair, .{ p, p });
+}
+
 fn head(comptime v: tuning.CopySmall, comptime p: []const u8) []const u8 {
     return switch (v) {
         .sve => head_sve,
         .neon => head_neon(p),
         .hybrid => head_hybrid(p),
+        .hybrid_n32 => head_hybrid_n32(p),
     };
 }
 

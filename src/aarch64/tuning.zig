@@ -11,6 +11,11 @@
 //!           mid block above 32. Fixed boundaries, no cntb/whilelo.
 //! - hybrid: the tbz tree below 16, the SVE predicated pair for
 //!           16..2*VL.
+//! - hybrid_n32: the tbz tree below 16, one overlapping 16-byte NEON
+//!   pair for 16..32, the SVE predicated pair for 33..2*VL. A fleet
+//!   experiment for V1 move (not a default anywhere): the V1 predicated
+//!   pair at 16..31 measures 4.7-5.7 ns under the gap31 profiles where
+//!   the NEON pair runs 1.16 ns (docs/results/armh-graviton-gaps.md).
 //!
 //! Move selects its small path independently. Its NEON head transfers exactly
 //! one vector at 16 bytes. The rejected plain NEON pair wrote the same bytes twice.
@@ -42,7 +47,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const options = @import("fastmem_options");
 
-pub const CopySmall = enum { sve, neon, hybrid };
+pub const CopySmall = enum { sve, neon, hybrid, hybrid_n32 };
 pub const SetSmall = enum { sve, neon };
 
 const aarch64_cpu = std.Target.aarch64.cpu;
