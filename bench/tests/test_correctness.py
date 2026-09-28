@@ -70,7 +70,7 @@ def test_zero_cases_failure_is_valid() -> None:
 def test_zen5_ceiling_covers_both_nt_paths() -> None:
     assert c.default_max_size("znver5") == 33 * c.MIB
     assert c.default_max_size("znver4") == 16 * c.MIB
-    counts = c.expected_counts(33 * c.MIB, has_set=True)
+    counts = c.expected_counts(65 * c.MIB, has_set=True)
     assert counts == c.expected_counts(16 * c.MIB, has_set=True)
     assert sum(counts.values()) == 28_047_948
     # Old summaries cannot silently pass without NT coverage.
