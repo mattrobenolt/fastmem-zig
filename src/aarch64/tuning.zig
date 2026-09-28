@@ -12,10 +12,12 @@
 //! - hybrid: the tbz tree below 16, the SVE predicated pair for
 //!           16..2*VL.
 //! - hybrid_n32: the tbz tree below 16, one overlapping 16-byte NEON
-//!   pair for 16..32, the SVE predicated pair for 33..2*VL. A fleet
+//!   pair for 16..31, the SVE predicated pair for 32..2*VL. A fleet
 //!   experiment for V1 move (not a default anywhere): the V1 predicated
-//!   pair at 16..31 measures 4.7-5.7 ns under the gap31 profiles where
-//!   the NEON pair runs 1.16 ns (docs/results/armh-graviton-gaps.md).
+//!   pair measures 4.7-5.7 ns under the gap31 profiles at 24..31 (and
+//!   bwd at 16..31) where the NEON pair runs 1.16 ns; the 32 test sits
+//!   after the 2*VL test so 65..128 stays byte-identical to main
+//!   (docs/results/armh-graviton-gaps.md).
 //! - hybrid_ft: the SVE predicated pair for 16..2*VL with the >= 16
 //!   class on the fall-through and the tree out of line (the 1..3 class
 //!   pays the taken branch). A fleet experiment for the V1 move

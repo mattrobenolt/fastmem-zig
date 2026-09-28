@@ -335,13 +335,13 @@ fn head_hybrid_n32(comptime p: []const u8) []const u8 {
     , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
         \\    .p2align 4
         \\.Lfm_sve_{s}_ge16:
-        \\    cmp    x2, 32
-        \\    b.ls    .Lfm_sve_{s}_n32
         \\    cntb    x6
         \\    cmp    x2, 128
         \\    b.hi    .Lfm_sve_cpy_long
         \\    cmp    x2, x6, lsl 1
         \\    b.hi    .Lfm_sve_cpy32_128
+        \\    cmp    x2, 32
+        \\    b.lo    .Lfm_sve_{s}_n31
         \\    whilelo p0.b, xzr, x2
         \\    whilelo p1.b, x6, x2
         \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
@@ -351,7 +351,7 @@ fn head_hybrid_n32(comptime p: []const u8) []const u8 {
         \\    ret
         \\
         \\    .p2align 4
-        \\.Lfm_sve_{s}_n32:
+        \\.Lfm_sve_{s}_n31:
     , .{ p, p, p }) ++ std.fmt.comptimePrint(pair, .{ p, p });
 }
 
