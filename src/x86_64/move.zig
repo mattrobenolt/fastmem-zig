@@ -226,7 +226,7 @@ pub noinline fn kernel(
 // Its small classes match the move pairs without a new wrapper around moveKernel.
 inline fn copyPairs(dst: ?*anyopaque, src: ?*const anyopaque, n: usize) ?*anyopaque {
     if (n >= 64) {
-        @branchHint(.unlikely);
+        @branchHint(if (tuning.medium_fallthrough) .likely else .unlikely);
         return mediumReordered(dst, src, n);
     }
     if (n <= 3) {

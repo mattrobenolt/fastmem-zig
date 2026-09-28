@@ -50,7 +50,7 @@ gate = check(dis, [variant])
 pointer_order = gate["tests_pointer_order"]
 resolve_policy = gate["resolve_policy"]
 for experiment in ("auto", "x86f_pairs", "x86f_chunks", "x86f_source", "x86f_source64",
-                   "x86f_temporal", "x86f_zen4", "x86f_dispatch"):
+                   "x86f_temporal", "x86f_zen4", "x86f_dispatch", "x86g_temporal", "x86g_medium"):
     for model in ("sapphirerapids", "graniterapids", "znver4", "znver5", "x86_64_v3", "x86_64_v4"):
         policy = resolve_policy(model, experiment)
         assert policy["entry_pairs"] == (model == "graniterapids")
@@ -108,4 +108,13 @@ if variant == "straight_1k":
     check(mutate("%zmm31", "%zmm30", "x86_64.move.kernel"), [variant], "1 KiB class")
 if variant != "entry":
     check(mutate("0x40(%rsi)", "0x41(%rsi)", "x86_64.move.kernel"), [variant], "wrong source bytes")
+
+if gate["temporal_set_256"] and variant != "entry":
+    check(mutate("vmovdqa64", "vmovdqu64", "x86_64.set.largeKernel"),
+          [variant], "Zen5 temporal fill must have four aligned stores")
+    check(mutate("$0x100,", "$0x200,", "x86_64.set.largeKernel"),
+          [variant], "Zen5 temporal fill must advance 256 bytes")
+if gate["temporal_set_256"] and variant != "entry":
+    check(mutate("0xc0(", "0x100(", "x86_64.set.largeKernel"),
+          [variant], "Zen5 temporal fill has wrong offsets")
 print(f"x86 gate mutation tests ({cpu}/{variant}): {checks} passed")

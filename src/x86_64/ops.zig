@@ -103,6 +103,28 @@ pub inline fn streamSetBlock(dst: [*]u8, value: vector) void {
         : .{ .memory = true });
 }
 
+// Keep the existing four-store temporal body below LLVM's unroll pass.
+// The caller supplies an aligned cursor below end and reserves a 256-byte tail.
+pub inline fn temporalSetLoop(dst: [*]u8, end: [*]u8, value: vector) void {
+    if (comptime !high_available or width != 64)
+        @compileError("temporalSetLoop requires 64-byte AVX-512 vectors");
+    var cursor = dst;
+    asm volatile (
+        \\1:
+        \\vmovdqa64 %[value], 0(%[cursor])
+        \\vmovdqa64 %[value], 64(%[cursor])
+        \\vmovdqa64 %[value], 128(%[cursor])
+        \\vmovdqa64 %[value], 192(%[cursor])
+        \\add $256, %[cursor]
+        \\cmp %[end], %[cursor]
+        \\jb 1b
+        : [cursor] "=&r" (cursor),
+        : [start] "0" (cursor),
+          [end] "r" (end),
+          [value] "v" (value),
+        : .{ .memory = true });
+}
+
 pub inline fn fence() void {
     asm volatile ("sfence" ::: .{ .memory = true });
 }

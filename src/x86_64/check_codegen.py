@@ -10,14 +10,14 @@ parser.add_argument("cpu")
 parser.add_argument("variant", choices=("entry", "high_regs", "tiered", "compact", "medium_first", "ymm_medium", "straight_1k"))
 parser.add_argument("artifact")
 parser.add_argument("--experiment", default="auto",
-                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch", "x86f_temporal", "x86f_source64"))
+                    choices=("auto", "none", "medium_layout", "medium_entry", "small_paths", "x86f_pairs", "x86f_chunks", "x86f_zen4", "x86f_source", "x86f_dispatch", "x86f_temporal", "x86f_source64", "x86g_temporal", "x86g_medium"))
 args = parser.parse_args()
 cpu, variant, artifact = args.cpu, args.variant, args.artifact
 
 
 def resolve_policy(cpu, experiment):
     """Mirror the per-model composition in tuning.zig, not the experiment label."""
-    auto = experiment == "auto" or experiment.startswith("x86f_")
+    auto = experiment == "auto" or experiment.startswith(("x86f_", "x86g_"))
     return {
         "entry_pairs": cpu == "graniterapids" and auto,
         "medium_chunks": cpu in ("sapphirerapids", "graniterapids") and auto,
@@ -36,6 +36,8 @@ def resolve_policy(cpu, experiment):
 
 
 policy = resolve_policy(cpu, args.experiment)
+medium_fallthrough = cpu == "graniterapids" and args.experiment == "x86g_medium"
+temporal_set_256 = cpu == "znver5" and args.experiment == "x86g_temporal"
 entry_pairs = policy["entry_pairs"]
 medium_chunks = policy["medium_chunks"]
 zen4_short = policy["zen4_short"]
@@ -330,9 +332,17 @@ if entry_pairs and high_regs:
         for n in range(4, 64):
             stats = {}
             class_path(name, n, stats)
-            budget = 1 if n < 8 else 0 if n <= 16 else 1 if n <= 32 else 2
+            budget = (1 if n < 8 else 0 if n <= 16 else 1 if n <= 32 else 2) + medium_fallthrough
             require(stats["taken_branches"] <= budget,
                     f"pairs {name}/{n} exceeds taken-branch budget")
+
+if medium_fallthrough and high_regs:
+    for name in ("x86_64.move.kernel", "x86_64.move.moveKernel"):
+        for n in range(64, 257):
+            stats = {}
+            class_path(name, n, stats)
+            require(stats["taken_branches"] == (0 if n <= 128 else 1),
+                    f"{name}/{n}: medium entry lacks fallthrough")
 
 kernel_counts = {}
 for op in ("move", "set"):
@@ -467,6 +477,30 @@ if high_regs and cpu == "znver5":
     entry = "\n".join(i for _, i in body("x86_64.set.largeKernel"))
     require("$0x3000000, %rdx" in entry, "Zen5 NT fill threshold differs from 48 MiB")
     require(not re.search(r"push|pop|call", entry), "Zen5 temporal fill acquired a frame")
+if temporal_set_256 and high_regs:
+    code = body("x86_64.set.largeKernel")
+    loops = []
+    for address, insn in code:
+        branch = re.match(r"j\w+\s+0x([0-9a-f]+)", insn)
+        if branch and int(branch[1], 16) < address:
+            loops.append([i for a, i in code if int(branch[1], 16) <= a <= address])
+    require(len(loops) == 1, "Zen5 temporal fill must have one loop")
+    loop = loops[0]
+    require(sum(i.startswith("vmovdqa64") for i in loop) == 4,
+            "Zen5 temporal fill must have four aligned stores")
+    require(len(loop) == 7 and any(re.match(r"addq\s+\$0x100,", i) for i in loop),
+            "Zen5 temporal fill must advance 256 bytes in seven instructions")
+    stores = [re.fullmatch(r"vmovdqa64\s+(%zmm\d+), (-?0x[0-9a-f]+)?\((%r\w+)\)", i)
+              for i in loop if i.startswith("vmovdqa64")]
+    require(all(stores), "Zen5 temporal fill has an unexpected store address")
+    require([int(s[2] or "0", 0) for s in stores] == [0, 64, 128, 192] and
+            len({(s[1], s[3]) for s in stores}) == 1,
+            "Zen5 temporal fill has wrong offsets or registers")
+    cursor = stores[0][3]
+    require(re.fullmatch(rf"addq\s+\$0x100, {cursor}", loop[4]) and
+            re.fullmatch(rf"cmpq\s+%r\w+, {cursor}", loop[5]) and re.match(r"jb\s", loop[6]),
+            "Zen5 temporal fill has wrong loop control")
+
 if cpu == "znver5":
     code = body("x86_64.move.largeKernel")
     check_nt_frame(code)

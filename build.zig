@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const X86Experiment = enum { auto, none, medium_layout, medium_entry, small_paths, x86f_pairs, x86f_chunks, x86f_zen4, x86f_source, x86f_dispatch, x86f_temporal, x86f_source64 };
+const X86Experiment = enum { auto, none, medium_layout, medium_entry, small_paths, x86f_pairs, x86f_chunks, x86f_zen4, x86f_source, x86f_dispatch, x86f_temporal, x86f_source64, x86g_temporal, x86g_medium };
 
 const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
 

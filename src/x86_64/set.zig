@@ -202,11 +202,15 @@ fn large(dst: [*]u8, value: u8, n: usize) void {
     ops.store(V, dst + 2 * w, v);
     ops.store(V, dst + 3 * w, v);
     var offset = 4 * w - (@intFromPtr(dst) & (w - 1));
-    while (offset < n - 4 * w) : (offset += 4 * w) {
-        ops.storeAligned(dst + offset, v);
-        ops.storeAligned(dst + offset + w, v);
-        ops.storeAligned(dst + offset + 2 * w, v);
-        ops.storeAligned(dst + offset + 3 * w, v);
+    if (comptime tuning.temporal_set_256 and ops.high_available) {
+        if (offset < n - 4 * w) ops.temporalSetLoop(dst + offset, dst + n - 4 * w, v);
+    } else {
+        while (offset < n - 4 * w) : (offset += 4 * w) {
+            ops.storeAligned(dst + offset, v);
+            ops.storeAligned(dst + offset + w, v);
+            ops.storeAligned(dst + offset + 2 * w, v);
+            ops.storeAligned(dst + offset + 3 * w, v);
+        }
     }
     ops.store(V, dst + n - 4 * w, v);
     ops.store(V, dst + n - 3 * w, v);
