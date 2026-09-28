@@ -368,11 +368,12 @@ fn head_hybrid_n32(comptime p: []const u8) []const u8 {
 // cmp16/b.hs over glibc's entry. Fleet branch fleet3/armh-v1move-ft;
 // reject if the 1..3 rows break as predicted.
 fn head_hybrid_ft(comptime p: []const u8) []const u8 {
+    // No .p2align before ge16: after bti/cmp/b.lo it would emit one
+    // nop on the >= 16 fall-through, paid by every mid-size call
+    // (review of b45e58d). ge16 needs no alignment of its own.
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
         \\    b.lo    .Lfm_sve_{s}_tree
-        \\
-        \\    .p2align 4
         \\.Lfm_sve_{s}_ge16:
         \\    cntb    x6
         \\    cmp    x2, 128
