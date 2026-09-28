@@ -78,6 +78,19 @@ const move_mid_chunk = tuning.move_mid == .chunk and move_v == .neon;
 // the copy head directly, which needs the SVE mid absent.
 const v3_copy_fallthrough = tuning.on_neoverse_v3 and copy_v == .neon and !need_sve_mid;
 
+// The 65..128 tail of the neon mid block is split at 96 bytes: each
+// sub-class runs its own self-contained block, so neither pays the
+// other's boundary compare (the single-block shape put a taken b.ls on
+// 65..96 and a not-taken one on 97..128, on top of the entry branch).
+// The V3 copy fall-through dispatches 96/64 itself (ge16 checks 128),
+// which brings 97..128 to 20 instructions and 2 taken branches against
+// the 21/2 of glibc's __memcpy_sve (fleet c9g copy
+// misaligned/cross-lane 127 measured 1.09-1.13x glibc in run
+// 20260927T162241Z-final-standard; the data path is already
+// instruction-identical, so the gap was pure dispatch overhead). The
+// gt32 and mov_gt32 entries keep their shape and branch into the split
+// tail; their 33..64 paths are byte-shape-identical to before.
+
 // Upstream small head: one predicated pair covers 0..2*VL.
 const head_sve =
     \\    cntb    x6
@@ -179,10 +192,11 @@ fn head_neon(comptime p: []const u8) []const u8 {
     if (comptime (std.mem.eql(u8, p, "cpy") and v3_copy_fallthrough))
         // Inverted 32 test: 16..32 branches out, 33+ falls through into
         // the mid block, which copyEntry must emit immediately after.
-        // ge16 is exactly 16 bytes, so the mid block entry lands
-        // 16-aligned with no padding on the fall-through path (the move
-        // heads branch into that block too). The hoisted end-pointer
-        // adds serve le32; the mid block recomputes them because the
+        // ge16 is exactly 16 bytes of pure dispatch (the 32 and 128
+        // tests), so the mid96 entry lands 16-aligned with no padding on
+        // the fall-through path. le32 computes its own end pointers: the
+        // hoisted adds used to serve it from ge16, where every n > 32
+        // call paid for them, and mid96 recomputes them because the
         // gt64 alias contract allows only x0-x2 on entry.
         return std.fmt.comptimePrint(
             \\    cmp    x2, 16
@@ -191,18 +205,20 @@ fn head_neon(comptime p: []const u8) []const u8 {
         , .{p}) ++ tree(p) ++ std.fmt.comptimePrint(
             \\    .p2align 4
             \\.Lfm_sve_{s}_le32:
+            \\    add    x4, x1, x2
             \\    ldr    q0, [x1]
             \\    ldr    q1, [x4, -16]
+            \\    add    x5, x0, x2
             \\    str    q0, [x0]
             \\    str    q1, [x5, -16]
             \\    ret
             \\
             \\    .p2align 4
             \\.Lfm_sve_{s}_ge16:
-            \\    add    x4, x1, x2
-            \\    add    x5, x0, x2
             \\    cmp    x2, 32
             \\    b.ls    .Lfm_sve_{s}_le32
+            \\    cmp    x2, 128
+            \\    b.hi    .Lfm_sve_cpy_long
         , .{ p, p, p });
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
@@ -314,15 +330,42 @@ const mid_sve =
 // chunk block beats compiler-rt there — G2's misaligned failures were
 // 1.2-1.5x, so copy pays the smaller side. The move entry keeps the
 // chunk block on V3 (tuning.move_mid): the pair block measured +25% at
-// move/fwd-half/48 there, and no V3 move goal row needed it. 65..128
-// stays self-contained (it recomputes x4/x5 and reloads q0-q3):
-// hoisting those above the 64 check measured 3-7% slower at 127-128 in
-// review. The block entry must stay 16-aligned: the move heads branch
-// here, and the V3 copy head falls through here (its ge16 block is
-// exactly 16 bytes, so the .p2align emits no padding on that path).
-const mid_neon = mid_neon_pair ++
+// move/fwd-half/48 there, and no V3 move goal row needed it. 65..128 is
+// split at 96 into two self-contained blocks (each recomputes x4/x5 and
+// reloads its registers): hoisting those above the 64 check measured
+// 3-7% slower at 127-128 in review, and the single-block shape put the
+// 96-boundary compare on both sub-class paths. The gt32 entry must stay
+// 16-aligned: the move heads branch here (the V3 copy head instead
+// falls through into mid96 above it, off its 16-byte ge16 block).
+const mid_neon = (if (v3_copy_fallthrough) mid_neon_v3_entry else "") ++
+    mid_neon_pair ++
     (if (move_mid_chunk) mid_neon_move_chunk else "") ++
     mid_neon_tail;
+
+// Fall-through target of the V3 copy head's ge16: n in 33..128 with
+// the 128 check already done. Dispatches 96/64 and runs the 33..64 pair
+// block on the fall-through. At 97..128 this path executes 20
+// instructions with 2 taken branches against the 21/2 of glibc's
+// __memcpy_sve (fleet c9g copy misaligned/cross-lane 127 sat at
+// 1.09-1.13x glibc with an instruction-identical data path — the gap
+// was dispatch overhead, see docs/results/armh-graviton-gaps.md).
+const mid_neon_v3_entry =
+    \\
+    \\    .p2align 4
+    \\.Lfm_sve_cpy_mid96:
+    \\    cmp    x2, 96
+    \\    b.hi    .Lfm_sve_cpy97_128
+    \\    cmp    x2, 64
+    \\    b.hi    .Lfm_sve_cpy65_96
+    \\    add    x4, x1, x2
+    \\    add    x5, x0, x2
+    \\    ldp    q0, q1, [x1]
+    \\    ldp    q2, q3, [x4, -32]
+    \\    stp    q0, q1, [x0]
+    \\    stp    q2, q3, [x5, -32]
+    \\    ret
+    \\
+;
 
 const mid_neon_pair =
     \\
@@ -375,20 +418,39 @@ const mid_neon_move_chunk =
     \\
 ;
 
+// 65..128, split at 96. The entry label keeps its old name and callers
+// (gt32, mov_gt32): it is now a two-instruction dispatch into the
+// sub-class blocks. 65..96 loses the taken b.ls it used to pay; 97..128
+// loses the shared block's boundary compare. Both blocks load every
+// register before any store, so the move entries share them for any
+// overlap, like the single block before.
 const mid_neon_tail =
     \\    .p2align 4
     \\    // Copy 65..128 bytes.
     \\.Lfm_sve_cpy65_128:
+    \\    cmp    x2, 96
+    \\    b.hi    .Lfm_sve_cpy97_128
+    \\.Lfm_sve_cpy65_96:
     \\    add    x4, x1, x2
     \\    add    x5, x0, x2
     \\    ldp    q0, q1, [x1]
     \\    ldp    q2, q3, [x4, -32]
     \\    ldp    q4, q5, [x1, 32]
-    \\    cmp    x2, 96
-    \\    b.ls    .Lfm_sve_cpy96n
+    \\    stp    q0, q1, [x0]
+    \\    stp    q4, q5, [x0, 32]
+    \\    stp    q2, q3, [x5, -32]
+    \\    ret
+    \\
+    \\    .p2align 4
+    \\    // Copy 97..128 bytes.
+    \\.Lfm_sve_cpy97_128:
+    \\    add    x4, x1, x2
+    \\    add    x5, x0, x2
+    \\    ldp    q0, q1, [x1]
+    \\    ldp    q2, q3, [x4, -32]
+    \\    ldp    q4, q5, [x1, 32]
     \\    ldp    q6, q7, [x4, -64]
     \\    stp    q6, q7, [x5, -64]
-    \\.Lfm_sve_cpy96n:
     \\    stp    q0, q1, [x0]
     \\    stp    q4, q5, [x0, 32]
     \\    stp    q2, q3, [x5, -32]
