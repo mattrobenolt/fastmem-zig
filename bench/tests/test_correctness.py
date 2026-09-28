@@ -418,4 +418,5 @@ def test_all_modes_flag(config: Config) -> None:
     ctx = click.Context(test_fleet)
     ctx.ensure_object(type("C", (), {}))
     params = {p.name: p for p in test_fleet.params}
-    assert "all_modes" in params and params["all_modes"].is_flag
+    assert "all_modes" in params
+    assert params["all_modes"].is_flag
