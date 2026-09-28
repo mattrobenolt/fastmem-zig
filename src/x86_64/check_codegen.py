@@ -465,7 +465,7 @@ if high_regs and cpu == "znver5":
     require(fill.count("vmovntdq") == 8, "Zen5 NT fill lacks eight stores")
     require(fill.count("sfence") == 1, "Zen5 NT fill must fence once")
     entry = "\n".join(i for _, i in body("x86_64.set.largeKernel"))
-    require("$0x2000000, %rdx" in entry, "Zen5 NT fill threshold differs from 32 MiB")
+    require("$0x3000000, %rdx" in entry, "Zen5 NT fill threshold differs from 48 MiB")
     require(not re.search(r"push|pop|call", entry), "Zen5 temporal fill acquired a frame")
 if cpu == "znver5":
     code = body("x86_64.move.largeKernel")

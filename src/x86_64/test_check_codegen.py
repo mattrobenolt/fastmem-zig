@@ -99,7 +99,7 @@ if cpu == "sapphirerapids" and variant != "entry":
 if cpu == "znver5" and variant != "entry":
     check(mutate("vpbroadcastb", "nop", "x86_64.set.streamGrouped"), [variant], "Zen5 NT fill must broadcast once")
     check(mutate("sfence", "nop", "x86_64.set.streamGrouped"), [variant], "set large path has wrong NT fence policy")
-    check(mutate("$0x2000000, %rdx", "$0x1000000, %rdx", "x86_64.set.largeKernel"), [variant], "Zen5 NT fill threshold")
+    check(mutate("$0x3000000, %rdx", "$0x2000000, %rdx", "x86_64.set.largeKernel"), [variant], "Zen5 NT fill threshold")
 check(mutate("%zmm", "%ymm"), [variant], "copy large path lacks %zmm")
 if variant == "ymm_medium":
     check(mutate("%ymm", "%zmm", "x86_64.move.kernel"), [variant], "lacks %ymm")
