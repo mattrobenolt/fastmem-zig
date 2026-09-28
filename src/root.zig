@@ -78,6 +78,8 @@ const move_impl_name: []const u8 = if (on_aarch64_sve)
         "aor-sve-5e20a93+small-hybrid+mid128-v1"
     else if (arm_tuning.move_small == .hybrid_n32)
         "aor-sve-5e20a93+small-hybrid-n32+mid128-v1"
+    else if (arm_tuning.move_small == .hybrid_ft)
+        "aor-sve-5e20a93+small-hybrid-ft+mid128-v1"
     else
         armName(@tagName(arm_tuning.move_small)) ++ "+midpair-v2"
 else if (on_x86)

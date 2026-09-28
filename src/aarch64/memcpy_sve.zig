@@ -347,12 +347,51 @@ fn head_hybrid_n32(comptime p: []const u8) []const u8 {
     , .{ p, p, p }) ++ std.fmt.comptimePrint(pair, .{ p, p });
 }
 
+// Hybrid head with the >= 16 class on the fall-through
+// (tuning.CopySmall.hybrid_ft): `b.lo` sends 0..15 to the out-of-line
+// tree, so 16..2*VL and the mid/long dispatch run with zero
+// predicted-taken branches in the head — glibc's __memmove_sve budget.
+// The price is one taken branch on the 1..3 class, which sits at
+// exactly 1.000x compiler-rt on c7g; p3-armc measured that shape at
+// 1.33x on V3 (docs/results/small-path-aarch64c.md). Untried on V1:
+// armg left it as the next measurement for the c7g move
+// disjoint/fwd-gap4096 96..128 rows (1.10-1.21x glibc in run
+// 20260927T162241Z-final-standard), where the tree-first head pays
+// cmp16/b.hs over glibc's entry. Fleet branch fleet3/armh-v1move-ft;
+// reject if the 1..3 rows break as predicted.
+fn head_hybrid_ft(comptime p: []const u8) []const u8 {
+    return std.fmt.comptimePrint(
+        \\    cmp    x2, 16
+        \\    b.lo    .Lfm_sve_{s}_tree
+        \\
+        \\    .p2align 4
+        \\.Lfm_sve_{s}_ge16:
+        \\    cntb    x6
+        \\    cmp    x2, 128
+        \\    b.hi    .Lfm_sve_cpy_long
+        \\    cmp    x2, x6, lsl 1
+        \\    b.hi    .Lfm_sve_cpy32_128
+        \\    whilelo p0.b, xzr, x2
+        \\    whilelo p1.b, x6, x2
+        \\    ld1b    z0.b, p0/z, [x1, 0, mul vl]
+        \\    ld1b    z1.b, p1/z, [x1, 1, mul vl]
+        \\    st1b    z0.b, p0, [x0, 0, mul vl]
+        \\    st1b    z1.b, p1, [x0, 1, mul vl]
+        \\    ret
+        \\
+        \\    .p2align 4
+        \\.Lfm_sve_{s}_tree:
+        \\
+    , .{ p, p, p }) ++ tree(p);
+}
+
 fn head(comptime v: tuning.CopySmall, comptime p: []const u8) []const u8 {
     return switch (v) {
         .sve => head_sve,
         .neon => head_neon(p),
         .hybrid => head_hybrid(p),
         .hybrid_n32 => head_hybrid_n32(p),
+        .hybrid_ft => head_hybrid_ft(p),
     };
 }
 
