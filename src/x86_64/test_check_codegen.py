@@ -89,8 +89,17 @@ if cpu in ("znver4", "znver5"):
 if cpu == "znver5":
     check(mutate("$0x10000, %rdx", "$0x100000, %rdx", "x86_64.move.largeKernel"),
           [variant], "move large thresholds")
-check(mutate("vmovntdq", "vmovdqa64"), [variant], "copy large path has wrong NT policy")
-check(mutate("sfence", "nop"), [variant], "copy large path has wrong NT fence policy")
+nt_symbol = "x86_64.ops.streamCopyPages" if cpu == "sapphirerapids" and variant != "entry" else "x86_64.move.copyLarge"
+fence_symbol = "x86_64.move.streamPages" if cpu == "sapphirerapids" and variant != "entry" else "x86_64.move.copyLarge"
+check(mutate("vmovntdq", "vmovdqa64", nt_symbol), [variant], "copy large path has wrong NT policy")
+check(mutate("sfence", "nop", fence_symbol), [variant], "copy large path has wrong NT fence policy")
+if cpu == "sapphirerapids" and variant != "entry":
+    check(mutate("prefetcht0", "nop", nt_symbol), [variant], "SPR NT tile lacks eight prefetches")
+    check(mutate("0x1000(", "0x2000(", nt_symbol), [variant], "SPR NT tile lacks its second page")
+if cpu == "znver5" and variant != "entry":
+    check(mutate("vpbroadcastb", "nop", "x86_64.set.streamGrouped"), [variant], "Zen5 NT fill must broadcast once")
+    check(mutate("sfence", "nop", "x86_64.set.streamGrouped"), [variant], "set large path has wrong NT fence policy")
+    check(mutate("$0x3000000, %rdx", "$0x2000000, %rdx", "x86_64.set.largeKernel"), [variant], "Zen5 NT fill threshold")
 check(mutate("%zmm", "%ymm"), [variant], "copy large path lacks %zmm")
 if variant == "ymm_medium":
     check(mutate("%ymm", "%zmm", "x86_64.move.kernel"), [variant], "lacks %ymm")

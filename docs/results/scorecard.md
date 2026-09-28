@@ -77,3 +77,13 @@ Baseline G6: c7i: copyFAIL, moveFAIL, setPASS | c8i: copyFAIL, moveFAIL, setPASS
 6. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
    0.89-1.03; set 0.44-1.12. The 0.90 target is met on x86 copy, not on the
    Gravitons.
+
+## Large NT, 2026-09-27 (largent, 13c9509)
+
+- c7i copy/move/disjoint 64 MiB vs glibc: 1.11-1.13 -> 1.00-1.01.
+- c8a set 64 MiB vs glibc: 1.39-1.40 -> 0.94; 48 MiB: 1.48-1.53 -> 1.15.
+- Zen 5 memset NT starts at 48 MiB (32 MiB loses to temporal 2.04x).
+- Remaining: c8a set 32-48 MiB 1.13-1.15 vs glibc (temporal; the Zen 5
+  temporal fill loses to glibc's 256 B/iteration loop; cause unverified).
+- c8a copy/page-offset 16 MiB 0.73 -> 0.86 vs glibc (changed with the
+  composite; still a win, watch it).

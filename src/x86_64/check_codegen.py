@@ -423,7 +423,17 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
         require("%ymm" not in text, f"{op} large path splits vectors")
     # x86_64_v4 is the untuned AVX-512 row of tuning.zig: no NT and no REP.
     fleet = cpu in ("sapphirerapids", "graniterapids", "znver4", "znver5")
-    nt = wide and fleet and (op != "set" or cpu in ("sapphirerapids", "graniterapids"))
+    nt = wide and fleet and (op != "set" or cpu != "znver4")
+    helpers = []
+    if high_regs and cpu == "sapphirerapids" and op != "set":
+        helpers = ["x86_64.move.streamPages", "x86_64.ops.streamCopyPages"]
+    elif high_regs and cpu == "znver5" and op == "set":
+        helpers = ["x86_64.set.streamGrouped"]
+    parent_text = text
+    for helper in helpers:
+        require(f"<{helper}>" in parent_text, f"{op} NT helper is unreachable: {helper}")
+        parent_text = "\n".join(i for _, i in body(helper))
+        text += "\n" + parent_text
     require(("vmovntdq" in text) == nt, f"{op} large path has wrong NT policy")
     require(("sfence" in text) == nt, f"{op} large path has wrong NT fence policy")
     rep = "stosb" if op == "set" else "movsb"
@@ -442,6 +452,21 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
                 expected.append(65536 if policy["source_64"] else 0xc00001)
         require(limits == expected, f"{op} large thresholds {limits} differ from {expected}")
         large_paths[op]["length_thresholds"] = limits
+if high_regs and cpu == "sapphirerapids":
+    tile = "\n".join(i for _, i in body("x86_64.ops.streamCopyPages"))
+    require(tile.count("vmovntdq") == 8, "SPR NT tile lacks eight stores")
+    require(tile.count("prefetcht0") == 8, "SPR NT tile lacks eight prefetches")
+    require("0x1000(" in tile and "0x10c0(" in tile, "SPR NT tile lacks its second page")
+    require("sfence" not in tile, "SPR NT tile fences each tile")
+    require(not re.search(r"vzeroupper|push|pop", tile), "SPR NT tile has frame or cleanup")
+if high_regs and cpu == "znver5":
+    fill = "\n".join(i for _, i in body("x86_64.set.streamGrouped"))
+    require(fill.count("vpbroadcastb") == 1, "Zen5 NT fill must broadcast once")
+    require(fill.count("vmovntdq") == 8, "Zen5 NT fill lacks eight stores")
+    require(fill.count("sfence") == 1, "Zen5 NT fill must fence once")
+    entry = "\n".join(i for _, i in body("x86_64.set.largeKernel"))
+    require("$0x3000000, %rdx" in entry, "Zen5 NT fill threshold differs from 48 MiB")
+    require(not re.search(r"push|pop|call", entry), "Zen5 temporal fill acquired a frame")
 if cpu == "znver5":
     code = body("x86_64.move.largeKernel")
     check_nt_frame(code)

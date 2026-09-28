@@ -66,6 +66,17 @@ def test_zero_cases_failure_is_valid() -> None:
     )
 
 
+def test_zen5_ceiling_covers_both_nt_paths() -> None:
+    assert c.default_max_size("znver5") == 33 * c.MIB
+    assert c.default_max_size("znver4") == 16 * c.MIB
+    counts = c.expected_counts(33 * c.MIB, has_set=True)
+    assert counts == c.expected_counts(16 * c.MIB, has_set=True)
+    assert sum(counts.values()) == 28_047_948
+    # Old summaries cannot silently pass without NT coverage.
+    with pytest.raises(ValueError, match="size ceiling mismatch"):
+        c.parse_summary(json.dumps(record("znver5", max_size=16 * c.MIB)), "znver5")
+
+
 def test_cpu_contract() -> None:
     assert c.cpus({"zig_target": "x86_64-linux-gnu", "zig_cpu": "znver5"}) == {
         "target": "znver5",
@@ -265,7 +276,7 @@ def test_jsonless_death_keeps_exit_status(tmp_path: Path, exit_status: int) -> N
     ("cpu", "mib"),
     [
         ("znver4", 16),
-        ("znver5", 16),
+        ("znver5", 33),
         ("sapphirerapids", 67),
         ("graniterapids", 302),
         ("generic", 1),

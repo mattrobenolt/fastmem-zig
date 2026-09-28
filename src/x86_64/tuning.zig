@@ -46,12 +46,18 @@ const defaults: Tuning = if (builtin.cpu.model == &cpu.sapphirerapids) .{
     .nt_min = 0x2000000,
     .fwd_source_min = 0xc00001,
     .copy_source_min = 65536,
+    // Keep the measured temporal path through 16 MiB. Fleet acceptance is pending.
+    .memset_nt_min = 0x3000000,
 } else if (builtin.cpu.model == &cpu.skylake_avx512 or
     builtin.cpu.model == &cpu.cascadelake or
     builtin.cpu.model == &cpu.icelake_client or
     builtin.cpu.model == &cpu.icelake_server) .{
     .vec = 32,
 } else .{};
+
+// The independent two-page NT candidate is confined to Sapphire Rapids.
+pub const nt_copy_pages = builtin.cpu.model == &cpu.sapphirerapids and avx512;
+pub const nt_set_grouped = builtin.cpu.model == &cpu.znver5 and avx512;
 
 pub const selected: Tuning = .{
     .vec = options.x86_vec orelse defaults.vec,

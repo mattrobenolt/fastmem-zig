@@ -73,6 +73,23 @@ def test_rejects_nested_and_cross_field_errors(tmp_path: Path, mutation: str) ->
         parse_text(text)
 
 
+@pytest.mark.parametrize("size", [24 << 20, 32 << 20, 48 << 20])
+@pytest.mark.parametrize("op", ["copy", "set"])
+def test_large_threshold_sizes_are_fill_only(tmp_path: Path, size: int, op: str) -> None:
+    path = tmp_path / "r.jsonl"
+    measurement(path, size=size, schema=2)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[0].update(suite="large", fastmem_set=True)
+    for row in records[1:-1]:
+        row.update(op=op, case=f"{op}/aligned/{size}")
+    text = "\n".join(map(json.dumps, records))
+    if op == "set":
+        assert parse_text(text).end["cases"] == 1
+    else:
+        with pytest.raises(ValueError, match="Fixed case is outside"):
+            parse_text(text)
+
+
 def test_ref_cycles_fallback_retains_primary_counts(tmp_path: Path) -> None:
     path = tmp_path / "r.jsonl"
     measurement(path)
