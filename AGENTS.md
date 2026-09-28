@@ -97,6 +97,15 @@ its builds dispatch at run time to the level named by `zig_cpu`. All
   `src/export/check_kernel_bytes.py` in the same commit, on purpose.
 - Fleet scripts tear down only the targets that they launched. `bench down
   --all` stops every run on the fleet.
+- Correctness on a variant runs ReleaseFast. Debug and ReleaseSafe run on
+  main, and once per merge wave with `bench test --all-modes`. The
+  kernel-bytes pin (`zig build test-export`) proves a variant's kernels
+  are unchanged, so per-variant modes are redundant.
+- A lane's review runs at the same time as its fleet correctness gate, not
+  after it. Only the merge waits for both.
+- A fleet run needs a watcher: launch a delegate subagent that runs
+  `bench watch <run-dir>` (it exits when summary.json exists) and report.
+  Its completion wakes the parent. Do not poll in the parent session.
 
 ## Git
 
