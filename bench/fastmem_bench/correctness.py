@@ -65,7 +65,7 @@ MIB = 1024 * 1024
 
 
 def default_max_size(cpu: str) -> int:
-    return {"znver4": 16, "znver5": 33, "sapphirerapids": 67, "graniterapids": 302}.get(
+    return {"znver4": 16, "znver5": 65, "sapphirerapids": 67, "graniterapids": 302}.get(
         cpu, 1
     ) * MIB
 

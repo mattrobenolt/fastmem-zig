@@ -45,8 +45,8 @@ const default_max_size: u32 = ceiling: {
     if (builtin.cpu.arch == .x86_64) {
         const model = builtin.cpu.model;
         if (model == &std.Target.x86.cpu.znver4) break :ceiling 16 * mib;
-        // Both Zen 5 NT thresholds are 32 MiB. Exercise each path above that boundary.
-        if (model == &std.Target.x86.cpu.znver5) break :ceiling 33 * mib;
+        // Zen 5 memset NTs above 48 MiB; cover both sides.
+        if (model == &std.Target.x86.cpu.znver5) break :ceiling 65 * mib;
         if (model == &std.Target.x86.cpu.sapphirerapids) break :ceiling 67 * mib;
         if (model == &std.Target.x86.cpu.graniterapids) break :ceiling 302 * mib;
     }
