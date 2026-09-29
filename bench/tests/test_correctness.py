@@ -68,7 +68,7 @@ def test_zero_cases_failure_is_valid() -> None:
 
 
 def test_zen5_ceiling_covers_both_nt_paths() -> None:
-    assert c.default_max_size("znver5") == 33 * c.MIB
+    assert c.default_max_size("znver5") == 65 * c.MIB
     assert c.default_max_size("znver4") == 16 * c.MIB
     counts = c.expected_counts(65 * c.MIB, has_set=True)
     assert counts == c.expected_counts(16 * c.MIB, has_set=True)
@@ -277,7 +277,7 @@ def test_jsonless_death_keeps_exit_status(tmp_path: Path, exit_status: int) -> N
     ("cpu", "mib"),
     [
         ("znver4", 16),
-        ("znver5", 33),
+        ("znver5", 65),
         ("sapphirerapids", 67),
         ("graniterapids", 302),
         ("generic", 1),
