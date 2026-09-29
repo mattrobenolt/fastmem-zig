@@ -65,26 +65,34 @@ Baseline G6: c7i: copyFAIL, moveFAIL, setPASS | c8i: copyFAIL, moveFAIL, setPASS
 
 ## Open gaps (next work, ordered)
 
-1. Large NT paths (lane largent): c7i copy/move 64 MiB 1.11-1.13 vs glibc;
-   c8a set 64 MiB 1.37-1.38 vs glibc.
-2. c8i copy 65-256 B 1.17 and move 65-256 B 1.06; set 65-256 1.06; c8a set
+1. c8i copy 65-256 B 1.17 and move 65-256 B 1.06; set 65-256 1.06; c8a set
    65-256 1.12; c7a set 65-256 1.03; c7i copy 257-1K 1.06.
-3. Baseline builds vs glibc 65-256 B: 1.13-1.60 (the level-entry ladder; the
+2. Baseline builds vs glibc 65-256 B: 1.13-1.60 (the level-entry ladder; the
    x86f dispatch candidate that lowered the stub limit lost).
-4. c7a 0-16 B move vs compiler-rt 1.20; c7a/c8a set 0-16 vs compiler-rt
+3. c7a 0-16 B move vs compiler-rt 1.20; c7a/c8a set 0-16 vs compiler-rt
    0.74-0.92; c7g/c8g/c9g set 0-16 baseline vs glibc 1.00-1.14.
-5. c7a A/A p90 11.9%: its noisiness remains.
-6. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
+4. c7a A/A p90 11.9%: its noisiness remains.
+5. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
    0.89-1.03; set 0.44-1.12. The 0.90 target is met on x86 copy, not on the
    Gravitons. c7g move fwd-gap31 16-31 B vs compiler-rt (1.74-1.77): the V1
    hybrid head; the two fixes trade away other rows, so it stays open.
+
+## Zen 5 memset NT gate, 2026-09-28 (x86h-set48, a07cd08)
+
+- x86h measured temporal vs NT for the znver5 memset at 32, 48, and 64 MiB:
+  temporal wins all three. The znver5 memset never uses NT now (the largent
+  48 MiB NT switch is reverted); c8a set 32-48 MiB vs glibc is closed.
+- The dispatch table expects nt: False for the znver5 set large policy
+  (57ee94d).
+- Rejected in the same lane: a lowered dispatch stub limit and a zen4
+  variant (both lost on the fleet; second rejection for each).
 
 ## Large NT, 2026-09-27 (largent, 13c9509)
 
 - c7i copy/move/disjoint 64 MiB vs glibc: 1.11-1.13 -> 1.00-1.01.
 - c8a set 64 MiB vs glibc: 1.39-1.40 -> 0.94; 48 MiB: 1.48-1.53 -> 1.15.
 - Zen 5 memset NT starts at 48 MiB (32 MiB loses to temporal 2.04x).
-- Remaining: c8a set 32-48 MiB 1.13-1.15 vs glibc (temporal; the Zen 5
-  temporal fill loses to glibc's 256 B/iteration loop; cause unverified).
+  Superseded by x86h-set48: temporal wins at 48 and 64 MiB too, so the
+  znver5 memset never uses NT.
 - c8a copy/page-offset 16 MiB 0.73 -> 0.86 vs glibc (changed with the
   composite; still a win, watch it).
