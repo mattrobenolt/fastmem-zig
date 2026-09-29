@@ -331,7 +331,7 @@ POLICY = {
     "sapphirerapids": _INTEL,
     "graniterapids": _INTEL,
     "znver4": _AMD,
-    "znver5": {"move": {"rep": False, "nt": True}, "set": {"rep": False, "nt": True}},
+    "znver5": {"move": {"rep": False, "nt": True}, "set": {"rep": False, "nt": False}},  # a07cd08 gates the znver5 no-NT memset
     "x86_64_v3": _NONE,
     "x86_64_v4": _NONE,
 }
