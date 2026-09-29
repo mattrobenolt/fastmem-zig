@@ -47,7 +47,7 @@ const defaults: Tuning = if (builtin.cpu.model == &cpu.sapphirerapids) .{
     .fwd_source_min = 0xc00001,
     .copy_source_min = 65536,
     // Keep the measured temporal path through 16 MiB. Fleet acceptance is pending.
-    .memset_nt_min = 0x3000000,
+    .memset_nt_min = null,
 } else if (builtin.cpu.model == &cpu.skylake_avx512 or
     builtin.cpu.model == &cpu.cascadelake or
     builtin.cpu.model == &cpu.icelake_client or
