@@ -163,7 +163,8 @@ G5. The export layer.
 - The exported functions contain no branch to their own entry, and they
   do not appear in `.dynsym`. Binary tests prove it.
 - The Zig standard library tests and one real project (handoff) pass
-  with the export layer active.
+  with the export layer active. Met 2026-09-30: handoff and a second
+  project ship fastmem in production (Matt).
 
 G6. Portable builds. A baseline build (`-Dcpu=x86_64` (= baseline) on x86_64, which
 has no AVX2, and `-Dcpu=generic` on aarch64) is not slower than
