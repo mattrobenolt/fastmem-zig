@@ -74,8 +74,28 @@ Baseline G6: c7i: copyFAIL, moveFAIL, setPASS | c8i: copyFAIL, moveFAIL, setPASS
 4. c7a A/A p90 11.9%: its noisiness remains.
 5. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
    0.89-1.03; set 0.44-1.12. The 0.90 target is met on x86 copy, not on the
-   Gravitons. c7g move fwd-gap31 16-31 B vs compiler-rt (1.74-1.77): the V1
-   hybrid head; the two fixes trade away other rows, so it stays open.
+   Gravitons (plan amended to a per-arch target 2026-09-29).
+6. c7g copy/aligned|page-offset 128 B is bimodal on main itself (2.71 vs
+   3.08 ns slots; armi gate, 20260930T014016Z): its G2 mark flips run to
+   run without any code change. Treat a c7g 128 B copy flag as a rerun
+   request, not a regression.
+
+## armi, 2026-09-30 (rejected)
+
+- c7g move fwd-gap31 16-31 B vs compiler-rt (1.74-1.77): closed by proof,
+  not code. glibc's fast case is 2.31 ns = fastmem's current cost on the
+  other rows; every reroute lands a passing row at 1.17-1.26x glibc, and
+  every separating gate costs the stay-SVE rows more than their zero
+  margin. Third rejection after neon32 and v1move-ft; stop trying.
+- v1mid (V1 comptime-VL mid path): rejected twice over. Correctness:
+  truncates 33..64 copies at VL=16 and over-reads in hybrid_n32/ft
+  (reproduced natively on a V3 host with sve_default_vector_length=16;
+  same trap as the reverted p3-armc). Fleet: 96 B rows win 11-13% but
+  move/fwd-half/256 loses 35% and the bwd 768s lose 7-12%.
+- set-split (generic memset 4..15 split at 8): clean code, but regresses
+  the box it targeted (c8g baseline set 1..7 +11-14%; c7g dist/small
+  +14%). c9g 4..15 wins 14%; not worth the trade. Rejected.
+- Baseline set 0-16 vs glibc on the Gravitons stays open (1.00-1.14).
 
 ## Zen 5 memset NT gate, 2026-09-28 (x86h-set48, a07cd08)
 
