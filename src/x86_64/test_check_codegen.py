@@ -96,10 +96,6 @@ check(mutate("sfence", "nop", fence_symbol), [variant], "copy large path has wro
 if cpu == "sapphirerapids" and variant != "entry":
     check(mutate("prefetcht0", "nop", nt_symbol), [variant], "SPR NT tile lacks eight prefetches")
     check(mutate("0x1000(", "0x2000(", nt_symbol), [variant], "SPR NT tile lacks its second page")
-if cpu == "znver5" and variant != "entry":
-    check(mutate("vpbroadcastb", "nop", "x86_64.set.streamGrouped"), [variant], "Zen5 NT fill must broadcast once")
-    check(mutate("sfence", "nop", "x86_64.set.streamGrouped"), [variant], "set large path has wrong NT fence policy")
-    check(mutate("vmovntdq", "vmovdqa64", "x86_64.set.streamGrouped"), [variant], "Zen5 NT fill stores")
 check(mutate("%zmm", "%ymm"), [variant], "copy large path lacks %zmm")
 if variant == "ymm_medium":
     check(mutate("%ymm", "%zmm", "x86_64.move.kernel"), [variant], "lacks %ymm")

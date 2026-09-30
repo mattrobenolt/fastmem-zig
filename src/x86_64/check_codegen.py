@@ -433,12 +433,13 @@ for op, name in (("copy", "x86_64.move.copyLarge"),
         require("%ymm" not in text, f"{op} large path splits vectors")
     # x86_64_v4 is the untuned AVX-512 row of tuning.zig: no NT and no REP.
     fleet = cpu in ("sapphirerapids", "graniterapids", "znver4", "znver5")
-    nt = wide and fleet and (op != "set" or cpu != "znver4")
+    # znver4 and znver5 sets are never NT (x86h-set48: temporal wins at
+    # 32/48/64 MiB on Zen 5; Zen 4 never had an NT set).
+    nt = wide and fleet and (op != "set" or cpu not in ("znver4", "znver5"))
     helpers = []
     if high_regs and cpu == "sapphirerapids" and op != "set":
         helpers = ["x86_64.move.streamPages", "x86_64.ops.streamCopyPages"]
-    elif high_regs and cpu == "znver5" and op == "set":
-        helpers = ["x86_64.set.streamGrouped"]
+
     parent_text = text
     for helper in helpers:
         require(f"<{helper}>" in parent_text, f"{op} NT helper is unreachable: {helper}")
@@ -470,10 +471,6 @@ if high_regs and cpu == "sapphirerapids":
     require("sfence" not in tile, "SPR NT tile fences each tile")
     require(not re.search(r"vzeroupper|push|pop", tile), "SPR NT tile has frame or cleanup")
 if high_regs and cpu == "znver5":
-    fill = "\n".join(i for _, i in body("x86_64.set.streamGrouped"))
-    require(fill.count("vpbroadcastb") == 1, "Zen5 NT fill must broadcast once")
-    require(fill.count("vmovntdq") == 8, "Zen5 NT fill lacks eight stores")
-    require(fill.count("sfence") == 1, "Zen5 NT fill must fence once")
     entry = "\n".join(i for _, i in body("x86_64.set.largeKernel"))
     # Zen 5 memset is always temporal (x86h-set48, 2026-09-29): no NT switch.
     require("vmovntdq" not in entry, "Zen5 fill must not use NT stores")
