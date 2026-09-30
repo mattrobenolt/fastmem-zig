@@ -141,6 +141,13 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
     )
     seed = secrets.randbits(32)
     sources = resolve(config, revisions, x86_experiment)
+    for source in sources:
+        if source.experiment != x86_experiment:
+            click.echo(
+                f"note: {source.revision} does not declare {x86_experiment};"
+                " it builds its own default",
+                err=True,
+            )
     variants = [source.variant for source in sources]
     schedule = orders([*variants, *([] if no_aa else ["aa"])], rounds, seed)
     manifest.update(

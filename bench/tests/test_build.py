@@ -42,3 +42,13 @@ def test_experiment_enters_build_args_and_cache_key(tmp_path: Path) -> None:
     exp = Source("v0", "WORKTREE", tmp_path, "hash", "x86i_chunks")
     assert exp.experiment == "x86i_chunks"
     assert exp != plain
+
+
+def test_undeclared_experiment_falls_back(tmp_path: Path) -> None:
+    from fastmem_bench.build import declares_experiment
+
+    (tmp_path / "build.zig").write_text('// enum: auto, none, "x86i_chunks"')
+    assert declares_experiment(tmp_path, "auto")
+    assert declares_experiment(tmp_path, "x86i_chunks")
+    assert not declares_experiment(tmp_path, "x86i_mask16")
+    assert not declares_experiment(tmp_path / "missing", "x86i_chunks")

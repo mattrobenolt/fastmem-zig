@@ -79,7 +79,10 @@ def resolve(
             if git(path, "status", "--porcelain"):
                 raise ValueError(f"Cached source worktree is dirty: {path}")
             digest = sha
-        sources.append(Source(f"v{index}", revision, path, digest, experiment))
+        # Experiments are branch-local: a revision that predates the
+        # experiment builds its own default, and the manifest shows it.
+        effective = experiment if declares_experiment(path, experiment) else "auto"
+        sources.append(Source(f"v{index}", revision, path, digest, effective))
     return sources
 
 
@@ -130,6 +133,18 @@ def supports_dispatch(source: Path) -> bool:
     """The revision has runtime dispatch: its build declares the x86-dispatch option."""
     build = source / "build.zig"
     return build.is_file() and '"x86-dispatch"' in build.read_text()
+
+
+def declares_experiment(source: Path, experiment: str) -> bool:
+    """The revision's build declares this x86-experiment enum value.
+
+    Experiments are branch-local: a baseline revision that predates the
+    experiment must build with its own default instead of failing.
+    """
+    if experiment == "auto":
+        return True
+    build = source / "build.zig"
+    return build.is_file() and f'"{experiment}"' in build.read_text()
 
 
 def check_dispatch_build(

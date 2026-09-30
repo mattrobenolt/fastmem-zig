@@ -295,7 +295,9 @@ bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dis
 - `--x86-experiment` passes `-Dx86-experiment` to every source build
   (default `auto`: the per-model tuning table). Use it to A/B an opt-in
   experiment without flipping the table; the build cache keys on it and
-  the manifest records it per source.
+  the manifest records it per source. Experiments are branch-local: a
+  revision whose build does not declare the value builds its own
+  default, with a note on stderr and in the manifest.
 - `--target` defaults to all targets with a running instance.
 - `--rounds` defaults to 5.
 - `--cpu target` (the default) builds with `zig_cpu`. `--cpu baseline`
