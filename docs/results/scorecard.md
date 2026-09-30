@@ -65,13 +65,31 @@ Baseline G6: c7i: copyFAIL, moveFAIL, setPASS | c8i: copyFAIL, moveFAIL, setPASS
 
 ## Open gaps (next work, ordered)
 
-1. c8i copy 65-256 B 1.17 and move 65-256 B 1.06; set 65-256 1.06; c8a set
-   65-256 1.12; c7a set 65-256 1.03; c7i copy 257-1K 1.06.
+1. c8i copy 65-256 B 1.11-1.17 and move 65-256 B 1.06; set 65-256 1.06;
+   c8a set 65-256 1.12; c7a set 65-256 1.03; c7i copy 257-1K 1.06.
+   x86i's three candidates all lost on the fleet (below); the tier may be
+   at a structural floor against glibc's avx512 loop shape.
 2. Baseline builds vs glibc 65-256 B: 1.13-1.60 (the level-entry ladder; the
    x86f dispatch candidate that lowered the stub limit lost).
 3. c7a 0-16 B move vs compiler-rt 1.20; c7a/c8a set 0-16 vs compiler-rt
    0.74-0.92; c7g/c8g/c9g set 0-16 baseline vs glibc 1.00-1.14.
 4. c7a A/A p90 11.9%: its noisiness remains.
+
+## x86i, 2026-09-30 (all three candidates rejected)
+
+Runs: 20260930T050203Z-x86i-gate2 (default; .text byte-identical to main on
+all 7 targets — the zero-drift rework held), 062445Z chunks, 072023Z
+endpairs, 080840Z mask16. Candidate detail: docs/results/x86i-candidates.md.
+
+- x86i_chunks: no win on any targeted tier (c8i copy 65-256 1.149 vs main
+  1.112; c7a set 65-256 +2.9%). Rejected.
+- x86i_endpairs: c8i copy 0-16 +26% and 65-256 worse (1.162 vs 1.111).
+  Rejected.
+- x86i_mask16: c7a move 0-16 abi 2.09x (the masked memmove path is 2x
+  slower through the C ABI on Zen 4; inline unaffected). Rejected.
+- Harness: `bench run --x86-experiment` now passes -Dx86-experiment per
+  source with a declared-value fallback (11403d0, 42976fc), so future
+  experiment lanes need no scratch tuning flips.
 5. G4 dist/small: copy 0.33-0.94 except c7g 1.07 and c8g 1.01; move
    0.89-1.03; set 0.44-1.12. The 0.90 target is met on x86 copy, not on the
    Gravitons (plan amended to a per-arch target 2026-09-29).
