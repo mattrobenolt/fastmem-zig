@@ -144,7 +144,8 @@ def declares_experiment(source: Path, experiment: str) -> bool:
     if experiment == "auto":
         return True
     build = source / "build.zig"
-    return build.is_file() and f'"{experiment}"' in build.read_text()
+    # Zig enum fields are bare identifiers: x86i_chunks, not "x86i_chunks".
+    return build.is_file() and re.search(rf"\b{re.escape(experiment)}\b", build.read_text())
 
 
 def check_dispatch_build(
