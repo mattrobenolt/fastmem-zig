@@ -53,6 +53,12 @@ from fastmem_bench.report import stability_line, write
 @click.option("--filter", "case_filter", default=None, help="Case substring passed to the binary.")
 @click.option("--impl", default=None, help="Comma-separated implementations passed to the binary.")
 @click.option("--dist-file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--x86-experiment",
+    default="auto",
+    show_default=True,
+    help="-Dx86-experiment for every source in the run (x86_64 only).",
+)
 @click.option("--samples", type=click.IntRange(min=1), default=None)
 @click.option("--sample-ms", type=click.IntRange(min=1), default=None)
 @click.option(
@@ -79,6 +85,7 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
     sample_ms: int | None,
     minimum_effect: float | None,
     dist_file: Path | None = None,
+    x86_experiment: str = "auto",
 ) -> None:
     """Cross-build revisions and measure interleaved rounds across the fleet."""
     effect = (
@@ -133,7 +140,7 @@ def run(  # noqa: C901, PLR0912, PLR0915 — orchestration keeps the experiment 
         results_dir=config.results_dir,
     )
     seed = secrets.randbits(32)
-    sources = resolve(config, revisions)
+    sources = resolve(config, revisions, x86_experiment)
     variants = [source.variant for source in sources]
     schedule = orders([*variants, *([] if no_aa else ["aa"])], rounds, seed)
     manifest.update(

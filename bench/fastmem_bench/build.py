@@ -26,6 +26,8 @@ class Source:
     revision: str
     path: Path
     source_hash: str
+    # -Dx86-experiment for this source; "auto" is the per-model default.
+    experiment: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,9 @@ def source_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
-def resolve(config: Config, revisions: tuple[str, ...]) -> list[Source]:
+def resolve(
+    config: Config, revisions: tuple[str, ...], experiment: str = "auto"
+) -> list[Source]:
     sources = []
     for index, revision in enumerate(revisions):
         if revision == "WORKTREE":
@@ -75,7 +79,7 @@ def resolve(config: Config, revisions: tuple[str, ...]) -> list[Source]:
             if git(path, "status", "--porcelain"):
                 raise ValueError(f"Cached source worktree is dirty: {path}")
             digest = sha
-        sources.append(Source(f"v{index}", revision, path, digest))
+        sources.append(Source(f"v{index}", revision, path, digest, experiment))
     return sources
 
 
@@ -181,6 +185,7 @@ def build_all(
             "ReleaseFast",
             True,
             "codegen-v1",
+            source.experiment,
         ]
         key = hashlib.sha256(json.dumps(key_data).encode()).hexdigest()
         prefix = config.cache_dir / "build" / key
@@ -200,6 +205,8 @@ def build_all(
                     "--prefix",
                     str(temporary),
                 ]
+                if source.experiment != "auto":
+                    args.append(f"-Dx86-experiment={source.experiment}")
                 completed = subprocess.run(
                     args, cwd=source.path, capture_output=True, text=True, timeout=1200, check=False
                 )
@@ -332,6 +339,7 @@ def provenance(sources: list[Source], results: dict[str, Outcome[Build]]) -> dic
                 "revision": source.revision,
                 "hash": source.source_hash,
                 "path": str(source.path),
+                "experiment": source.experiment,
             }
             for source in sources
         ],

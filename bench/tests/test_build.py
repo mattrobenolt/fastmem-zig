@@ -32,3 +32,13 @@ def test_disassembly_missing_symbols_warns(tmp_path: Path, monkeypatch: pytest.M
     destination = tmp_path / "asm/v0.asm"
     assert "missing disassembly symbols" in (disassemble(build, destination) or "")
     assert destination.with_suffix(".warning.txt").is_file()
+
+
+def test_experiment_enters_build_args_and_cache_key(tmp_path: Path) -> None:
+    from fastmem_bench.build import Source
+
+    plain = Source("v0", "WORKTREE", tmp_path, "hash")
+    assert plain.experiment == "auto"
+    exp = Source("v0", "WORKTREE", tmp_path, "hash", "x86i_chunks")
+    assert exp.experiment == "x86i_chunks"
+    assert exp != plain

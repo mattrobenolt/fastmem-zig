@@ -286,12 +286,16 @@ Command: `bench run`.
 bench run [--rev REV]... [--target T]... [--suite quick|standard|large|const|dist]
           [--rounds N] [--cpu target|baseline] [--no-aa] [--up] [--label L]
           [--filter S] [--impl a,b] [--samples N] [--sample-ms M]
-          [--minimum-effect F] [--dist-file PATH]
+          [--minimum-effect F] [--dist-file PATH] [--x86-experiment E]
 ```
 
 - `--rev` names a git revision. `WORKTREE` names the current working
   tree, uncommitted edits included. The default is `WORKTREE` only.
   With two or more revisions, the first revision is the baseline.
+- `--x86-experiment` passes `-Dx86-experiment` to every source build
+  (default `auto`: the per-model tuning table). Use it to A/B an opt-in
+  experiment without flipping the table; the build cache keys on it and
+  the manifest records it per source.
 - `--target` defaults to all targets with a running instance.
 - `--rounds` defaults to 5.
 - `--cpu target` (the default) builds with `zig_cpu`. `--cpu baseline`
