@@ -2,7 +2,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const simd = std.simd;
 const math = std.math;
-const builtin = @import("builtin");
 
 /// Native vector width in bytes for the generic fallback, capped at 32 B.
 /// The dedicated x86_64 and aarch64 kernels choose their own widths.
@@ -92,7 +91,12 @@ pub inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize)
 }
 
 /// Store `count` contiguous vectors starting at `ptr + off`.
-pub inline fn storeVN(comptime count: comptime_int, ptr: [*]u8, off: usize, vecs: [count]Chunk) void {
+pub inline fn storeVN(
+    comptime count: comptime_int,
+    ptr: [*]u8,
+    off: usize,
+    vecs: [count]Chunk,
+) void {
     @disableIntrinsics();
     inline for (0..count) |i| {
         storeV(ptr + off + chunk_bytes * i, vecs[i]);

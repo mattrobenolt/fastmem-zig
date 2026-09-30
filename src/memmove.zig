@@ -21,7 +21,8 @@ const flags: Flags = .{
     .move_bwd_peel_min_strides = 2,
 };
 
-pub const move_forward_align_peel_min: usize = @max(common.stride * 2, flags.move_fwd_peel_min_bytes);
+pub const move_forward_align_peel_min: usize =
+    @max(common.stride * 2, flags.move_fwd_peel_min_bytes);
 pub const move_backward_align_peel_min = flags.move_bwd_peel_min_strides * common.stride;
 
 const forward_options: forward.Options = .{
@@ -76,7 +77,11 @@ pub inline fn move(comptime T: type, dest: []T, source: []const T) void {
         const end_base = @intFromPtr(d);
         const end_misalignment = (end_base + remaining) & mask;
         if (end_misalignment > 0) {
-            common.copySmall(d + remaining - end_misalignment, s + remaining - end_misalignment, end_misalignment);
+            common.copySmall(
+                d + remaining - end_misalignment,
+                s + remaining - end_misalignment,
+                end_misalignment,
+            );
             remaining -= end_misalignment;
         }
     }
@@ -98,7 +103,12 @@ inline fn copyLargeBackward(dest: [*]u8, src: [*]const u8, len: usize) void {
         while (remaining >= common.stride) {
             d -= common.stride;
             s -= common.stride;
-            common.storeVN(common.vectors_per_stride, d, 0, common.loadVN(common.vectors_per_stride, s, 0));
+            common.storeVN(
+                common.vectors_per_stride,
+                d,
+                0,
+                common.loadVN(common.vectors_per_stride, s, 0),
+            );
             remaining -= common.stride;
         }
         if (remaining > 0) common.copySmall(dest, src, remaining);
@@ -106,7 +116,12 @@ inline fn copyLargeBackward(dest: [*]u8, src: [*]const u8, len: usize) void {
         var off = len;
         while (off >= common.stride) {
             off -= common.stride;
-            common.storeVN(common.vectors_per_stride, dest + off, 0, common.loadVN(common.vectors_per_stride, src + off, 0));
+            common.storeVN(
+                common.vectors_per_stride,
+                dest + off,
+                0,
+                common.loadVN(common.vectors_per_stride, src + off, 0),
+            );
         }
         if (off > 0) common.copySmall(dest, src, off);
     }

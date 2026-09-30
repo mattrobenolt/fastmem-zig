@@ -26,7 +26,12 @@ pub inline fn run(
     // Keep the exact hot tiers out of the generic loop so the common
     // benchmarked sizes do not pay extra branch/update overhead.
     if (remaining == common.stride) {
-        common.storeVN(common.vectors_per_stride, d, 0, common.loadVN(common.vectors_per_stride, s, 0));
+        common.storeVN(
+            common.vectors_per_stride,
+            d,
+            0,
+            common.loadVN(common.vectors_per_stride, s, 0),
+        );
         return;
     }
     // The 2-stride exact tier is a win on 16-byte-vector targets, but it
@@ -44,7 +49,12 @@ pub inline fn run(
     // All loads complete before any stores — safe for overlapping regions.
     if (options.medium_straight_line) {
         if (remaining <= common.stride) {
-            common.storeVN(common.vectors_per_stride, d, 0, common.loadVN(common.vectors_per_stride, s, 0));
+            common.storeVN(
+                common.vectors_per_stride,
+                d,
+                0,
+                common.loadVN(common.vectors_per_stride, s, 0),
+            );
             return;
         }
         if (remaining <= common.stride * 2) {
@@ -89,7 +99,12 @@ inline fn copyLargeForward(
         var s = src;
         var remaining = len;
         while (remaining >= common.stride) {
-            common.storeVN(common.vectors_per_stride, d, 0, common.loadVN(common.vectors_per_stride, s, 0));
+            common.storeVN(
+                common.vectors_per_stride,
+                d,
+                0,
+                common.loadVN(common.vectors_per_stride, s, 0),
+            );
             d += common.stride;
             s += common.stride;
             remaining -= common.stride;
@@ -101,7 +116,12 @@ inline fn copyLargeForward(
         // body smaller.
         var off: usize = 0;
         while (off + common.stride <= len) : (off += common.stride) {
-            common.storeVN(common.vectors_per_stride, dest + off, 0, common.loadVN(common.vectors_per_stride, src + off, 0));
+            common.storeVN(
+                common.vectors_per_stride,
+                dest + off,
+                0,
+                common.loadVN(common.vectors_per_stride, src + off, 0),
+            );
         }
         const remaining = len - off;
         if (remaining > 0) common.copySmall(dest + off, src + off, remaining);
