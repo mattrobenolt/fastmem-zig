@@ -145,13 +145,17 @@ cases.)
 
 G4. The inline advantage.
 - On the small-size distribution (`dist/small`), `fastmem_inline / glibc`
-  is 0.90 or less on every target.
+  is 0.90 or less on x86 targets and 0.95 or less on Graviton targets.
 - For every comptime-known size from 1 to 256 bytes, `fastmem.copy`,
   `move`, and `set` generate no call (binary test) and are not slower than
   the builtin with the same comptime size (same margin rule as G3).
-- The 0.90 value is a target that no measurement supports yet. The
-  baseline (P1d) and the first inline prototype decide if it is
-  realistic. A change to it needs a new plan entry with the evidence.
+- Amendment 2026-09-29: the 0.90 target was uniform. The fleet measures
+  0.33-0.85 on x86 (met) and 0.94-1.12 on the Gravitons. The Graviton
+  residual is structural: the branch-mispredict hypothesis died on
+  perf-event counts, and the kernels are at parity with glibc above 64 B,
+  so what remains is the fixed cost of the inline path on those parts.
+  Matt approved the per-arch split (0.90 x86, 0.95 Graviton). Evidence:
+  `docs/results/scorecard.md` (runs 20260927T162241Z and 171003Z).
 
 G5. The export layer.
 - With `fastmem.exportSymbols()`, ReleaseFast `@memcpy`, `@memmove`, and
