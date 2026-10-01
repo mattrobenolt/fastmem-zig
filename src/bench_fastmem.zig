@@ -22,11 +22,7 @@ const print = std.debug.print;
 const page_size_min = std.heap.page_size_min;
 const DefaultPrng = std.Random.DefaultPrng;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const c = @cImport({
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("dlfcn.h");
-    @cInclude("link.h");
-});
+const c = @import("c");
 
 const chunk_bytes = @min(std.simd.suggestVectorLength(u8) orelse 16, 32);
 const standard_sizes = [_]u32{

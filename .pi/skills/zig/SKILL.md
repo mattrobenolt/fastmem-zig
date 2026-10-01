@@ -116,7 +116,8 @@ try testing.fuzz({}, struct {
 - `@Type` removed → `@Int(.unsigned, 10)`, `@Struct`, `@Union`, `@Enum`,
   `@Pointer`, `@Fn`, `@Tuple`, `@EnumLiteral()`.
 - `@cImport` deprecated (still compiles) → `b.addTranslateC` in build.zig.
-  This repo still uses `@cImport` in `src/libc_probe.zig` for `dlfcn.h`.
+  This repo migrated: `src/bench_c.h`/`src/probe_c.h` → the "c" module of
+  `src/bench_fastmem.zig` and `src/libc_probe.zig` (see build.zig).
 - Sync primitives moved: `Thread.ResetEvent`→`Io.Event`, `WaitGroup`→`Io.Group`,
   `Futex`→`Io.Futex`, `Mutex`→`Io.Mutex`, `Condition`→`Io.Condition`,
   `Semaphore`→`Io.Semaphore`. `std.once` and `Thread.Pool` removed.

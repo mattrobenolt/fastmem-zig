@@ -211,6 +211,19 @@ pub fn build(b: *std.Build) void {
     @memcpy(rev_buf[0..rev.len], rev);
     bench_opts.addOption([64]u8, "rev_padded", rev_buf);
 
+    // The C surface of the two bench binaries. Zig 0.16 deprecates @cImport;
+    // the headers are translated here and imported as the "c" module.
+    const bench_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/bench_c.h"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    const probe_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/probe_c.h"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
     const bench_exe = b.addExecutable(.{
         .name = "bench-fastmem",
         .root_module = b.createModule(.{
@@ -221,6 +234,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "fastmem", .module = mod },
                 .{ .name = "bench_options", .module = bench_opts.createModule() },
+                .{ .name = "c", .module = bench_c.createModule() },
             },
         }),
     });
@@ -239,6 +253,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
         .link_libc = true,
+        .imports = &.{.{ .name = "c", .module = probe_c.createModule() }},
     });
     if (target.result.os.tag == .linux and target.result.abi.isGnu())
         libc_probe_mod.linkSystemLibrary("dl", .{});

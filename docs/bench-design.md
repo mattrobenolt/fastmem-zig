@@ -81,7 +81,9 @@ bench/
   ec2bench/                 generic fleet library and CLI. No fastmem code.
   fastmem_bench/            fastmem adapter: build, run protocol, analysis
   tests/
+src/bench_c.h               C surface of bench-fastmem (translate-c input)
 src/bench_fastmem.zig       measurement binary
+src/probe_c.h               C surface of libc-probe (translate-c input)
 src/libc_probe.zig          libc symbol probe
 ```
 

@@ -15,10 +15,7 @@ const Io = std.Io;
 const mem = std.mem;
 const builtin = @import("builtin");
 
-const c = @cImport({
-    @cDefine("_GNU_SOURCE", "1");
-    @cInclude("dlfcn.h");
-});
+const c = @import("c");
 
 // Resolve through dlopen("libc.so.6") + dlsym rather than extern symbols:
 // the executable's own compiler_rt memcpy/memmove win symbol resolution

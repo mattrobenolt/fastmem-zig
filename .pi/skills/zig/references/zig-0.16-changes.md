@@ -119,7 +119,12 @@ Sync primitives that do not need `Io`: lock-free ones only. Everything contended
 - Runtime vector indexing forbidden; coerce to array: `const arr: [n]T = vector;`.
 - Vectors/arrays no longer coerce in-memory through error unions.
 - Zero-bit tuple fields are no longer implicitly comptime.
-- `@cImport` deprecated — move C imports to `b.addTranslateC` + a `.h` file:
+- `@cImport` deprecated — move C imports to `b.addTranslateC` + a `.h` file
+  (done in this repo: `src/bench_c.h`, `src/probe_c.h` → the "c" module of
+  `src/bench_fastmem.zig` and `src/libc_probe.zig`). `_GNU_SOURCE` moves into
+  the header, before the includes. 0.16's translate-c output flattens the
+  whole translation unit into the module namespace, so `c.dlsym`, `c.Dl_info`,
+  `c.struct_link_map`, `c.RTLD_*` keep their `@cImport` names:
 
 ```zig
 const translate_c = b.addTranslateC(.{ .root_source_file = b.path("src/c.h"), .target = target, .optimize = optimize });
