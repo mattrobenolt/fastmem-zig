@@ -53,13 +53,14 @@ a kernel or make a performance claim.
 
 - `just test`: unit tests, export checks, and a build of every shipped
   binary. It must pass before a commit.
+- `just lint`: ziglint over the `.ziglint.zon` paths and `zig fmt --check`.
+  Run it before you call Zig work done.
 - `just test-guard`: the guard-page matrix on this host.
 - `just codegen-x86`: the x86 codegen gate for every fleet CPU model.
 - `just bench-up [targets]`, `just bench-test --optimize ReleaseFast
   --optimize ReleaseSafe --optimize Debug`, `just bench-run --rev A --rev B
   --suite standard --rounds 5`, `just b analyze <run-dir>`, `just
   bench-down`. `bench run --cpu baseline` measures G6.
-- `ziglint src/` before you call Zig work done.
 
 ## Benchmark targets
 

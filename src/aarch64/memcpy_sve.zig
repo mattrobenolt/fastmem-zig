@@ -168,7 +168,7 @@ fn tree(comptime p: []const u8) []const u8 {
 // first costs one extra predicted-taken branch at 33..128 (the n >= 16
 // branch); the 1..3 class is the one the fleet shows failing G3, so
 // the trade goes this way.
-fn head_neon(comptime p: []const u8) []const u8 {
+fn headNeon(comptime p: []const u8) []const u8 {
     // The rejected plain NEON pair duplicated this store. The old hybrid head did not.
     if (comptime std.mem.eql(u8, p, "mov")) return std.fmt.comptimePrint(
         \\    cmp x2, 16
@@ -258,7 +258,7 @@ fn head_neon(comptime p: []const u8) []const u8 {
 // c7g move 1..3 sits at exactly 1.000x compiler-rt with no margin for
 // its taken branch. The pair path pays one not-taken cmp; glibc's
 // memmove entry checks 128 first too.
-fn head_hybrid(comptime p: []const u8) []const u8 {
+fn headHybrid(comptime p: []const u8) []const u8 {
     return std.fmt.comptimePrint(
         \\    cmp    x2, 16
         \\    b.hs    .Lfm_sve_{s}_ge16
@@ -301,7 +301,7 @@ fn head_hybrid(comptime p: []const u8) []const u8 {
 // fall-through is otherwise unchanged. Not the default anywhere; the
 // fleet A/Bs it on V1 (branch fleet3/armh-move-neon32,
 // docs/results/armh-graviton-gaps.md).
-fn head_hybrid_n32(comptime p: []const u8) []const u8 {
+fn headHybridN32(comptime p: []const u8) []const u8 {
     const pair = if (comptime std.mem.eql(u8, p, "mov"))
         // Move flavor: one exact transfer at 16 bytes, like the neon
         // move head.
@@ -367,7 +367,7 @@ fn head_hybrid_n32(comptime p: []const u8) []const u8 {
 // 20260927T162241Z-final-standard), where the tree-first head pays
 // cmp16/b.hs over glibc's entry. Fleet branch fleet3/armh-v1move-ft;
 // reject if the 1..3 rows break as predicted.
-fn head_hybrid_ft(comptime p: []const u8) []const u8 {
+fn headHybridFt(comptime p: []const u8) []const u8 {
     // No .p2align before ge16: after bti/cmp/b.lo it would emit one
     // nop on the >= 16 fall-through, paid by every mid-size call
     // (review of b45e58d). ge16 needs no alignment of its own.
@@ -397,10 +397,10 @@ fn head_hybrid_ft(comptime p: []const u8) []const u8 {
 fn head(comptime v: tuning.CopySmall, comptime p: []const u8) []const u8 {
     return switch (v) {
         .sve => head_sve,
-        .neon => head_neon(p),
-        .hybrid => head_hybrid(p),
-        .hybrid_n32 => head_hybrid_n32(p),
-        .hybrid_ft => head_hybrid_ft(p),
+        .neon => headNeon(p),
+        .hybrid => headHybrid(p),
+        .hybrid_n32 => headHybridN32(p),
+        .hybrid_ft => headHybridFt(p),
     };
 }
 

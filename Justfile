@@ -7,6 +7,11 @@ default: test
 test:
     zig build test
 
+# Lint Zig sources: ziglint over the .ziglint.zon paths + the format check
+lint:
+    ziglint
+    zig fmt --check src build.zig
+
 # The export-layer binary checks alone (docs/export-layer.md)
 test-export:
     zig build test-export

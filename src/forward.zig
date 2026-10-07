@@ -26,21 +26,21 @@ pub inline fn run(
     // Keep the exact hot tiers out of the generic loop so the common
     // benchmarked sizes do not pay extra branch/update overhead.
     if (remaining == common.stride) {
-        common.storeVN(
+        common.storeVn(
             common.vectors_per_stride,
             d,
             0,
-            common.loadVN(common.vectors_per_stride, s, 0),
+            common.loadVn(common.vectors_per_stride, s, 0),
         );
         return;
     }
     // The 2-stride exact tier is a win on 16-byte-vector targets, but it
     // regresses the AVX2 256B misaligned and cross-lane copy cases.
     if (common.chunk_bytes == 16 and remaining == common.stride * 2) {
-        const head = common.loadVN(common.vectors_per_stride, s, 0);
-        const tail = common.loadVN(common.vectors_per_stride, s, remaining - common.stride);
-        common.storeVN(common.vectors_per_stride, d, 0, head);
-        common.storeVN(common.vectors_per_stride, d, remaining - common.stride, tail);
+        const head = common.loadVn(common.vectors_per_stride, s, 0);
+        const tail = common.loadVn(common.vectors_per_stride, s, remaining - common.stride);
+        common.storeVn(common.vectors_per_stride, d, 0, head);
+        common.storeVn(common.vectors_per_stride, d, remaining - common.stride, tail);
         return;
     }
 
@@ -49,19 +49,19 @@ pub inline fn run(
     // All loads complete before any stores — safe for overlapping regions.
     if (options.medium_straight_line) {
         if (remaining <= common.stride) {
-            common.storeVN(
+            common.storeVn(
                 common.vectors_per_stride,
                 d,
                 0,
-                common.loadVN(common.vectors_per_stride, s, 0),
+                common.loadVn(common.vectors_per_stride, s, 0),
             );
             return;
         }
         if (remaining <= common.stride * 2) {
-            const head = common.loadVN(common.vectors_per_stride, s, 0);
-            const tail = common.loadVN(common.vectors_per_stride, s, remaining - common.stride);
-            common.storeVN(common.vectors_per_stride, d, 0, head);
-            common.storeVN(common.vectors_per_stride, d, remaining - common.stride, tail);
+            const head = common.loadVn(common.vectors_per_stride, s, 0);
+            const tail = common.loadVn(common.vectors_per_stride, s, remaining - common.stride);
+            common.storeVn(common.vectors_per_stride, d, 0, head);
+            common.storeVn(common.vectors_per_stride, d, remaining - common.stride, tail);
             return;
         }
     }
@@ -99,11 +99,11 @@ inline fn copyLargeForward(
         var s = src;
         var remaining = len;
         while (remaining >= common.stride) {
-            common.storeVN(
+            common.storeVn(
                 common.vectors_per_stride,
                 d,
                 0,
-                common.loadVN(common.vectors_per_stride, s, 0),
+                common.loadVn(common.vectors_per_stride, s, 0),
             );
             d += common.stride;
             s += common.stride;
@@ -116,11 +116,11 @@ inline fn copyLargeForward(
         // body smaller.
         var off: usize = 0;
         while (off + common.stride <= len) : (off += common.stride) {
-            common.storeVN(
+            common.storeVn(
                 common.vectors_per_stride,
                 dest + off,
                 0,
-                common.loadVN(common.vectors_per_stride, src + off, 0),
+                common.loadVn(common.vectors_per_stride, src + off, 0),
             );
         }
         const remaining = len - off;

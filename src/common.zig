@@ -8,7 +8,7 @@ const math = std.math;
 pub const chunk_bytes = @min(simd.suggestVectorLength(u8) orelse 16, 32);
 
 /// SIMD vector type — q-register on NEON, ymm on AVX2.
-pub const Chunk = @Vector(chunk_bytes, u8); // ziglint-ignore: Z006
+pub const Chunk = @Vector(chunk_bytes, u8);
 
 /// Vectors per inner loop iteration.
 pub const vectors_per_stride = 4;
@@ -81,7 +81,7 @@ pub fn copySmall(dest: [*]u8, src: [*]const u8, len: usize) void {
 }
 
 /// Load `count` contiguous vectors starting at `ptr + off`.
-pub inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize) [count]Chunk {
+pub inline fn loadVn(comptime count: comptime_int, ptr: [*]const u8, off: usize) [count]Chunk {
     @disableIntrinsics();
     var vecs: [count]Chunk = undefined;
     inline for (0..count) |i| {
@@ -91,7 +91,7 @@ pub inline fn loadVN(comptime count: comptime_int, ptr: [*]const u8, off: usize)
 }
 
 /// Store `count` contiguous vectors starting at `ptr + off`.
-pub inline fn storeVN(
+pub inline fn storeVn(
     comptime count: comptime_int,
     ptr: [*]u8,
     off: usize,

@@ -15,7 +15,7 @@ Rule zero: verify APIs against the pinned toolchain, not memory.
 ```bash
 zigdoc std.Io.File          # API discovery, toolchain-aware
 zig env                     # .std_dir = actual std source for THIS zig
-ziglint src/                # style + correctness lint
+just lint                   # style + correctness lint
 grep -n "pub fn find" "$(zig env | ...)"   # or grep $STD directly
 ```
 
@@ -187,7 +187,7 @@ writing or reviewing any Zig here.
 - Prefer `const foo: Type = .{ .field = value };` over `const foo = Type{...};`.
 - comptime params first, then `Io`/allocator, then runtime args (ziglint Z023
   enforces comptime-first).
-- Tests inline with the code they cover; `ziglint src/` before calling it done.
+- Tests inline with the code they cover; `just lint` before calling it done.
 - Comments explain why, not what.
 
 ## Before writing Zig code

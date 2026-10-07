@@ -103,11 +103,11 @@ inline fn copyLargeBackward(dest: [*]u8, src: [*]const u8, len: usize) void {
         while (remaining >= common.stride) {
             d -= common.stride;
             s -= common.stride;
-            common.storeVN(
+            common.storeVn(
                 common.vectors_per_stride,
                 d,
                 0,
-                common.loadVN(common.vectors_per_stride, s, 0),
+                common.loadVn(common.vectors_per_stride, s, 0),
             );
             remaining -= common.stride;
         }
@@ -116,11 +116,11 @@ inline fn copyLargeBackward(dest: [*]u8, src: [*]const u8, len: usize) void {
         var off = len;
         while (off >= common.stride) {
             off -= common.stride;
-            common.storeVN(
+            common.storeVn(
                 common.vectors_per_stride,
                 dest + off,
                 0,
-                common.loadVN(common.vectors_per_stride, src + off, 0),
+                common.loadVn(common.vectors_per_stride, src + off, 0),
             );
         }
         if (off > 0) common.copySmall(dest, src, off);

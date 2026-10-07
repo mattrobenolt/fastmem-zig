@@ -1,8 +1,32 @@
 const std = @import("std");
 
-const X86Experiment = enum { auto, none, medium_layout, medium_entry, small_paths, x86f_pairs, x86f_chunks, x86f_zen4, x86f_source, x86f_dispatch, x86f_temporal, x86f_source64, x86g_temporal, x86g_medium };
+const X86Experiment = enum {
+    auto,
+    none,
+    medium_layout,
+    medium_entry,
+    small_paths,
+    x86f_pairs,
+    x86f_chunks,
+    x86f_zen4,
+    x86f_source,
+    x86f_dispatch,
+    x86f_temporal,
+    x86f_source64,
+    x86g_temporal,
+    x86g_medium,
+};
 
-const X86Variant = enum { auto, entry, high_regs, tiered, compact, medium_first, ymm_medium, straight_1k };
+const X86Variant = enum {
+    auto,
+    entry,
+    high_regs,
+    tiered,
+    compact,
+    medium_first,
+    ymm_medium,
+    straight_1k,
+};
 
 // The per-model default of the "auto" variant, from the p3-x86c fleet A/B
 // (docs/results/p3-x86c.md). Keep in sync with src/x86_64/tuning.zig.
@@ -99,12 +123,18 @@ const Fastmem = struct {
         if (dispatch) for (fm.levelObjects(target)) |obj| m.addObject(obj);
     }
 
-    fn levelObjects(fm: *Fastmem, target: std.Build.ResolvedTarget) []const *std.Build.Step.Compile {
+    fn levelObjects(
+        fm: *Fastmem,
+        target: std.Build.ResolvedTarget,
+    ) []const *std.Build.Step.Compile {
         const b = fm.b;
         const t = target.result;
         const key = b.fmt("{s}-{s}", .{ @tagName(t.os.tag), @tagName(t.abi) });
         if (fm.levels.get(key)) |objects| return objects;
-        const objects = b.allocator.alloc(*std.Build.Step.Compile, dispatch_levels.len) catch @panic("OOM");
+        const objects = b.allocator.alloc(
+            *std.Build.Step.Compile,
+            dispatch_levels.len,
+        ) catch @panic("OOM");
         inline for (dispatch_levels, objects) |name, *object| {
             const level_target = b.resolveTargetQuery(.{
                 .cpu_arch = .x86_64,
@@ -191,13 +221,21 @@ pub fn build(b: *std.Build) void {
         .omit_frame_pointer = true,
     });
 
-    const x86_variant = b.option(X86Variant, "x86-variant", "x86 small ABI path (auto = per-model default)") orelse .auto;
+    const x86_variant = b.option(
+        X86Variant,
+        "x86-variant",
+        "x86 small ABI path (auto = per-model default)",
+    ) orelse .auto;
     const x86_dispatch = b.option(
         bool,
         "x86-dispatch",
         "Select the x86 kernels at run time in x86_64 Linux builds without AVX2 (default true)",
     ) orelse true;
-    const x86_experiment = b.option(X86Experiment, "x86-experiment", "x86 small/medium selection (auto = per-model winners)") orelse .auto;
+    const x86_experiment = b.option(
+        X86Experiment,
+        "x86-experiment",
+        "x86 small/medium selection (auto = per-model winners)",
+    ) orelse .auto;
     const fm = Fastmem.create(b, readTuning(b, x86_variant, x86_experiment), x86_dispatch);
     fm.configure(mod, .public);
     const x86_options = fm.plain();
@@ -551,7 +589,10 @@ fn addX86Codegen(
     variant: X86Variant,
     experiment: X86Experiment,
 ) [codegen_cpus.len]*std.Build.Step.Compile {
-    const step = b.step("codegen-x86", "Check x86 vector widths, ABI entries, and symbol independence");
+    const step = b.step(
+        "codegen-x86",
+        "Check x86 vector widths, ABI entries, and symbol independence",
+    );
     var probes: [codegen_cpus.len]*std.Build.Step.Compile = undefined;
     for (codegen_cpus, &probes) |cpu, *probe| {
         const obj = codegenProbe(b, fm, cpu);
@@ -702,7 +743,8 @@ fn addPackageTests(b: *std.Build, fm: *Fastmem, public: *std.Build.Module) *std.
             }),
         });
         exe.expect_errors = .{
-            .contains = "error: fastmem.dispatch.force is a test hook; the public fastmem module does not provide it",
+            .contains = "error: fastmem.dispatch.force is a test hook; " ++
+                "the public fastmem module does not provide it",
         };
         step.dependOn(&exe.step);
     }

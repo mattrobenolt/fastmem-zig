@@ -215,7 +215,7 @@ pub fn memset(dest: ?*anyopaque, c: c_int, n: usize) callconv(.c) ?*anyopaque {
     return @call(tail, setPointer(), .{ dest, c, n });
 }
 
-const V16 = @Vector(16, u8); // ziglint-ignore: Z006
+const V16 = @Vector(16, u8);
 
 /// 4 to 128 bytes. Each class loads all its bytes before its first store.
 /// The entry handles zero and byte classes before these vector gates.
